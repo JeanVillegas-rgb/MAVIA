@@ -1,0 +1,44 @@
+ * Serving Flask app 'app'
+ * Debug mode: on
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:5000
+Press CTRL+C to quit
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 335-987-865
+127.0.0.1 - - [03/Jul/2026 00:22:46] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:22:46] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:34] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:35] "GET /static/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:35] "GET /static/app.js HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:35] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:35] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [03/Jul/2026 00:23:42] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:42] "GET /static/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:42] "GET /static/app.js HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:42] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:23:42] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [03/Jul/2026 00:23:54] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:00] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:06] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:10] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:21] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:24] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:32] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:35] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:41] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:43] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:46] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:49] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:54] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:24:56] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:02] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:04] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:12] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:14] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:23] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:26] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:29] "POST /api/answer HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:25:31] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:50:15] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [03/Jul/2026 00:50:16] "GET /favicon.ico HTTP/1.1" 404 -

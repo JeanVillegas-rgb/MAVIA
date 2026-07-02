@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAVIA — Adaptive Learning</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">MAVIA<span>adaptive engine</span></div>
+      <div class="overall-progress">
+        <div class="overall-bar"><div id="overall-fill" class="overall-fill"></div></div>
+        <span id="overall-label">0 / 0 concepts mastered</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <h2>Matter — Concept Map</h2>
+        <ul id="node-list" class="node-list"></ul>
+      </aside>
+
+      <main class="main">
+        <div id="question-panel" class="card hidden">
+          <div class="card-header">
+            <span id="tier-badge" class="badge tier-badge"></span>
+            <span id="node-badge" class="badge node-badge"></span>
+          </div>
+          <p id="prompt" class="prompt"></p>
+          <div id="choices" class="choices"></div>
+        </div>
+
+        <div id="feedback-panel" class="card hidden">
+          <div id="feedback-result" class="feedback-result"></div>
+          <div class="mastery-track">
+            <span class="mastery-label">Mastery</span>
+            <div class="mastery-bar">
+              <div id="mastery-before" class="mastery-before"></div>
+              <div id="mastery-after" class="mastery-after"></div>
+            </div>
+            <span id="mastery-values" class="mastery-values"></span>
+          </div>
+          <div id="decision-badge" class="badge decision-badge"></div>
+          <div id="mastered-banner" class="mastered-banner hidden">Concept mastered! Unlocking new material…</div>
+          <button id="continue-btn" class="btn primary">Continue</button>
+        </div>
+
+        <div id="complete-panel" class="card hidden">
+          <h2>Unit complete!</h2>
+          <p>You've mastered every concept in the Matter unit.</p>
+          <button id="restart-btn" class="btn primary">Start over</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
