@@ -200,3 +200,37 @@ export function confirmModuleConceptDag(courseId, moduleId) {
     method: "POST",
   });
 }
+
+export function startQuestionGeneration(materialId, nodeId = null) {
+  return request(`/generation/materials/${materialId}/start/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(nodeId ? { node_id: nodeId } : {}),
+  });
+}
+
+export function fetchQuestionRuns(materialId) {
+  return request(`/generation/runs/?material_id=${materialId}`);
+}
+
+export function fetchQuestionRunEvents(runId, afterSeq = 0) {
+  return request(`/generation/runs/${runId}/events/?after=${afterSeq}`);
+}
+
+export function fetchMaterialQuestions(materialId) {
+  return request(`/generation/materials/${materialId}/questions/`);
+}
+
+export function updateGeneratedQuestion(questionId, data) {
+  return request(`/generation/questions/${questionId}/`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteGeneratedQuestion(questionId) {
+  return request(`/generation/questions/${questionId}/`, {
+    method: "DELETE",
+  });
+}

@@ -1,12 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   confirmLearningObjects,
   createLearningObject,
+  deleteGeneratedQuestion,
   deleteLearningObject,
   fetchCourse,
+  fetchMaterialQuestions,
+  fetchQuestionRunEvents,
+  fetchQuestionRuns,
   generateAudioPlaylist,
   regenerateLearningMaterial,
+  startQuestionGeneration,
+  updateGeneratedQuestion,
   updateLearningObject,
   uploadLearningMaterial,
 } from "../api";
@@ -87,12 +93,377 @@ function LearningObjectForm({ initialValue, submitLabel, busy, onCancel, onSubmi
   );
 }
 
+function QuestionCard({ question, onSaved, onError }) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState(null);
+
+  function startEdit(event) {
+    event.stopPropagation();
+    setForm({
+      question_text: question.question_text,
+      choices: question.choices ? { ...question.choices } : null,
+      correct_answer: question.correct_answer,
+      explanation: question.explanation || "",
+    });
+    setEditing(true);
+  }
+
+  async function saveEdit(event) {
+    event.preventDefault();
+    setBusy(true);
+    onError("");
+    try {
+      await updateGeneratedQuestion(question.id, form);
+      setEditing(false);
+      await onSaved();
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeQuestion(event) {
+    event.stopPropagation();
+    if (!window.confirm("Delete this question (and any learner answers to it)?")) return;
+    setBusy(true);
+    onError("");
+    try {
+      await deleteGeneratedQuestion(question.id);
+      await onSaved();
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form
+        className="learning-object-form question-edit-form"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        onSubmit={saveEdit}
+      >
+        <label>
+          Question
+          <textarea
+            value={form.question_text}
+            disabled={busy}
+            required
+            rows={2}
+            onChange={(event) => setForm((f) => ({ ...f, question_text: event.target.value }))}
+          />
+        </label>
+        {question.question_format === "MCQ" && form.choices ? (
+          <div className="question-edit-choices">
+            {Object.entries(form.choices).map(([letter, text]) => (
+              <label className="question-edit-choice" key={letter}>
+                <input
+                  type="radio"
+                  name={`correct-${question.id}`}
+                  checked={form.correct_answer === letter}
+                  disabled={busy}
+                  onChange={() => setForm((f) => ({ ...f, correct_answer: letter }))}
+                  title="Mark as correct answer"
+                />
+                <strong>{letter}.</strong>
+                <input
+                  value={text}
+                  disabled={busy}
+                  required
+                  onChange={(event) =>
+                    setForm((f) => ({
+                      ...f,
+                      choices: { ...f.choices, [letter]: event.target.value },
+                    }))
+                  }
+                />
+              </label>
+            ))}
+            <p className="muted-text">Select the radio button of the correct answer.</p>
+          </div>
+        ) : (
+          <label>
+            Correct answer
+            <select
+              value={form.correct_answer}
+              disabled={busy}
+              onChange={(event) => setForm((f) => ({ ...f, correct_answer: event.target.value }))}
+            >
+              <option value="True">True</option>
+              <option value="False">False</option>
+            </select>
+          </label>
+        )}
+        <label>
+          Explanation
+          <textarea
+            value={form.explanation}
+            disabled={busy}
+            rows={2}
+            onChange={(event) => setForm((f) => ({ ...f, explanation: event.target.value }))}
+          />
+        </label>
+        <div className="learning-object-form-actions">
+          <button
+            className="btn btn-secondary btn-small"
+            type="button"
+            disabled={busy}
+            onClick={() => setEditing(false)}
+          >
+            Cancel
+          </button>
+          <button className="btn btn-primary btn-small" type="submit" disabled={busy}>
+            {busy ? "Saving..." : "Save question"}
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="generated-item question-card">
+      <div className="question-card-header">
+        <span className={`difficulty-pill difficulty-${question.difficulty}`}>
+          {question.difficulty}
+        </span>
+        <span className="muted-text">
+          {question.question_format} &middot; {question.bloom_level}
+          {question.category && <> &middot; {question.category}</>}
+        </span>
+        <span className="question-card-actions">
+          <button
+            className="btn btn-secondary btn-small"
+            type="button"
+            disabled={busy}
+            onClick={startEdit}
+          >
+            Edit
+          </button>
+          <button
+            className="btn btn-danger btn-small"
+            type="button"
+            disabled={busy}
+            onClick={removeQuestion}
+          >
+            {busy ? "..." : "Delete"}
+          </button>
+        </span>
+      </div>
+      <p className="question-text">{question.question_text}</p>
+      {question.question_format === "MCQ" && question.choices ? (
+        <ul className="question-choices">
+          {Object.entries(question.choices).map(([letter, text]) => (
+            <li
+              key={letter}
+              className={letter === question.correct_answer ? "is-correct" : ""}
+            >
+              <strong>{letter}.</strong> {text}
+              {letter === question.correct_answer && " ✓"}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="question-choices">
+          Answer: <strong>{question.correct_answer}</strong>
+        </p>
+      )}
+      {question.explanation && <p className="muted-text">{question.explanation}</p>}
+    </div>
+  );
+}
+
+function QuestionBankSection({
+  confirmed,
+  running,
+  starting,
+  totalQuestions,
+  progress,
+  runFailed,
+  log,
+  onStart,
+}) {
+  const logEndRef = useRef(null);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: "nearest" });
+  }, [log.length]);
+
+  return (
+    <section className="generated-result-panel">
+      <div className="generated-section-header">
+        <div>
+          <h5>Practice Questions</h5>
+          <p className="muted-text">
+            Generated from each confirmed learning object and shown under its content above.
+            Difficulty is assigned by the Bloom&apos;s classifier.
+          </p>
+        </div>
+        <button
+          className="btn btn-primary btn-small"
+          type="button"
+          disabled={!confirmed || running || starting}
+          onClick={() => onStart(null)}
+        >
+          {running || starting
+            ? "Generating..."
+            : totalQuestions
+              ? "Regenerate all questions"
+              : "Generate all questions"}
+        </button>
+      </div>
+
+      {!confirmed && (
+        <p className="muted-text">Confirm the learning objects above before generating questions.</p>
+      )}
+
+      {progress && (
+        <div className="success-banner">
+          Generating&hellip; {progress.generated} question{progress.generated === 1 ? "" : "s"} so far
+          &middot; {progress.message}
+        </div>
+      )}
+
+      {runFailed && (
+        <div className="error-banner">Question generation failed. Check the log below and try again.</div>
+      )}
+
+      {log.length > 0 && (
+        <details className="generation-log" open>
+          <summary>
+            Generation log <span className="muted-text">&middot; {log.length} events</span>
+          </summary>
+          <div className="generation-log-lines">
+            {log.map((event) => (
+              <div className={`generation-log-line log-${event.event_type}`} key={event.seq}>
+                <span className="log-time">{new Date(event.created_at).toLocaleTimeString()}</span>
+                <span className="log-type">{event.event_type}</span>
+                <span className="log-message">{event.message}</span>
+              </div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        </details>
+      )}
+
+      {!totalQuestions && !running && !log.length && (
+        <p className="muted-text">No questions generated yet.</p>
+      )}
+    </section>
+  );
+}
+
 function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [reviewEditMode, setReviewEditMode] = useState(false);
   const [selectedId, setSelectedId] = useState(material.learning_objects[0]?.id || null);
   const [busyAction, setBusyAction] = useState("");
+  const [questionBank, setQuestionBank] = useState([]);
+
+  const loadQuestionBank = useCallback(async () => {
+    try {
+      setQuestionBank(await fetchMaterialQuestions(material.id));
+    } catch {
+      // backend unreachable — leave the bank as-is
+    }
+  }, [material.id]);
+
+  useEffect(() => {
+    loadQuestionBank();
+  }, [loadQuestionBank]);
+
+  const questionsByNode = useMemo(
+    () => new Map(questionBank.map((node) => [node.node_id, node.questions])),
+    [questionBank],
+  );
+  const totalQuestions = questionBank.reduce((sum, node) => sum + node.questions.length, 0);
+
+  const [genRun, setGenRun] = useState(null);
+  const [genProgress, setGenProgress] = useState(null);
+  const [genLog, setGenLog] = useState([]);
+  const [genStarting, setGenStarting] = useState(false);
+  const genRunning = genRun?.status === "running";
+
+  useEffect(() => {
+    // pick up a run that is already in flight (e.g. after a page reload)
+    fetchQuestionRuns(material.id)
+      .then((runs) => {
+        if (runs[0]?.status === "running") setGenRun(runs[0]);
+      })
+      .catch(() => {});
+  }, [material.id]);
+
+  useEffect(() => {
+    if (!genRunning) return undefined;
+    let lastSeq = 0;
+    let generated = 0;
+    let stopped = false;
+    let timer = null;
+
+    const poll = async () => {
+      try {
+        const data = await fetchQuestionRunEvents(genRun.id, lastSeq);
+        if (stopped) return;
+        if (data.events.length) {
+          lastSeq = data.events[data.events.length - 1].seq;
+          generated += data.events.filter((e) => e.event_type === "question_generated").length;
+          setGenProgress({ generated, message: data.events[data.events.length - 1].message });
+          setGenLog((current) => [...current, ...data.events]);
+          // questions are saved per node — refresh the inline lists as nodes finish
+          if (data.events.some((e) => e.event_type === "node_finished")) {
+            loadQuestionBank();
+          }
+        }
+        if (data.run.status === "running") {
+          timer = setTimeout(poll, 2500);
+        } else {
+          setGenRun(data.run);
+          setGenProgress(null);
+          loadQuestionBank();
+        }
+      } catch {
+        if (!stopped) timer = setTimeout(poll, 5000);
+      }
+    };
+    poll();
+
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [genRun?.id, genRunning, loadQuestionBank]);
+
+  async function startGeneration(nodeId = null) {
+    const existingCount = nodeId
+      ? (questionsByNode.get(nodeId) || []).length
+      : totalQuestions;
+    if (
+      existingCount > 0 &&
+      !window.confirm(
+        nodeId
+          ? "Regenerating replaces this learning object's existing questions (and any learner answers to them). Continue?"
+          : "Regenerating replaces this material's existing questions (and any learner answers to them). Continue?",
+      )
+    ) {
+      return;
+    }
+    setGenStarting(true);
+    onError("");
+    try {
+      const response = await startQuestionGeneration(material.id, nodeId);
+      setGenLog([]);
+      setGenRun({ id: response.run_id, node_id: response.node_id, status: "running" });
+      setGenProgress({ generated: 0, message: "Starting..." });
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setGenStarting(false);
+    }
+  }
   const llmMetadata = material.generated_json?.llm_metadata;
   const generatedJson = material.generated_json || {};
   const learningObjectsConfirmed = Boolean(generatedJson.learning_objects_confirmed);
@@ -370,6 +741,43 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                         </div>
                       </div>
                       <p>{item.content}</p>
+                      {learningObjectsConfirmed && (
+                        <div className="generated-item-actions">
+                          <button
+                            className="btn btn-secondary btn-small"
+                            type="button"
+                            disabled={genRunning || genStarting}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              startGeneration(item.id);
+                            }}
+                          >
+                            {genRunning && genRun?.node_id === item.id
+                              ? "Generating..."
+                              : (questionsByNode.get(item.id) || []).length
+                                ? "Regenerate questions"
+                                : "Generate questions"}
+                          </button>
+                        </div>
+                      )}
+                      {(questionsByNode.get(item.id) || []).length > 0 && (
+                        <details className="question-node-group" open>
+                          <summary>
+                            <strong>Practice questions</strong>
+                            <span className="muted-text">
+                              {" "}&middot; {questionsByNode.get(item.id).length}
+                            </span>
+                          </summary>
+                          {questionsByNode.get(item.id).map((question) => (
+                            <QuestionCard
+                              key={question.id}
+                              question={question}
+                              onSaved={loadQuestionBank}
+                              onError={onError}
+                            />
+                          ))}
+                        </details>
+                      )}
                     </>
                   )}
                 </div>
@@ -392,11 +800,25 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
         )}
       </section>
 
+      <QuestionBankSection
+        confirmed={learningObjectsConfirmed}
+        running={genRunning}
+        starting={genStarting}
+        totalQuestions={totalQuestions}
+        progress={genProgress}
+        runFailed={genRun?.status === "failed"}
+        log={genLog}
+        onStart={startGeneration}
+      />
+
       <section className="generated-result-panel">
         <div className="generated-section-header">
           <div>
             <h5>Lesson Playlist</h5>
-            <p className="muted-text">Audio is generated from the confirmed learning objects for this topic.</p>
+            <p className="muted-text">
+              Audio is generated from the confirmed learning objects, with each node&apos;s practice
+              questions read after its lesson (answers are not spoken).
+            </p>
           </div>
           <button
             className="btn btn-primary btn-small"
@@ -417,7 +839,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                 <span>{index + 1}</span>
                 <div>
                   <strong>{item.title || `Playlist item ${index + 1}`}</strong>
-                  <small>{item.type || "lesson"}</small>
+                  <small>{(item.type || "lesson").replace(/_/g, " ")}</small>
                 </div>
                 {item.audio_url ? (
                   <audio controls src={item.audio_url}>

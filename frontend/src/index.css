@@ -1751,3 +1751,130 @@ button {
     flex-direction: column;
   }
 }
+
+/* ---------- practice questions (question_generation) ---------- */
+.question-node-group summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+}
+
+.question-card {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+.question-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+
+.difficulty-pill {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: #fff;
+}
+
+.difficulty-pill.difficulty-easy { background: #3e8b50; }
+.difficulty-pill.difficulty-medium { background: #e7a62e; color: #2d2a26; }
+.difficulty-pill.difficulty-hard { background: #d4654a; }
+
+.question-text {
+  font-weight: 600;
+  margin: 0.25rem 0;
+}
+
+.question-choices {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+
+.question-choices li.is-correct {
+  color: #3e8b50;
+  font-weight: 600;
+}
+
+.question-card-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.question-edit-form {
+  margin: 0.5rem 0;
+}
+
+.question-edit-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.learning-object-form label.question-edit-choice {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.learning-object-form .question-edit-choice input[type="radio"] {
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.learning-object-form .question-edit-choice input:not([type="radio"]) {
+  flex: 1;
+}
+
+.generation-log summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  font-weight: 600;
+}
+
+.generation-log-lines {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.generation-log-line {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.generation-log-line .log-time {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.generation-log-line .log-type {
+  color: var(--muted);
+  flex-shrink: 0;
+  min-width: 9.5rem;
+}
+
+.generation-log-line.log-error .log-type,
+.generation-log-line.log-error .log-message {
+  color: #d4654a;
+  font-weight: 600;
+}
+
+.generation-log-line.log-node_started .log-message,
+.generation-log-line.log-node_finished .log-message,
+.generation-log-line.log-material_finished .log-message,
+.generation-log-line.log-saved .log-message {
+  font-weight: 600;
+}
