@@ -60,16 +60,13 @@ def synthesize_text_to_wav(text: str, output_path: Path, timeout: int = 120) -> 
 _DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
 
 
-def _question_narration_text(node_title: str, questions) -> str:
-    """Read out a node's practice questions (choices included, answers withheld)."""
-    lines = [f"Practice questions for {node_title}."]
-    for index, question in enumerate(questions, start=1):
-        if question.question_format == "TF":
-            lines.append(f"Question {index}. True or False. {question.question_text}")
-        else:
-            lines.append(f"Question {index}. {question.question_text}")
-            for letter, text in (question.choices or {}).items():
-                lines.append(f"{letter}. {text}")
+def _question_narration_text(index: int, question) -> str:
+    """Read out one practice question (choices included, answer withheld)."""
+    if question.question_format == "TF":
+        return f"Question {index}. True or False. {question.question_text}"
+    lines = [f"Question {index}. {question.question_text}"]
+    for letter, text in (question.choices or {}).items():
+        lines.append(f"{letter}. {text}")
     return "\n".join(lines)
 
 
@@ -78,7 +75,7 @@ def generate_material_audio_playlist(material: LearningMaterial) -> dict:
     # question tracks are rebuilt from the DB each run — drop stored ones
     playlist = [
         item for item in (generated_json.get("lesson_playlist") or [])
-        if item.get("type") != "practice_questions"
+        if item.get("type") not in {"practice_questions", "practice_question"}
     ]
     if not playlist:
         raise AudioGenerationError("This material has no lesson playlist to synthesize.")
@@ -114,24 +111,24 @@ def generate_material_audio_playlist(material: LearningMaterial) -> dict:
             node.generated_questions.all(),
             key=lambda q: (_DIFFICULTY_ORDER.get(q.difficulty, 3), q.id),
         )
-        if not questions:
-            continue
-        question_path = audio_dir / f"questions_node_{node.id}.wav"
-        synthesize_text_to_wav(_question_narration_text(node.title, questions), question_path)
-        question_relative = question_path.relative_to(settings.MEDIA_ROOT).as_posix()
-        updated_playlist.append(
-            {
-                "order": len(updated_playlist),
-                "title": f"Practice questions — {node.title}",
-                "type": "practice_questions",
-                "node_id": node.id,
-                "question_count": len(questions),
-                "audio_status": "generated",
-                "audio_url": f"{settings.MEDIA_URL}{question_relative}",
-                "audio_file": question_relative,
-            }
-        )
-        generated_count += 1
+        for question_index, question in enumerate(questions, start=1):
+            question_path = audio_dir / f"question_{question.id}.wav"
+            synthesize_text_to_wav(
+                _question_narration_text(question_index, question), question_path)
+            question_relative = question_path.relative_to(settings.MEDIA_ROOT).as_posix()
+            updated_playlist.append(
+                {
+                    "order": len(updated_playlist),
+                    "title": f"Question {question_index} ({question.difficulty}) — {node.title}",
+                    "type": "practice_question",
+                    "node_id": node.id,
+                    "question_id": question.id,
+                    "audio_status": "generated",
+                    "audio_url": f"{settings.MEDIA_URL}{question_relative}",
+                    "audio_file": question_relative,
+                }
+            )
+            generated_count += 1
 
     generated_json["lesson_playlist"] = updated_playlist
     generated_json["audio_playlist_generated"] = True

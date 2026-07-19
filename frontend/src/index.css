@@ -1815,14 +1815,20 @@ button {
   gap: 0.35rem;
 }
 
-.question-edit-choice {
+.learning-object-form label.question-edit-choice {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.5rem;
 }
 
-.question-edit-choice input[type="text"],
-.question-edit-choice input:not([type]) {
+.learning-object-form .question-edit-choice input[type="radio"] {
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.learning-object-form .question-edit-choice input:not([type="radio"]) {
   flex: 1;
 }
 
