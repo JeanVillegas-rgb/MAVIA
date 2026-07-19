@@ -372,11 +372,24 @@ def _section_heading_title(text: str) -> str | None:
 def _looks_like_plain_subtopic_heading(text: str) -> str | None:
     text = re.sub(r"\s+", " ", text or "").strip()
     lowered = text.lower()
-    if not text or len(text) > 90 or re.search(r"[.!?]$", text):
+    if not text or len(text) > 90 or re.search(r"[.!]$", text):
         return None
     if lowered.startswith(("page ", "module ", "grade ", "lesson ", "course ", "author:", "date:", "filename:")):
         return None
-    if lowered in {"references", "bibliography", "sources", "acknowledgments", "table of contents", "contents"}:
+    if lowered in {
+        "learning objectives",
+        "objectives",
+        "references",
+        "bibliography",
+        "sources",
+        "acknowledgments",
+        "table of contents",
+        "contents",
+    }:
+        return None
+    if lowered.startswith(("quick check", "quiz", "review question", "exercise", "activity")):
+        return None
+    if any(marker in lowered for marker in ("mavia", "sample learning material", "elementary science learning material")):
         return None
     word_count = len(text.split())
     if 2 <= word_count <= 9 and re.search(r"[A-Za-z]", text):
@@ -386,7 +399,45 @@ def _looks_like_plain_subtopic_heading(text: str) -> str | None:
 
 def _learning_object_heading_title(block: dict) -> str | None:
     text = block.get("text", "")
-    return _section_heading_title(text) or _looks_like_plain_subtopic_heading(text)
+    numbered_title = _section_heading_title(text)
+    if numbered_title:
+        return numbered_title
+    if block.get("category") != "lesson_content" or not block.get("include_in_narration"):
+        return None
+    return _looks_like_plain_subtopic_heading(text)
+
+
+def _is_front_matter_title_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "mavia",
+            "sample learning material",
+            "elementary science learning material",
+            "prerequisite connection",
+        )
+    )
+
+
+def _heading_only_allowed(block: dict) -> bool:
+    text = block.get("text", "") or ""
+    return bool(re.fullmatch(r"\s*\d+\.\d+(?:\.\d+)*\.?\s+.+", text))
+
+
+def _finalize_current_learning_object(current: dict | None, learning_objects: list[dict]) -> None:
+    if not current:
+        return
+    parts = current.pop("parts", [])
+    content = _format_section_content(parts)
+    if content:
+        current["content"] = content
+        learning_objects.append(current)
+        return
+    if current.get("heading_only_allowed"):
+        current["content"] = current["title"]
+        current["source_excerpt"] = current["title"]
+        learning_objects.append(current)
 
 
 def _is_instructional_table_or_chart_block(block: dict) -> bool:
@@ -470,17 +521,14 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
         text = block.get("text", "").strip()
         if not text or _is_image_caption(text):
             continue
+        if _is_front_matter_title_text(text):
+            _finalize_current_learning_object(current, learning_objects)
+            current = None
+            continue
 
         heading_title = _learning_object_heading_title(block)
         if heading_title:
-            if current and current["parts"]:
-                current["content"] = _format_section_content(current.pop("parts"))
-                learning_objects.append(current)
-            elif current and current.get("title"):
-                current.pop("parts", None)
-                current["content"] = current["title"]
-                current["source_excerpt"] = current["title"]
-                learning_objects.append(current)
+            _finalize_current_learning_object(current, learning_objects)
             current = {
                 "order": len(learning_objects),
                 "title": heading_title,
@@ -491,6 +539,7 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
                 "source_block_id": block.get("block_id"),
                 "source_excerpt": "",
                 "parts": [],
+                "heading_only_allowed": _heading_only_allowed(block),
             }
             continue
 
@@ -501,14 +550,7 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
 
         if not keep_as_content:
             if block.get("category") in {"assessment", "teacher_note", "concept_metadata", "table_header", "reference"}:
-                if current and current["parts"]:
-                    current["content"] = _format_section_content(current.pop("parts"))
-                    learning_objects.append(current)
-                elif current and current.get("title"):
-                    current.pop("parts", None)
-                    current["content"] = current["title"]
-                    current["source_excerpt"] = current["title"]
-                    learning_objects.append(current)
+                _finalize_current_learning_object(current, learning_objects)
                 current = None
             continue
 
@@ -528,20 +570,16 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
                 }
             )
             continue
+        if current.get("title", "").casefold() == text.casefold():
+            continue
         current["parts"].append(text)
         if not current.get("source_excerpt"):
             current["source_excerpt"] = text
 
-    if current and current["parts"]:
-        current["content"] = _format_section_content(current.pop("parts"))
-        learning_objects.append(current)
-    elif current and current.get("title"):
-        current.pop("parts", None)
-        current["content"] = current["title"]
-        current["source_excerpt"] = current["title"]
-        learning_objects.append(current)
+    _finalize_current_learning_object(current, learning_objects)
 
     for order, item in enumerate(learning_objects):
+        item.pop("heading_only_allowed", None)
         item["order"] = order
     return learning_objects
 

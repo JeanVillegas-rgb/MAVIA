@@ -1299,6 +1299,108 @@ class PreservedNarrationGenerationTests(TestCase):
 
         self.assertEqual(classified[0]["category"], "lesson_content")
 
+    def test_non_instructional_front_matter_does_not_become_learning_objects(self):
+        classified = [
+            {
+                "block_id": 1,
+                "page": 1,
+                "text": "MAVIA sample learning material Page 1",
+                "category": "document_metadata",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "Physical and Chemical Properties of Matter",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Physical and Chemical Properties of Matter",
+                "category": "decorative_or_noise",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 4,
+                "page": 1,
+                "text": "Useful and Harmful Materials - Elementary Science Learning Material",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 5,
+                "page": 1,
+                "text": "Prerequisite connection: Before studying useful and harmful materials, learners should understand observable properties.",
+                "category": "concept_metadata",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 6,
+                "page": 1,
+                "text": "Learning Objectives",
+                "category": "learning_objective",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 7,
+                "page": 1,
+                "text": "Describe common physical properties of matter. Explain how physical changes differ from chemical changes.",
+                "category": "learning_objective",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 8,
+                "page": 1,
+                "text": "What Are Properties of Matter?",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 9,
+                "page": 1,
+                "text": "Matter is anything that has mass and occupies space. Every material has properties that can be observed or measured.",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 10,
+                "page": 1,
+                "text": "Physical Properties",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 11,
+                "page": 1,
+                "text": "Physical properties can be observed or measured without changing the identity of the substance.",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 12,
+                "page": 1,
+                "text": "Physical property",
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 13,
+                "page": 1,
+                "text": "Physical property",
+                "category": "decorative_or_noise",
+                "include_in_narration": False,
+            },
+        ]
+
+        objects = build_section_learning_objects(classified, [])
+
+        self.assertEqual([item["title"] for item in objects], ["What Are Properties of Matter?", "Physical Properties"])
+        self.assertNotIn("MAVIA sample learning material", "\n".join(item["content"] for item in objects))
+        self.assertNotIn("Learning Objectives", "\n".join(item["title"] for item in objects))
+        self.assertNotIn("Prerequisite connection", "\n".join(item["content"] for item in objects))
+
     @patch("lessons.services.instructional_content_classifier.get_llm_client")
     def test_invalid_llm_classification_json_falls_back_safely(self, mock_client_factory):
         mock_client_factory.return_value.generate_text.return_value = {"text": "not json"}
