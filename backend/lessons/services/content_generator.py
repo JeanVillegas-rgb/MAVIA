@@ -371,30 +371,10 @@ def _section_heading_title(text: str) -> str | None:
 
 def _looks_like_plain_subtopic_heading(text: str) -> str | None:
     text = re.sub(r"\s+", " ", text or "").strip()
-    lowered = text.lower()
     if not text or len(text) > 90 or re.search(r"[.!]$", text):
-        return None
-    if lowered.startswith(("page ", "module ", "grade ", "lesson ", "course ", "author:", "date:", "filename:")):
-        return None
-    if lowered in {
-        "learning objectives",
-        "objectives",
-        "references",
-        "bibliography",
-        "sources",
-        "acknowledgments",
-        "table of contents",
-        "contents",
-    }:
-        return None
-    if lowered.startswith(("quick check", "quiz", "review question", "exercise", "activity")):
         return None
     words = text.split()
     word_count = len(words)
-    if "example" in lowered and not re.search(r"[.!?:;]", text) and word_count <= 6:
-        return None
-    if any(marker in lowered for marker in ("mavia", "sample learning material", "elementary science learning material")):
-        return None
     title_words = [
         word.strip(":-,()")
         for word in words
@@ -408,30 +388,21 @@ def _looks_like_plain_subtopic_heading(text: str) -> str | None:
 
 
 def _raw_learning_object_heading_title(block: dict) -> str | None:
+    if block.get("teacher_override"):
+        return None
     text = block.get("text", "")
     return _section_heading_title(text) or _looks_like_plain_subtopic_heading(text)
 
 
 def _learning_object_heading_title(block: dict) -> str | None:
+    if block.get("teacher_override"):
+        return None
     numbered_title = _section_heading_title(block.get("text", ""))
     if numbered_title:
         return numbered_title
     if block.get("category") != "lesson_content" or not block.get("include_in_narration"):
         return None
     return _looks_like_plain_subtopic_heading(block.get("text", ""))
-
-
-def _is_front_matter_title_text(text: str) -> bool:
-    lowered = (text or "").lower()
-    return any(
-        marker in lowered
-        for marker in (
-            "mavia",
-            "sample learning material",
-            "elementary science learning material",
-            "prerequisite connection",
-        )
-    )
 
 
 def _heading_only_allowed(block: dict) -> bool:
@@ -456,61 +427,18 @@ def _finalize_current_learning_object(current: dict | None, learning_objects: li
 
 def _is_instructional_table_or_chart_block(block: dict) -> bool:
     text = (block.get("text") or "").strip()
-    lowered = text.lower()
     if block.get("category") not in {"lesson_content", "table_header", "concept_metadata"}:
         return False
-    if any(marker in lowered for marker in ("key concepts for extraction", "prerequisite cue", "edge-scoring", "teacher review note")):
-        return False
-    table_keywords = (
-        "table",
-        "chart",
-        "graph",
-        "example",
-        "description",
-        "characteristic",
-        "property",
-        "function",
-        "part",
-        "type",
-        "state",
-        "solid",
-        "liquid",
-        "gas",
-        "compare",
-        "difference",
-        "similarity",
-    )
-    return len(text.split()) >= 8 and any(keyword in lowered for keyword in table_keywords)
+    return int(block.get("line_count") or 1) >= 3 and len(text.split()) >= 8
 
 
 def _is_assessment_statement_content(block: dict) -> bool:
     if block.get("category") not in {"assessment", "reference", "document_metadata"}:
         return False
     text = re.sub(r"^[•\-\*\u2022]\s*", "", block.get("text", "") or "").strip()
-    lowered = text.lower()
     if not text or text.endswith("?"):
         return False
-    if lowered.startswith(("why ", "what ", "how ", "which ", "classify ", "identify ", "explain ", "give ")):
-        return False
-    safety_keywords = (
-        "harm",
-        "harmful",
-        "safety",
-        "safe",
-        "irritate",
-        "chemical",
-        "smoke",
-        "burn",
-        "broken",
-        "sharp",
-        "injury",
-        "lungs",
-        "contaminated",
-        "spoiled",
-        "poison",
-        "toxic",
-    )
-    return len(text.split()) >= 5 and any(keyword in lowered for keyword in safety_keywords)
+    return len(text.split()) >= 5 and bool(re.search(r"[.!;:]$", text))
 
 
 def _block_is_kept_content(block: dict) -> bool:
@@ -518,7 +446,6 @@ def _block_is_kept_content(block: dict) -> bool:
         block.get("category") == "lesson_content"
         and block.get("include_in_narration")
         and not _raw_learning_object_heading_title(block)
-        and not _is_front_matter_title_text(block.get("text", ""))
     ) or _is_instructional_table_or_chart_block(block) or _is_assessment_statement_content(block)
 
 
@@ -527,8 +454,6 @@ def _heading_has_following_content(blocks: list[dict], start_index: int) -> bool
         text = (next_block.get("text") or "").strip()
         if not text or _is_image_caption(text):
             continue
-        if _is_front_matter_title_text(text):
-            return False
         if _block_is_kept_content(next_block):
             return True
         if _raw_learning_object_heading_title(next_block) or next_block.get("category") in {
@@ -592,10 +517,6 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
     for index, block in enumerate(classified_blocks):
         text = block.get("text", "").strip()
         if not text or _is_image_caption(text):
-            continue
-        if _is_front_matter_title_text(text):
-            _finalize_current_learning_object(current, learning_objects)
-            current = None
             continue
 
         heading_title = _learning_object_heading_title(block)
@@ -794,6 +715,77 @@ def _review_blocks(blocks: list[dict]) -> list[dict]:
     return [_review_block(block) for block in blocks]
 
 
+def review_learning_objects_for_bvi_learners(learning_objects: list[dict]) -> list[dict]:
+    candidates = [
+        {
+            "index": index,
+            "title": item.get("title", ""),
+            "content": _limited_text(item.get("content", ""), 1200),
+            "source": item.get("source", ""),
+        }
+        for index, item in enumerate(learning_objects)
+        if item.get("type") != "image_description"
+    ]
+    if not candidates:
+        return learning_objects
+
+    prompt = textwrap.dedent(
+        f"""
+        Review candidate learning objects for an audio lesson for blind or visually impaired learners.
+
+        Keep only objects that teach learner-facing knowledge, explanations, examples, procedures, or guided practice.
+        Drop objects that are page labels, document titles, metadata, objectives lists, prerequisite notes,
+        table headers without standalone teaching value, duplicate labels, references, or teacher/admin notes.
+
+        Return JSON only:
+        {{
+          "items": [
+            {{"index": 0, "keep": true, "reason": "short reason"}}
+          ]
+        }}
+
+        CANDIDATES:
+        {json_dumps_for_prompt(candidates)}
+        """
+    ).strip()
+
+    try:
+        response = get_llm_client().generate_text(prompt, max_tokens=1800, timeout=240)
+        output = response.get("text") if isinstance(response, dict) else None
+        data = extract_json_from_text(output) if output else response
+    except Exception:
+        return learning_objects
+
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return learning_objects
+
+    keep_by_index = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            keep_by_index[int(item.get("index"))] = item.get("keep") is True
+        except (TypeError, ValueError):
+            continue
+    if not keep_by_index:
+        return learning_objects
+
+    reviewed = []
+    for index, item in enumerate(learning_objects):
+        if item.get("type") == "image_description" or keep_by_index.get(index, True):
+            reviewed.append(item)
+    for order, item in enumerate(reviewed):
+        item["order"] = order
+    return reviewed
+
+
+def json_dumps_for_prompt(value) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
 def _sync_learning_objects(material: LearningMaterial, generated_json: dict):
     material.learning_objects.all().delete()
     for index, item in enumerate(generated_json.get("learning_objects", [])):
@@ -894,6 +886,7 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
             for order, item in enumerate(learning_objects):
                 item["order"] = order
             fallback_used = bool(fallback_objects)
+        learning_objects = review_learning_objects_for_bvi_learners(learning_objects)
         narration_script = build_narration_script_from_learning_objects(learning_objects)
         playlist = build_lesson_playlist(narration_script)
         generated_json = {

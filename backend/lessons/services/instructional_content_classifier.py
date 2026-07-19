@@ -84,98 +84,17 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
     text = block.get("text", "").strip()
     lowered = text.lower()
     normalized = re.sub(r"\s+", " ", lowered)
-    learner_text = re.sub(r"^[•\-\*\u2022]\s*", "", text).strip()
-    learner_lowered = learner_text.lower()
-    line_count = int(block.get("line_count") or 1)
 
     if not text or re.fullmatch(r"(?:page\s*)?\d+(?:\s*/\s*\d+)?", lowered):
         return "decorative_or_noise", "Isolated page number or empty extraction artifact.", 1.0
-    if re.search(r"\bpage\s+\d+\b", normalized) and any(
-        marker in normalized for marker in ("mavia", "sample lesson", "lesson material")
-    ):
+    if re.search(r"\bpage\s+\d+\b", normalized) and len(text.split()) <= 8:
         return "document_metadata", "Document header or page label.", 1.0
-    if (
-        normalized.startswith("mavia ")
-        or "learning material" in normalized and len(text.split()) <= 10
-        or normalized in {"mavia", "sample lesson content", "sample lesson material"}
-    ):
-        return "document_metadata", "Document title/header label.", 1.0
     if re.fullmatch(r"[\W_]+", text):
         return "decorative_or_noise", "Punctuation-only extraction artifact.", 1.0
     if len(text) <= 2:
         return "decorative_or_noise", "Too short to be instructional content.", 0.98
 
-    table_headers = {
-        "concept",
-        "student-friendly meaning",
-        "why it matters",
-        "concept student-friendly meaning why it matters",
-        "source support",
-        "prerequisite cues",
-    }
-    if lowered.startswith("prerequisite connection"):
-        return "concept_metadata", "Prerequisite connection note, not learner-facing lesson content.", 0.96
-    if "prerequisite cue" in lowered or "foundation concept" in lowered or "learner path" in lowered:
-        return "concept_metadata", "Prerequisite or DAG support metadata.", 0.94
-    instructional_table_keywords = (
-        "example",
-        "description",
-        "characteristic",
-        "property",
-        "meaning",
-        "function",
-        "part",
-        "type",
-        "state",
-        "solid",
-        "liquid",
-        "gas",
-        "compare",
-        "difference",
-        "similarity",
-    )
-    if (
-        line_count >= 3
-        and len(text.split()) >= 8
-        and any(keyword in lowered for keyword in instructional_table_keywords)
-        and not any(marker in lowered for marker in ("key concepts for extraction", "prerequisite cue", "edge-scoring"))
-    ):
-        return "lesson_content", "Instructional table or chart text kept as lesson content.", 0.82
-    if lowered in table_headers or lowered.startswith(("concept ", "key concepts for extraction")):
-        return "concept_metadata", "Concept extraction table or metadata heading.", 0.96
-    if "why it matters" in lowered and len(text) < 160:
-        return "concept_metadata", "Concept metadata label.", 0.94
-    if lowered.startswith(("learners should", "the concepts of shape", "understanding the three states")):
-        return "concept_metadata", "Prerequisite or learner-path support statement.", 0.94
-    if "edge-scoring algorithm" in lowered or "concept nodes" in lowered:
-        return "concept_metadata", "Internal learner-path or concept extraction support.", 0.96
-    if lowered.startswith(("teacher note", "teacher review note", "implementation note", "testing note", "internal testing")):
-        return "teacher_note", "Teacher-only or implementation note.", 0.98
-    if lowered.startswith("purpose:") or "local llm may" in lowered or "suitable for testing" in lowered or "mavia testing" in lowered:
-        return "teacher_note", "Implementation/testing note.", 0.95
-    objective_starts = (
-        "define ",
-        "describe ",
-        "relate ",
-        "classify ",
-        "identify ",
-        "compare ",
-        "explain ",
-        "differentiate ",
-        "state ",
-        "apply ",
-    )
-    objective_text = re.sub(r"^[A-Z]\s+", "", learner_text).strip()
-    objective_lowered = objective_text.lower()
-    if lowered.startswith(("learning objective", "objectives", "at the end of", "learners will", "students will")):
-        return "learning_objective", "Learning objective statement.", 0.9
-    if re.match(r"^[A-Z]\s+(?:define|describe|relate|classify|identify|compare|explain|differentiate|state)\b", text):
-        return "learning_objective", "Learning objective bullet from PDF extraction.", 0.98
-    if objective_lowered.startswith(objective_starts) and len(objective_text.split()) <= 14:
-        return "learning_objective", "Short objective-style action statement.", 0.86
-    if lowered.startswith(("quick check", "quiz", "review questions", "exercise", "activity")):
-        return "assessment", "Assessment or learner task heading.", 0.93
-    if text.endswith("?") or learner_lowered.startswith(("why ", "what ", "how ", "classify ", "identify ", "explain ", "give ")):
+    if text.endswith("?"):
         return "assessment", "Question or task intended to check learner understanding.", 0.88
     if lowered in {"references", "bibliography", "sources", "acknowledgments"} or lowered.startswith(("http://", "https://", "www.")):
         return "reference", "Reference or source information.", 0.96
@@ -187,8 +106,6 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         return "document_metadata", "Numbered section heading, not narration body.", 0.96
     if len(text.split()) <= 4 and not re.search(r"[.!?]", text):
         return "document_metadata", "Short heading or label rather than narration.", 0.72
-    if len(text.split()) >= 12 and re.search(r"[.!?]$", text):
-        return "lesson_content", "Substantial explanatory sentence or paragraph.", 0.9
     return None
 
 
@@ -224,8 +141,8 @@ def _classification_prompt(blocks: list[dict]) -> str:
         - Narration is true only for lesson_content.
         - learning_objective is stored separately and not narrated by default.
         - Questions, quick checks, and tasks are assessment, not narration.
-        - Teacher/developer notes, concept tables, "why it matters", prerequisite cues,
-          and metadata must not be narrated.
+        - Teacher/developer notes, planning metadata, extraction support tables,
+          and administrative metadata must not be narrated.
 
         Blocks:
         {block_lines}

@@ -44,6 +44,7 @@ from .services.content_generator import (
     build_section_learning_objects,
     build_teacher_text_narration,
     generate_material_outputs,
+    review_learning_objects_for_bvi_learners,
 )
 from .services.audio_generator import generate_material_audio_playlist
 from .services.instructional_content_classifier import classify_instructional_blocks
@@ -1142,6 +1143,34 @@ class PreservedNarrationGenerationTests(TestCase):
                             "include_in_narration": True,
                             "confidence": 0.98,
                             "reason": "Explains matter.",
+                        },
+                        {
+                            "block_id": 2,
+                            "category": "teacher_note",
+                            "include_in_narration": False,
+                            "confidence": 0.95,
+                            "reason": "Teacher-facing note.",
+                        },
+                        {
+                            "block_id": 3,
+                            "category": "concept_metadata",
+                            "include_in_narration": False,
+                            "confidence": 0.95,
+                            "reason": "Metadata heading.",
+                        },
+                        {
+                            "block_id": 4,
+                            "category": "concept_metadata",
+                            "include_in_narration": False,
+                            "confidence": 0.95,
+                            "reason": "Metadata label.",
+                        },
+                        {
+                            "block_id": 6,
+                            "category": "concept_metadata",
+                            "include_in_narration": False,
+                            "confidence": 0.95,
+                            "reason": "Metadata table header.",
                         }
                     ]
                 }
@@ -1162,18 +1191,25 @@ class PreservedNarrationGenerationTests(TestCase):
         self.assertTrue(by_id[1]["include_in_narration"])
         self.assertEqual(by_id[1]["text"], blocks[0]["text"])
         self.assertEqual(by_id[2]["category"], "teacher_note")
-        self.assertEqual(by_id[3]["category"], "concept_metadata")
-        self.assertEqual(by_id[4]["category"], "concept_metadata")
+        self.assertEqual(by_id[3]["category"], "document_metadata")
+        self.assertEqual(by_id[4]["category"], "document_metadata")
         self.assertEqual(by_id[5]["category"], "assessment")
         self.assertEqual(by_id[6]["category"], "concept_metadata")
         self.assertFalse(by_id[5]["include_in_narration"])
 
     @patch("lessons.services.instructional_content_classifier.get_llm_client")
-    def test_classifier_excludes_sample_headers_objectives_and_bare_headings(self, mock_client_factory):
+    def test_classifier_uses_llm_for_objectives_and_keeps_structural_headings_out(self, mock_client_factory):
         mock_client_factory.return_value.generate_text.return_value = {
             "text": json.dumps(
                 {
                     "blocks": [
+                        {
+                            "block_id": 2,
+                            "category": "learning_objective",
+                            "include_in_narration": False,
+                            "confidence": 0.94,
+                            "reason": "Objective-style learner outcome.",
+                        },
                         {
                             "block_id": 4,
                             "category": "lesson_content",
@@ -1186,7 +1222,7 @@ class PreservedNarrationGenerationTests(TestCase):
             )
         }
         blocks = [
-            {"block_id": 1, "page": 1, "text": "MAVIA Sample Lesson Material Page 1"},
+            {"block_id": 1, "page": 1, "text": "Course Packet Page 1"},
             {"block_id": 2, "page": 1, "text": "Define matter as anything that has mass and occupies space."},
             {"block_id": 3, "page": 1, "text": "1. Matter"},
             {
@@ -1283,6 +1319,7 @@ class PreservedNarrationGenerationTests(TestCase):
                 "text": "State Description Example Solid has fixed shape and volume ice Liquid has fixed volume water Gas fills container air",
                 "category": "concept_metadata",
                 "include_in_narration": False,
+                "line_count": 3,
             },
         ]
 
@@ -1299,25 +1336,55 @@ class PreservedNarrationGenerationTests(TestCase):
 
         self.assertEqual(classified[0]["category"], "lesson_content")
 
-    def test_objective_bullets_and_prerequisite_notes_are_not_lesson_content(self):
+    @patch("lessons.services.instructional_content_classifier.get_llm_client")
+    def test_llm_classifies_objectives_and_setup_notes_without_keyword_rules(self, mock_client_factory):
+        mock_client_factory.return_value.generate_text.return_value = {
+            "text": json.dumps(
+                {
+                    "blocks": [
+                        {
+                            "block_id": 1,
+                            "category": "learning_objective",
+                            "include_in_narration": False,
+                            "confidence": 0.94,
+                            "reason": "Learner outcome.",
+                        },
+                        {
+                            "block_id": 2,
+                            "category": "concept_metadata",
+                            "include_in_narration": False,
+                            "confidence": 0.91,
+                            "reason": "Setup note for topic sequencing.",
+                        },
+                        {
+                            "block_id": 3,
+                            "category": "document_metadata",
+                            "include_in_narration": False,
+                            "confidence": 0.88,
+                            "reason": "Document title.",
+                        },
+                    ]
+                }
+            )
+        }
         classified = classify_instructional_blocks(
             [
                 {
                     "block_id": 1,
                     "page": 1,
-                    "text": "• Describe common physical properties of matter.",
+                    "text": "Describe the main idea in your own words.",
                     "line_count": 1,
                 },
                 {
                     "block_id": 2,
                     "page": 1,
-                    "text": "Prerequisite connection: Before studying useful materials, learners should understand observable properties.",
+                    "text": "Before this topic, learners should already understand the earlier lesson.",
                     "line_count": 1,
                 },
                 {
                     "block_id": 3,
                     "page": 1,
-                    "text": "Useful and Harmful Materials - Elementary Science Learning Material",
+                    "text": "Introductory Reading Packet",
                     "line_count": 1,
                 },
             ]
@@ -1430,6 +1497,45 @@ class PreservedNarrationGenerationTests(TestCase):
         self.assertNotIn("MAVIA sample learning material", "\n".join(item["content"] for item in objects))
         self.assertNotIn("Learning Objectives", "\n".join(item["title"] for item in objects))
         self.assertNotIn("Prerequisite connection", "\n".join(item["content"] for item in objects))
+
+    @patch("lessons.services.content_generator.get_llm_client")
+    def test_learning_object_review_keeps_only_model_approved_items(self, mock_client_factory):
+        mock_client_factory.return_value.generate_text.return_value = {
+            "text": json.dumps(
+                {
+                    "items": [
+                        {"index": 0, "keep": False, "reason": "Cover label."},
+                        {"index": 1, "keep": True, "reason": "Explains a learner-facing idea."},
+                        {"index": 2, "keep": False, "reason": "Outcome list."},
+                    ]
+                }
+            )
+        }
+        learning_objects = [
+            {
+                "order": 0,
+                "title": "Packet Page 1",
+                "type": "lesson_content",
+                "content": "Packet Page 1",
+            },
+            {
+                "order": 1,
+                "title": "Main Idea",
+                "type": "lesson_content",
+                "content": "A main idea tells what a paragraph is mostly about.",
+            },
+            {
+                "order": 2,
+                "title": "Goals",
+                "type": "lesson_content",
+                "content": "List three things you should be able to do.",
+            },
+        ]
+
+        reviewed = review_learning_objects_for_bvi_learners(learning_objects)
+
+        self.assertEqual([item["title"] for item in reviewed], ["Main Idea"])
+        self.assertEqual(reviewed[0]["order"], 0)
 
     @patch("lessons.services.instructional_content_classifier.get_llm_client")
     def test_invalid_llm_classification_json_falls_back_safely(self, mock_client_factory):
