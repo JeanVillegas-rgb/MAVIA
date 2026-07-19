@@ -214,3 +214,17 @@ export function fetchQuestionRunEvents(runId, afterSeq = 0) {
 export function fetchMaterialQuestions(materialId) {
   return request(`/generation/materials/${materialId}/questions/`);
 }
+
+export function updateGeneratedQuestion(questionId, data) {
+  return request(`/generation/questions/${questionId}/`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteGeneratedQuestion(questionId) {
+  return request(`/generation/questions/${questionId}/`, {
+    method: "DELETE",
+  });
+}

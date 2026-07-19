@@ -1799,6 +1799,33 @@ button {
   font-weight: 600;
 }
 
+.question-card-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.question-edit-form {
+  margin: 0.5rem 0;
+}
+
+.question-edit-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.question-edit-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.question-edit-choice input[type="text"],
+.question-edit-choice input:not([type]) {
+  flex: 1;
+}
+
 .generation-log summary {
   cursor: pointer;
   padding: 0.5rem 0;

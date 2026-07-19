@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   confirmLearningObjects,
   createLearningObject,
+  deleteGeneratedQuestion,
   deleteLearningObject,
   fetchCourse,
   fetchMaterialQuestions,
@@ -10,6 +11,7 @@ import {
   fetchQuestionRuns,
   generateAudioPlaylist,
   startQuestionGeneration,
+  updateGeneratedQuestion,
   updateLearningObject,
   uploadLearningMaterial,
 } from "../api";
@@ -90,7 +92,137 @@ function LearningObjectForm({ initialValue, submitLabel, busy, onCancel, onSubmi
   );
 }
 
-function QuestionCard({ question }) {
+function QuestionCard({ question, onSaved, onError }) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState(null);
+
+  function startEdit(event) {
+    event.stopPropagation();
+    setForm({
+      question_text: question.question_text,
+      choices: question.choices ? { ...question.choices } : null,
+      correct_answer: question.correct_answer,
+      explanation: question.explanation || "",
+    });
+    setEditing(true);
+  }
+
+  async function saveEdit(event) {
+    event.preventDefault();
+    setBusy(true);
+    onError("");
+    try {
+      await updateGeneratedQuestion(question.id, form);
+      setEditing(false);
+      await onSaved();
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeQuestion(event) {
+    event.stopPropagation();
+    if (!window.confirm("Delete this question (and any learner answers to it)?")) return;
+    setBusy(true);
+    onError("");
+    try {
+      await deleteGeneratedQuestion(question.id);
+      await onSaved();
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form
+        className="learning-object-form question-edit-form"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        onSubmit={saveEdit}
+      >
+        <label>
+          Question
+          <textarea
+            value={form.question_text}
+            disabled={busy}
+            required
+            rows={2}
+            onChange={(event) => setForm((f) => ({ ...f, question_text: event.target.value }))}
+          />
+        </label>
+        {question.question_format === "MCQ" && form.choices ? (
+          <div className="question-edit-choices">
+            {Object.entries(form.choices).map(([letter, text]) => (
+              <label className="question-edit-choice" key={letter}>
+                <input
+                  type="radio"
+                  name={`correct-${question.id}`}
+                  checked={form.correct_answer === letter}
+                  disabled={busy}
+                  onChange={() => setForm((f) => ({ ...f, correct_answer: letter }))}
+                  title="Mark as correct answer"
+                />
+                <strong>{letter}.</strong>
+                <input
+                  value={text}
+                  disabled={busy}
+                  required
+                  onChange={(event) =>
+                    setForm((f) => ({
+                      ...f,
+                      choices: { ...f.choices, [letter]: event.target.value },
+                    }))
+                  }
+                />
+              </label>
+            ))}
+            <p className="muted-text">Select the radio button of the correct answer.</p>
+          </div>
+        ) : (
+          <label>
+            Correct answer
+            <select
+              value={form.correct_answer}
+              disabled={busy}
+              onChange={(event) => setForm((f) => ({ ...f, correct_answer: event.target.value }))}
+            >
+              <option value="True">True</option>
+              <option value="False">False</option>
+            </select>
+          </label>
+        )}
+        <label>
+          Explanation
+          <textarea
+            value={form.explanation}
+            disabled={busy}
+            rows={2}
+            onChange={(event) => setForm((f) => ({ ...f, explanation: event.target.value }))}
+          />
+        </label>
+        <div className="learning-object-form-actions">
+          <button
+            className="btn btn-secondary btn-small"
+            type="button"
+            disabled={busy}
+            onClick={() => setEditing(false)}
+          >
+            Cancel
+          </button>
+          <button className="btn btn-primary btn-small" type="submit" disabled={busy}>
+            {busy ? "Saving..." : "Save question"}
+          </button>
+        </div>
+      </form>
+    );
+  }
+
   return (
     <div className="generated-item question-card">
       <div className="question-card-header">
@@ -100,6 +232,24 @@ function QuestionCard({ question }) {
         <span className="muted-text">
           {question.question_format} &middot; {question.bloom_level}
           {question.category && <> &middot; {question.category}</>}
+        </span>
+        <span className="question-card-actions">
+          <button
+            className="btn btn-secondary btn-small"
+            type="button"
+            disabled={busy}
+            onClick={startEdit}
+          >
+            Edit
+          </button>
+          <button
+            className="btn btn-danger btn-small"
+            type="button"
+            disabled={busy}
+            onClick={removeQuestion}
+          >
+            {busy ? "..." : "Delete"}
+          </button>
         </span>
       </div>
       <p className="question-text">{question.question_text}</p>
@@ -587,7 +737,12 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                             </span>
                           </summary>
                           {questionsByNode.get(item.id).map((question) => (
-                            <QuestionCard key={question.id} question={question} />
+                            <QuestionCard
+                              key={question.id}
+                              question={question}
+                              onSaved={loadQuestionBank}
+                              onError={onError}
+                            />
                           ))}
                         </details>
                       )}
@@ -628,7 +783,10 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
         <div className="generated-section-header">
           <div>
             <h5>Lesson Playlist</h5>
-            <p className="muted-text">Audio is generated from the confirmed learning objects for this topic.</p>
+            <p className="muted-text">
+              Audio is generated from the confirmed learning objects, with each node&apos;s practice
+              questions read after its lesson (answers are not spoken).
+            </p>
           </div>
           <button
             className="btn btn-primary btn-small"
@@ -649,7 +807,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                 <span>{index + 1}</span>
                 <div>
                   <strong>{item.title || `Playlist item ${index + 1}`}</strong>
-                  <small>{item.type || "lesson"}</small>
+                  <small>{(item.type || "lesson").replace(/_/g, " ")}</small>
                 </div>
                 {item.audio_url ? (
                   <audio controls src={item.audio_url}>

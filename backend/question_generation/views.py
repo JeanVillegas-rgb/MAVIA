@@ -279,6 +279,82 @@ class MaterialQuestionsView(APIView):
         return Response(payload)
 
 
+class QuestionDetailView(APIView):
+    """
+    PATCH /api/generation/questions/<question_id>/
+    Body: any of {"question_text", "choices", "correct_answer", "explanation"}
+
+    Teacher review edits to a stored question. DELETE removes the question.
+    NOTE: editing or deleting cascades no learner responses except on delete.
+    """
+    def patch(self, request, question_id):
+        try:
+            question = GeneratedQuestion.objects.get(id=question_id)
+        except GeneratedQuestion.DoesNotExist:
+            return Response({"error": "Question not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+
+        if "question_text" in data:
+            text = str(data["question_text"]).strip()
+            if not text:
+                return Response({"error": "Question text cannot be blank"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            question.question_text = text
+
+        if "choices" in data:
+            if question.question_format != "MCQ":
+                return Response({"error": "Only MCQ questions have choices"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            choices = data["choices"]
+            if not isinstance(choices, dict) or len(choices) < 2:
+                return Response({"error": "Choices must be an object with at least two options"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            cleaned = {str(k).strip().upper(): str(v).strip() for k, v in choices.items()}
+            if any(not v for v in cleaned.values()):
+                return Response({"error": "Choice text cannot be blank"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            question.choices = cleaned
+
+        if "correct_answer" in data:
+            question.correct_answer = str(data["correct_answer"]).strip()
+
+        if "explanation" in data:
+            question.explanation = str(data["explanation"]).strip()
+
+        if question.question_format == "MCQ":
+            if question.correct_answer not in (question.choices or {}):
+                return Response({"error": "Correct answer must be one of the choice letters"},
+                                status=status.HTTP_400_BAD_REQUEST)
+        elif question.question_format == "TF":
+            question.correct_answer = question.correct_answer.capitalize()
+            if question.correct_answer not in ("True", "False"):
+                return Response({"error": "Correct answer must be True or False"},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        question.save()
+        return Response({
+            "id": question.id,
+            "question_text": question.question_text,
+            "question_format": question.question_format,
+            "choices": question.choices,
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation,
+            "difficulty": question.difficulty,
+            "bloom_level": question.bloom_level,
+            "category": question.category,
+            "difficulty_match": question.difficulty_match,
+        })
+
+    def delete(self, request, question_id):
+        deleted, _ = GeneratedQuestion.objects.filter(id=question_id).delete()
+        if not deleted:
+            return Response({"error": "Question not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class GenerationRunsView(APIView):
     """GET /api/generation/runs/?material_id=<id> — recent runs, newest first."""
     def get(self, request):
