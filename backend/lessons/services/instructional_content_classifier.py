@@ -137,6 +137,8 @@ def _classification_prompt(blocks: list[dict]) -> str:
 
         Rules:
         - Do not rewrite, paraphrase, correct, shorten, or add text.
+        - Do not create notes, key ideas, summaries, lesson scripts, or learning objectives.
+        - Only decide the category of the exact PDF block.
         - Classify each block into exactly one category.
         - Narration is true only for lesson_content.
         - learning_objective is stored separately and not narrated by default.

@@ -418,11 +418,6 @@ def _finalize_current_learning_object(current: dict | None, learning_objects: li
     if content:
         current["content"] = content
         learning_objects.append(current)
-        return
-    if current.get("heading_only_allowed"):
-        current["content"] = current["title"]
-        current["source_excerpt"] = current["title"]
-        learning_objects.append(current)
 
 
 def _is_instructional_table_or_chart_block(block: dict) -> bool:
@@ -536,7 +531,6 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
                 "source_block_id": block.get("block_id"),
                 "source_excerpt": "",
                 "parts": [],
-                "heading_only_allowed": _heading_only_allowed(block),
             }
             continue
 
@@ -733,6 +727,12 @@ def review_learning_objects_for_bvi_learners(learning_objects: list[dict]) -> li
         f"""
         Review candidate learning objects for an audio lesson for blind or visually impaired learners.
 
+        You are not making notes from the PDF.
+        You are not extracting key ideas.
+        You are not writing or improving a script.
+        The teacher's exact PDF text is what students will hear.
+        Your only job is to decide whether each existing candidate should be kept or dropped.
+
         Keep only objects that teach learner-facing knowledge, explanations, examples, procedures, or guided practice.
         Drop objects that are page labels, document titles, metadata, objectives lists, prerequisite notes,
         table headers without standalone teaching value, duplicate labels, references, or teacher/admin notes.
@@ -743,6 +743,8 @@ def review_learning_objects_for_bvi_learners(learning_objects: list[dict]) -> li
             {{"index": 0, "keep": true, "reason": "short reason"}}
           ]
         }}
+
+        Do not return rewritten titles or rewritten content. Only return index, keep, and reason.
 
         CANDIDATES:
         {json_dumps_for_prompt(candidates)}

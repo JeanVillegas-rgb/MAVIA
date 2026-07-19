@@ -1298,7 +1298,7 @@ class PreservedNarrationGenerationTests(TestCase):
         self.assertNotIn("Teacher review note", "\n".join(item["content"] for item in narration))
         self.assertNotIn("1. Matter", "\n".join(item["content"] for item in narration))
 
-    def test_sparse_subtopic_headings_become_learning_objects(self):
+    def test_sparse_subtopic_headings_do_not_become_spoken_learning_objects(self):
         classified = [
             {"block_id": 1, "page": 1, "text": "1.1 States of Matter", "category": "lesson_content", "include_in_narration": True},
             {"block_id": 2, "page": 1, "text": "1.2 Changes in Matter", "category": "lesson_content", "include_in_narration": True},
@@ -1306,9 +1306,7 @@ class PreservedNarrationGenerationTests(TestCase):
 
         objects = build_section_learning_objects(classified, [])
 
-        self.assertEqual([item["title"] for item in objects], ["States of Matter", "Changes in Matter"])
-        self.assertEqual(objects[0]["content"], "States of Matter")
-        self.assertEqual(objects[1]["content"], "Changes in Matter")
+        self.assertEqual(objects, [])
 
     def test_instructional_table_text_is_kept_as_learning_object_content(self):
         classified = [
@@ -1505,7 +1503,13 @@ class PreservedNarrationGenerationTests(TestCase):
                 {
                     "items": [
                         {"index": 0, "keep": False, "reason": "Cover label."},
-                        {"index": 1, "keep": True, "reason": "Explains a learner-facing idea."},
+                        {
+                            "index": 1,
+                            "keep": True,
+                            "reason": "Explains a learner-facing idea.",
+                            "title": "Rewritten Main Idea",
+                            "content": "This is a simplified note that should never be used.",
+                        },
                         {"index": 2, "keep": False, "reason": "Outcome list."},
                     ]
                 }
@@ -1535,6 +1539,7 @@ class PreservedNarrationGenerationTests(TestCase):
         reviewed = review_learning_objects_for_bvi_learners(learning_objects)
 
         self.assertEqual([item["title"] for item in reviewed], ["Main Idea"])
+        self.assertEqual(reviewed[0]["content"], "A main idea tells what a paragraph is mostly about.")
         self.assertEqual(reviewed[0]["order"], 0)
 
     @patch("lessons.services.instructional_content_classifier.get_llm_client")
