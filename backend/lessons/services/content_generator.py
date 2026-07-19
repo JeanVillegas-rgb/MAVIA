@@ -678,7 +678,15 @@ def apply_classification_override(
 
 
 def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
+    import time as _time
+    _t0 = _time.monotonic()
+
+    def _trace(step):
+        print(f"[TRACE material {material.id}] {step} (+{_time.monotonic() - _t0:.0f}s)",
+              flush=True)
+
     try:
+        _trace("start: extracting PDF text")
         text = extract_pdf_text(material.pdf_file.path)
         if not text.strip():
             raise ValueError("No readable text was found in the PDF.")
@@ -687,18 +695,25 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
         if not cleaned_preserved_text.strip():
             raise ValueError("No meaningful lesson text was found in the PDF.")
         metadata_text = _limited_text(cleaned_preserved_text)
+        _trace(f"text extracted: {len(text)} chars, {len(extracted_blocks)} blocks")
 
         images = extract_meaningful_pdf_images(material.pdf_file.path)
+        _trace(f"images extracted: {len(images)}")
 
         if material.outline_node_id is None:
+            _trace("matching outline node")
             matched_node = choose_outline_node_for_material(material.course, material.title, metadata_text)
             if matched_node:
                 material.outline_node = matched_node
 
+        _trace("generating lesson metadata (LLM)")
         metadata = generate_lesson_metadata_from_text(metadata_text)
         lesson_title = metadata.get("lesson_title") or material.title
+        _trace("classifying instructional blocks")
         classified_blocks = classify_instructional_blocks(extracted_blocks)
+        _trace(f"describing {len(images)} images (vision LLM)")
         image_descriptions = describe_pdf_images(images, lesson_title, cleaned_preserved_text)
+        _trace("building learning objects")
         sections = split_classified_blocks(classified_blocks)
         learning_objects = build_section_learning_objects(classified_blocks, image_descriptions)
         fallback_used = False
@@ -755,7 +770,9 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
         material.save(update_fields=["outline_node", "title", "extracted_text", "generated_json", "status", "error_message"])
 
         _sync_learning_objects(material, generated_json)
+        _trace(f"done: status={material.status}")
     except Exception as exc:
+        _trace(f"FAILED: {type(exc).__name__}: {exc}")
         material.status = LearningMaterial.Status.FAILED
         material.error_message = str(exc)
         material.save(update_fields=["status", "error_message"])

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -109,15 +110,33 @@ class LocalLLMClient:
         return self._post_chat(payload, timeout=timeout or self.vision_timeout, model=self.vision_model)
 
     def _post_chat(self, payload: dict, timeout: int, model: str) -> Optional[dict]:
+        prompt_chars = sum(
+            len(str(m.get("content", ""))) for m in payload.get("messages", [])
+        )
+        has_images = any("images" in m for m in payload.get("messages", []))
+        print(
+            f"[TRACE llm] -> {model} (timeout={timeout}s, prompt_chars={prompt_chars}, "
+            f"vision={'yes' if has_images else 'no'})",
+            flush=True,
+        )
+        started = time.monotonic()
         try:
             response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=timeout)
             response.raise_for_status()
             data = response.json()
+            print(
+                f"[TRACE llm] <- {model} OK in {time.monotonic() - started:.0f}s",
+                flush=True,
+            )
         except requests.exceptions.ConnectionError as exc:
+            print(f"[TRACE llm] <- {model} CONNECTION ERROR "
+                  f"after {time.monotonic() - started:.0f}s", flush=True)
             raise LocalLLMError(
                 f"Local Ollama is not running at {self.base_url}. Start Ollama and try again."
             ) from exc
         except requests.exceptions.Timeout as exc:
+            print(f"[TRACE llm] <- {model} TIMED OUT "
+                  f"after {time.monotonic() - started:.0f}s (limit {timeout}s)", flush=True)
             raise LocalLLMError(
                 f"Local Ollama timed out while running {model}. Try again or use a smaller local model."
             ) from exc
