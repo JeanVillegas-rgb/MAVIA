@@ -84,6 +84,8 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
     text = block.get("text", "").strip()
     lowered = text.lower()
     normalized = re.sub(r"\s+", " ", lowered)
+    learner_text = re.sub(r"^[•\-\*\u2022]\s*", "", text).strip()
+    learner_lowered = learner_text.lower()
     line_count = int(block.get("line_count") or 1)
 
     if not text or re.fullmatch(r"(?:page\s*)?\d+(?:\s*/\s*\d+)?", lowered):
@@ -92,7 +94,11 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         marker in normalized for marker in ("mavia", "sample lesson", "lesson material")
     ):
         return "document_metadata", "Document header or page label.", 1.0
-    if normalized.startswith("mavia ") or normalized in {"mavia", "sample lesson content", "sample lesson material"}:
+    if (
+        normalized.startswith("mavia ")
+        or "learning material" in normalized and len(text.split()) <= 10
+        or normalized in {"mavia", "sample lesson content", "sample lesson material"}
+    ):
         return "document_metadata", "Document title/header label.", 1.0
     if re.fullmatch(r"[\W_]+", text):
         return "decorative_or_noise", "Punctuation-only extraction artifact.", 1.0
@@ -107,6 +113,10 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         "source support",
         "prerequisite cues",
     }
+    if lowered.startswith("prerequisite connection"):
+        return "concept_metadata", "Prerequisite connection note, not learner-facing lesson content.", 0.96
+    if "prerequisite cue" in lowered or "foundation concept" in lowered or "learner path" in lowered:
+        return "concept_metadata", "Prerequisite or DAG support metadata.", 0.94
     instructional_table_keywords = (
         "example",
         "description",
@@ -135,8 +145,6 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         return "concept_metadata", "Concept extraction table or metadata heading.", 0.96
     if "why it matters" in lowered and len(text) < 160:
         return "concept_metadata", "Concept metadata label.", 0.94
-    if "prerequisite cue" in lowered or "foundation concept" in lowered or "learner path" in lowered:
-        return "concept_metadata", "Prerequisite or DAG support metadata.", 0.94
     if lowered.startswith(("learners should", "the concepts of shape", "understanding the three states")):
         return "concept_metadata", "Prerequisite or learner-path support statement.", 0.94
     if "edge-scoring algorithm" in lowered or "concept nodes" in lowered:
@@ -145,10 +153,6 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         return "teacher_note", "Teacher-only or implementation note.", 0.98
     if lowered.startswith("purpose:") or "local llm may" in lowered or "suitable for testing" in lowered or "mavia testing" in lowered:
         return "teacher_note", "Implementation/testing note.", 0.95
-    if lowered.startswith(("quick check", "quiz", "review questions", "exercise", "activity")):
-        return "assessment", "Assessment or learner task heading.", 0.93
-    if text.endswith("?") or lowered.startswith(("why ", "what ", "how ", "classify ", "identify ", "explain ")):
-        return "assessment", "Question or task intended to check learner understanding.", 0.88
     objective_starts = (
         "define ",
         "describe ",
@@ -159,8 +163,9 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         "explain ",
         "differentiate ",
         "state ",
+        "apply ",
     )
-    objective_text = re.sub(r"^[A-Z]\s+", "", text).strip()
+    objective_text = re.sub(r"^[A-Z]\s+", "", learner_text).strip()
     objective_lowered = objective_text.lower()
     if lowered.startswith(("learning objective", "objectives", "at the end of", "learners will", "students will")):
         return "learning_objective", "Learning objective statement.", 0.9
@@ -168,6 +173,10 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         return "learning_objective", "Learning objective bullet from PDF extraction.", 0.98
     if objective_lowered.startswith(objective_starts) and len(objective_text.split()) <= 14:
         return "learning_objective", "Short objective-style action statement.", 0.86
+    if lowered.startswith(("quick check", "quiz", "review questions", "exercise", "activity")):
+        return "assessment", "Assessment or learner task heading.", 0.93
+    if text.endswith("?") or learner_lowered.startswith(("why ", "what ", "how ", "classify ", "identify ", "explain ", "give ")):
+        return "assessment", "Question or task intended to check learner understanding.", 0.88
     if lowered in {"references", "bibliography", "sources", "acknowledgments"} or lowered.startswith(("http://", "https://", "www.")):
         return "reference", "Reference or source information.", 0.96
     if lowered.startswith(("module ", "grade ", "lesson ", "course ", "author:", "date:", "filename:")) and len(text) < 120:

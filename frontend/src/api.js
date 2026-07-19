@@ -87,6 +87,12 @@ export function uploadLearningMaterial(courseId, formData) {
   });
 }
 
+export function regenerateLearningMaterial(courseId, materialId) {
+  return request(`/courses/${courseId}/materials/${materialId}/regenerate-outputs/`, {
+    method: "POST",
+  });
+}
+
 export function createLearningObject(courseId, materialId, data) {
   return request(`/courses/${courseId}/materials/${materialId}/learning-objects/`, {
     method: "POST",

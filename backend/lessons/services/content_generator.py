@@ -389,22 +389,36 @@ def _looks_like_plain_subtopic_heading(text: str) -> str | None:
         return None
     if lowered.startswith(("quick check", "quiz", "review question", "exercise", "activity")):
         return None
+    words = text.split()
+    word_count = len(words)
+    if "example" in lowered and not re.search(r"[.!?:;]", text) and word_count <= 6:
+        return None
     if any(marker in lowered for marker in ("mavia", "sample learning material", "elementary science learning material")):
         return None
-    word_count = len(text.split())
-    if 2 <= word_count <= 9 and re.search(r"[A-Za-z]", text):
+    title_words = [
+        word.strip(":-,()")
+        for word in words
+        if word.lower().strip(":-,()") not in {"and", "or", "of", "in", "to", "for", "the", "a", "an"}
+    ]
+    title_cased_count = sum(1 for word in title_words if word[:1].isupper())
+    title_like = text.endswith("?") or title_cased_count >= max(2, len(title_words) - 1)
+    if 2 <= word_count <= 9 and re.search(r"[A-Za-z]", text) and title_like:
         return text.strip(" .")[:255]
     return None
 
 
-def _learning_object_heading_title(block: dict) -> str | None:
+def _raw_learning_object_heading_title(block: dict) -> str | None:
     text = block.get("text", "")
-    numbered_title = _section_heading_title(text)
+    return _section_heading_title(text) or _looks_like_plain_subtopic_heading(text)
+
+
+def _learning_object_heading_title(block: dict) -> str | None:
+    numbered_title = _section_heading_title(block.get("text", ""))
     if numbered_title:
         return numbered_title
     if block.get("category") != "lesson_content" or not block.get("include_in_narration"):
         return None
-    return _looks_like_plain_subtopic_heading(text)
+    return _looks_like_plain_subtopic_heading(block.get("text", ""))
 
 
 def _is_front_matter_title_text(text: str) -> bool:
@@ -469,6 +483,64 @@ def _is_instructional_table_or_chart_block(block: dict) -> bool:
     return len(text.split()) >= 8 and any(keyword in lowered for keyword in table_keywords)
 
 
+def _is_assessment_statement_content(block: dict) -> bool:
+    if block.get("category") not in {"assessment", "reference", "document_metadata"}:
+        return False
+    text = re.sub(r"^[•\-\*\u2022]\s*", "", block.get("text", "") or "").strip()
+    lowered = text.lower()
+    if not text or text.endswith("?"):
+        return False
+    if lowered.startswith(("why ", "what ", "how ", "which ", "classify ", "identify ", "explain ", "give ")):
+        return False
+    safety_keywords = (
+        "harm",
+        "harmful",
+        "safety",
+        "safe",
+        "irritate",
+        "chemical",
+        "smoke",
+        "burn",
+        "broken",
+        "sharp",
+        "injury",
+        "lungs",
+        "contaminated",
+        "spoiled",
+        "poison",
+        "toxic",
+    )
+    return len(text.split()) >= 5 and any(keyword in lowered for keyword in safety_keywords)
+
+
+def _block_is_kept_content(block: dict) -> bool:
+    return (
+        block.get("category") == "lesson_content"
+        and block.get("include_in_narration")
+        and not _raw_learning_object_heading_title(block)
+        and not _is_front_matter_title_text(block.get("text", ""))
+    ) or _is_instructional_table_or_chart_block(block) or _is_assessment_statement_content(block)
+
+
+def _heading_has_following_content(blocks: list[dict], start_index: int) -> bool:
+    for next_block in blocks[start_index + 1 :]:
+        text = (next_block.get("text") or "").strip()
+        if not text or _is_image_caption(text):
+            continue
+        if _is_front_matter_title_text(text):
+            return False
+        if _block_is_kept_content(next_block):
+            return True
+        if _raw_learning_object_heading_title(next_block) or next_block.get("category") in {
+            "learning_objective",
+            "assessment",
+            "teacher_note",
+            "reference",
+        }:
+            return False
+    return False
+
+
 def _image_caption_title(text: str) -> str | None:
     match = re.match(r"\s*Figure\s+\d+\.\s*(.+)", text or "", flags=re.IGNORECASE)
     if not match:
@@ -517,7 +589,7 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
         )
 
     current = None
-    for block in classified_blocks:
+    for index, block in enumerate(classified_blocks):
         text = block.get("text", "").strip()
         if not text or _is_image_caption(text):
             continue
@@ -527,6 +599,10 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
             continue
 
         heading_title = _learning_object_heading_title(block)
+        if not heading_title:
+            raw_heading_title = _raw_learning_object_heading_title(block)
+            if raw_heading_title and _heading_has_following_content(classified_blocks, index):
+                heading_title = raw_heading_title
         if heading_title:
             _finalize_current_learning_object(current, learning_objects)
             current = {
@@ -543,10 +619,7 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
             }
             continue
 
-        keep_as_content = (
-            block.get("category") == "lesson_content"
-            and block.get("include_in_narration")
-        ) or _is_instructional_table_or_chart_block(block)
+        keep_as_content = _block_is_kept_content(block)
 
         if not keep_as_content:
             if block.get("category") in {"assessment", "teacher_note", "concept_metadata", "table_header", "reference"}:

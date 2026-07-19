@@ -987,6 +987,34 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
+        url_path=r"materials/(?P<material_id>[^/.]+)/regenerate-outputs",
+    )
+    def regenerate_material_outputs(self, request, pk=None, material_id=None):
+        course = self.get_object()
+        material = self._get_course_material(course, material_id)
+        if material is None:
+            return Response(
+                {"detail": "Learning material not found for this course."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not material.pdf_file:
+            return Response(
+                {"detail": "This material has no PDF file to regenerate."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        material.status = LearningMaterial.Status.PROCESSING
+        material.error_message = ""
+        material.save(update_fields=["status", "error_message"])
+        generate_material_outputs(material)
+
+        course = self.get_queryset().get(pk=course.pk)
+        serializer = CourseDetailSerializer(course, context={"request": request})
+        return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=["post"],
         url_path=r"materials/(?P<material_id>[^/.]+)/learning-objects",
     )
     def create_learning_object(self, request, pk=None, material_id=None):

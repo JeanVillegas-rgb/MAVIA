@@ -1299,6 +1299,36 @@ class PreservedNarrationGenerationTests(TestCase):
 
         self.assertEqual(classified[0]["category"], "lesson_content")
 
+    def test_objective_bullets_and_prerequisite_notes_are_not_lesson_content(self):
+        classified = classify_instructional_blocks(
+            [
+                {
+                    "block_id": 1,
+                    "page": 1,
+                    "text": "• Describe common physical properties of matter.",
+                    "line_count": 1,
+                },
+                {
+                    "block_id": 2,
+                    "page": 1,
+                    "text": "Prerequisite connection: Before studying useful materials, learners should understand observable properties.",
+                    "line_count": 1,
+                },
+                {
+                    "block_id": 3,
+                    "page": 1,
+                    "text": "Useful and Harmful Materials - Elementary Science Learning Material",
+                    "line_count": 1,
+                },
+            ]
+        )
+        by_id = {item["block_id"]: item for item in classified}
+
+        self.assertEqual(by_id[1]["category"], "learning_objective")
+        self.assertFalse(by_id[1]["include_in_narration"])
+        self.assertEqual(by_id[2]["category"], "concept_metadata")
+        self.assertEqual(by_id[3]["category"], "document_metadata")
+
     def test_non_instructional_front_matter_does_not_become_learning_objects(self):
         classified = [
             {

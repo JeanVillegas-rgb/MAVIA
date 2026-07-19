@@ -6,6 +6,7 @@ import {
   deleteLearningObject,
   fetchCourse,
   generateAudioPlaylist,
+  regenerateLearningMaterial,
   updateLearningObject,
   uploadLearningMaterial,
 } from "../api";
@@ -209,6 +210,27 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
     }
   }
 
+  async function regenerateOutputs() {
+    setBusyAction("regenerate");
+    onError("");
+    onMessage("");
+    try {
+      const updatedCourse = await regenerateLearningMaterial(courseId, material.id);
+      onCourseChange(updatedCourse);
+      const updatedMaterial = updatedCourse.materials?.find((item) => item.id === material.id);
+      const objectCount = updatedMaterial?.learning_objects?.length || 0;
+      onMessage(
+        objectCount
+          ? `${objectCount} learning object${objectCount === 1 ? "" : "s"} regenerated from the PDF.`
+          : "Regeneration finished, but no learning objects were extracted.",
+      );
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   return (
     <article className="topic-material-card">
       <div className="material-header">
@@ -222,7 +244,17 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
             </p>
           )}
         </div>
-        <span className={`status-pill status-${material.status}`}>{material.status}</span>
+        <div className="generated-item-actions">
+          <button
+            className="btn btn-secondary btn-small"
+            type="button"
+            disabled={Boolean(busyAction)}
+            onClick={regenerateOutputs}
+          >
+            {busyAction === "regenerate" ? "Regenerating..." : "Regenerate extraction"}
+          </button>
+          <span className={`status-pill status-${material.status}`}>{material.status}</span>
+        </div>
       </div>
 
       {material.error_message && <div className="error-banner">{material.error_message}</div>}
