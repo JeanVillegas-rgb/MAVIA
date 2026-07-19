@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "lessons",
+    "question_generation",
 ]
 
 MIDDLEWARE = [
@@ -66,6 +67,9 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # question generation writes trace events from a background thread
+        # while the frontend polls — wait out transient SQLite locks
+        "OPTIONS": {"timeout": 20},
     }
 }
 
@@ -113,3 +117,6 @@ OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", OLLAMA_MODEL)
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
 OLLAMA_VISION_TIMEOUT = int(os.getenv("OLLAMA_VISION_TIMEOUT", str(OLLAMA_TIMEOUT)))
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
+
+# Model for question generation (separate from the content generation model)
+QUESTION_LLM_MODEL = os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
