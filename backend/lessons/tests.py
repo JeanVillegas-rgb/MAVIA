@@ -1262,6 +1262,43 @@ class PreservedNarrationGenerationTests(TestCase):
         self.assertNotIn("Teacher review note", "\n".join(item["content"] for item in narration))
         self.assertNotIn("1. Matter", "\n".join(item["content"] for item in narration))
 
+    def test_sparse_subtopic_headings_become_learning_objects(self):
+        classified = [
+            {"block_id": 1, "page": 1, "text": "1.1 States of Matter", "category": "lesson_content", "include_in_narration": True},
+            {"block_id": 2, "page": 1, "text": "1.2 Changes in Matter", "category": "lesson_content", "include_in_narration": True},
+        ]
+
+        objects = build_section_learning_objects(classified, [])
+
+        self.assertEqual([item["title"] for item in objects], ["States of Matter", "Changes in Matter"])
+        self.assertEqual(objects[0]["content"], "States of Matter")
+        self.assertEqual(objects[1]["content"], "Changes in Matter")
+
+    def test_instructional_table_text_is_kept_as_learning_object_content(self):
+        classified = [
+            {"block_id": 1, "page": 1, "text": "2. Properties of Matter", "category": "lesson_content", "include_in_narration": True},
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "State Description Example Solid has fixed shape and volume ice Liquid has fixed volume water Gas fills container air",
+                "category": "concept_metadata",
+                "include_in_narration": False,
+            },
+        ]
+
+        objects = build_section_learning_objects(classified, [])
+
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0]["title"], "Properties of Matter")
+        self.assertIn("Solid has fixed shape", objects[0]["content"])
+
+    def test_numbered_subtopic_headings_are_not_classified_as_metadata(self):
+        classified = classify_instructional_blocks(
+            [{"block_id": 1, "page": 1, "text": "1.1 States of Matter", "line_count": 1}]
+        )
+
+        self.assertEqual(classified[0]["category"], "lesson_content")
+
     @patch("lessons.services.instructional_content_classifier.get_llm_client")
     def test_invalid_llm_classification_json_falls_back_safely(self, mock_client_factory):
         mock_client_factory.return_value.generate_text.return_value = {"text": "not json"}

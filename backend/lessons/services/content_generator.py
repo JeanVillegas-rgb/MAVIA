@@ -108,7 +108,7 @@ def build_fallback_learning_objects_from_text(cleaned_text: str) -> list[dict]:
 
 def extract_meaningful_pdf_images(file_path: str, max_images: int | None = None) -> list[dict]:
     images = []
-    max_images = max_images or int(os.getenv("MAX_PDF_IMAGES_FOR_VISION", "2"))
+    max_images = max_images or int(os.getenv("MAX_PDF_IMAGES_FOR_VISION", "4"))
     document = fitz.open(file_path)
     try:
         for page_index, page in enumerate(document, start=1):
@@ -126,13 +126,13 @@ def extract_meaningful_pdf_images(file_path: str, max_images: int | None = None)
                 image_bytes = block.get("image")
                 if not image_bytes:
                     continue
-                if width < 72 or height < 72:
+                if width < 48 or height < 48:
                     continue
-                if image_area < 6000:
+                if image_area < 3000:
                     continue
-                if image_area / page_area > 0.85:
+                if image_area / page_area > 0.95:
                     continue
-                if width / max(height, 1) > 8 or height / max(width, 1) > 8:
+                if width / max(height, 1) > 12 or height / max(width, 1) > 12:
                     continue
 
                 images.append(
@@ -315,6 +315,7 @@ def describe_pdf_images(images: list[dict], lesson_title: str = "", nearby_text:
 
             RULES:
             - Use simple, age-appropriate language.
+            - If this is a chart, diagram, graph, or table image, describe the axes, labels, groups, trend, and key comparisons.
             - Explain important objects, parts, positions, comparisons, sequence, and relationships.
             - Explain why the image matters to the lesson.
             - Avoid vague phrases like "as you can see".
@@ -368,6 +369,55 @@ def _section_heading_title(text: str) -> str | None:
     return title[:255] if title else None
 
 
+def _looks_like_plain_subtopic_heading(text: str) -> str | None:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    lowered = text.lower()
+    if not text or len(text) > 90 or re.search(r"[.!?]$", text):
+        return None
+    if lowered.startswith(("page ", "module ", "grade ", "lesson ", "course ", "author:", "date:", "filename:")):
+        return None
+    if lowered in {"references", "bibliography", "sources", "acknowledgments", "table of contents", "contents"}:
+        return None
+    word_count = len(text.split())
+    if 2 <= word_count <= 9 and re.search(r"[A-Za-z]", text):
+        return text.strip(" .")[:255]
+    return None
+
+
+def _learning_object_heading_title(block: dict) -> str | None:
+    text = block.get("text", "")
+    return _section_heading_title(text) or _looks_like_plain_subtopic_heading(text)
+
+
+def _is_instructional_table_or_chart_block(block: dict) -> bool:
+    text = (block.get("text") or "").strip()
+    lowered = text.lower()
+    if block.get("category") not in {"lesson_content", "table_header", "concept_metadata"}:
+        return False
+    if any(marker in lowered for marker in ("key concepts for extraction", "prerequisite cue", "edge-scoring", "teacher review note")):
+        return False
+    table_keywords = (
+        "table",
+        "chart",
+        "graph",
+        "example",
+        "description",
+        "characteristic",
+        "property",
+        "function",
+        "part",
+        "type",
+        "state",
+        "solid",
+        "liquid",
+        "gas",
+        "compare",
+        "difference",
+        "similarity",
+    )
+    return len(text.split()) >= 8 and any(keyword in lowered for keyword in table_keywords)
+
+
 def _image_caption_title(text: str) -> str | None:
     match = re.match(r"\s*Figure\s+\d+\.\s*(.+)", text or "", flags=re.IGNORECASE)
     if not match:
@@ -388,7 +438,7 @@ def _format_section_content(parts: list[str]) -> str:
 
 def build_section_learning_objects(classified_blocks: list[dict], image_descriptions: list[dict]) -> list[dict]:
     learning_objects = []
-    has_section_headings = any(_section_heading_title(block.get("text", "")) for block in classified_blocks)
+    has_section_headings = any(_learning_object_heading_title(block) for block in classified_blocks)
     figure_titles = [
         _image_caption_title(block.get("text", ""))
         for block in classified_blocks
@@ -421,10 +471,15 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
         if not text or _is_image_caption(text):
             continue
 
-        heading_title = _section_heading_title(text)
+        heading_title = _learning_object_heading_title(block)
         if heading_title:
             if current and current["parts"]:
                 current["content"] = _format_section_content(current.pop("parts"))
+                learning_objects.append(current)
+            elif current and current.get("title"):
+                current.pop("parts", None)
+                current["content"] = current["title"]
+                current["source_excerpt"] = current["title"]
                 learning_objects.append(current)
             current = {
                 "order": len(learning_objects),
@@ -439,10 +494,20 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
             }
             continue
 
-        if block.get("category") != "lesson_content" or not block.get("include_in_narration"):
+        keep_as_content = (
+            block.get("category") == "lesson_content"
+            and block.get("include_in_narration")
+        ) or _is_instructional_table_or_chart_block(block)
+
+        if not keep_as_content:
             if block.get("category") in {"assessment", "teacher_note", "concept_metadata", "table_header", "reference"}:
                 if current and current["parts"]:
                     current["content"] = _format_section_content(current.pop("parts"))
+                    learning_objects.append(current)
+                elif current and current.get("title"):
+                    current.pop("parts", None)
+                    current["content"] = current["title"]
+                    current["source_excerpt"] = current["title"]
                     learning_objects.append(current)
                 current = None
             continue
@@ -469,6 +534,11 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
 
     if current and current["parts"]:
         current["content"] = _format_section_content(current.pop("parts"))
+        learning_objects.append(current)
+    elif current and current.get("title"):
+        current.pop("parts", None)
+        current["content"] = current["title"]
+        current["source_excerpt"] = current["title"]
         learning_objects.append(current)
 
     for order, item in enumerate(learning_objects):

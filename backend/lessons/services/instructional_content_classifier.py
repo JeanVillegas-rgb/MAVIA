@@ -58,6 +58,7 @@ def extract_pdf_text_blocks(file_path: str) -> list[dict]:
                         "page": page_index,
                         "block_index": block_index,
                         "text": text,
+                        "line_count": len(text_lines),
                     }
                 )
                 block_id += 1
@@ -83,6 +84,7 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
     text = block.get("text", "").strip()
     lowered = text.lower()
     normalized = re.sub(r"\s+", " ", lowered)
+    line_count = int(block.get("line_count") or 1)
 
     if not text or re.fullmatch(r"(?:page\s*)?\d+(?:\s*/\s*\d+)?", lowered):
         return "decorative_or_noise", "Isolated page number or empty extraction artifact.", 1.0
@@ -105,6 +107,30 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         "source support",
         "prerequisite cues",
     }
+    instructional_table_keywords = (
+        "example",
+        "description",
+        "characteristic",
+        "property",
+        "meaning",
+        "function",
+        "part",
+        "type",
+        "state",
+        "solid",
+        "liquid",
+        "gas",
+        "compare",
+        "difference",
+        "similarity",
+    )
+    if (
+        line_count >= 3
+        and len(text.split()) >= 8
+        and any(keyword in lowered for keyword in instructional_table_keywords)
+        and not any(marker in lowered for marker in ("key concepts for extraction", "prerequisite cue", "edge-scoring"))
+    ):
+        return "lesson_content", "Instructional table or chart text kept as lesson content.", 0.82
     if lowered in table_headers or lowered.startswith(("concept ", "key concepts for extraction")):
         return "concept_metadata", "Concept extraction table or metadata heading.", 0.96
     if "why it matters" in lowered and len(text) < 160:
@@ -146,7 +172,9 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
         return "reference", "Reference or source information.", 0.96
     if lowered.startswith(("module ", "grade ", "lesson ", "course ", "author:", "date:", "filename:")) and len(text) < 120:
         return "document_metadata", "Administrative document label.", 0.86
-    if re.fullmatch(r"\d+(?:\.\d+)*\.?\s+[A-Z][A-Za-z0-9 ,:&()/+-]{1,80}", text) and not re.search(r"[.!?]$", text):
+    if re.fullmatch(r"\d+\.\d+(?:\.\d+)*\.?\s+[A-Z][A-Za-z0-9 ,:&()/+-]{1,80}", text) and not re.search(r"[.!?]$", text):
+        return "lesson_content", "Numbered subtopic heading kept as a learning-object boundary.", 0.78
+    if re.fullmatch(r"\d+\.?\s+[A-Z][A-Za-z0-9 ,:&()/+-]{1,80}", text) and not re.search(r"[.!?]$", text):
         return "document_metadata", "Numbered section heading, not narration body.", 0.96
     if len(text.split()) <= 4 and not re.search(r"[.!?]", text):
         return "document_metadata", "Short heading or label rather than narration.", 0.72
