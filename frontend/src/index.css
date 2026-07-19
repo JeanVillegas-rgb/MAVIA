@@ -1751,3 +1751,50 @@ button {
     flex-direction: column;
   }
 }
+
+/* ---------- practice questions (question_generation) ---------- */
+.question-node-group summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+}
+
+.question-card {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+.question-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+
+.difficulty-pill {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: #fff;
+}
+
+.difficulty-pill.difficulty-easy { background: #3e8b50; }
+.difficulty-pill.difficulty-medium { background: #e7a62e; color: #2d2a26; }
+.difficulty-pill.difficulty-hard { background: #d4654a; }
+
+.question-text {
+  font-weight: 600;
+  margin: 0.25rem 0;
+}
+
+.question-choices {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+
+.question-choices li.is-correct {
+  color: #3e8b50;
+  font-weight: 600;
+}

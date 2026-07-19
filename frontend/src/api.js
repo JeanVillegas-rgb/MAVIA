@@ -194,3 +194,21 @@ export function confirmModuleConceptDag(courseId, moduleId) {
     method: "POST",
   });
 }
+
+export function startQuestionGeneration(materialId) {
+  return request(`/generation/materials/${materialId}/start/`, {
+    method: "POST",
+  });
+}
+
+export function fetchQuestionRuns(materialId) {
+  return request(`/generation/runs/?material_id=${materialId}`);
+}
+
+export function fetchQuestionRunEvents(runId, afterSeq = 0) {
+  return request(`/generation/runs/${runId}/events/?after=${afterSeq}`);
+}
+
+export function fetchMaterialQuestions(materialId) {
+  return request(`/generation/materials/${materialId}/questions/`);
+}

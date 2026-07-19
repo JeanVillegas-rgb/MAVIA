@@ -214,6 +214,50 @@ class StartGenerationView(APIView):
         return Response({"run_id": run.id}, status=status.HTTP_201_CREATED)
 
 
+class MaterialQuestionsView(APIView):
+    """
+    GET /api/generation/materials/<material_id>/questions/
+
+    Teacher-facing review of the stored question bank, grouped per learning
+    object. Includes correct answers — never expose this to learners.
+    """
+    DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
+
+    def get(self, request, material_id):
+        try:
+            material = LearningMaterial.objects.get(id=material_id)
+        except LearningMaterial.DoesNotExist:
+            return Response({"error": "Material not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        nodes = material.learning_objects.filter(kind="text").order_by("order", "id")
+        payload = []
+        for node in nodes:
+            questions = sorted(
+                node.generated_questions.all(),
+                key=lambda q: (self.DIFFICULTY_ORDER.get(q.difficulty, 3), q.id),
+            )
+            payload.append({
+                "node_id": node.id,
+                "node_title": node.title,
+                "questions": [
+                    {
+                        "id": q.id,
+                        "question_text": q.question_text,
+                        "question_format": q.question_format,
+                        "choices": q.choices,
+                        "correct_answer": q.correct_answer,
+                        "explanation": q.explanation,
+                        "difficulty": q.difficulty,
+                        "bloom_level": q.bloom_level,
+                        "difficulty_match": q.difficulty_match,
+                    }
+                    for q in questions
+                ],
+            })
+        return Response(payload)
+
+
 class GenerationRunsView(APIView):
     """GET /api/generation/runs/?material_id=<id> — recent runs, newest first."""
     def get(self, request):

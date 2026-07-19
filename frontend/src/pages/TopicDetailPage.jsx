@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   confirmLearningObjects,
   createLearningObject,
   deleteLearningObject,
   fetchCourse,
+  fetchMaterialQuestions,
+  fetchQuestionRunEvents,
+  fetchQuestionRuns,
   generateAudioPlaylist,
+  startQuestionGeneration,
   updateLearningObject,
   uploadLearningMaterial,
 } from "../api";
@@ -83,6 +87,180 @@ function LearningObjectForm({ initialValue, submitLabel, busy, onCancel, onSubmi
         </button>
       </div>
     </form>
+  );
+}
+
+function QuestionBankSection({ material, confirmed, onError }) {
+  const [run, setRun] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [bank, setBank] = useState([]);
+  const [starting, setStarting] = useState(false);
+
+  const running = run?.status === "running";
+  const totalQuestions = bank.reduce((sum, node) => sum + node.questions.length, 0);
+
+  const loadBank = useCallback(async () => {
+    try {
+      setBank(await fetchMaterialQuestions(material.id));
+    } catch {
+      // backend unreachable — leave the bank as-is
+    }
+  }, [material.id]);
+
+  useEffect(() => {
+    loadBank();
+    // pick up a run that is already in flight (e.g. after a page reload)
+    fetchQuestionRuns(material.id)
+      .then((runs) => {
+        if (runs[0]?.status === "running") setRun(runs[0]);
+      })
+      .catch(() => {});
+  }, [material.id, loadBank]);
+
+  useEffect(() => {
+    if (!running) return undefined;
+    let lastSeq = 0;
+    let generated = 0;
+    let stopped = false;
+    let timer = null;
+
+    const poll = async () => {
+      try {
+        const data = await fetchQuestionRunEvents(run.id, lastSeq);
+        if (stopped) return;
+        if (data.events.length) {
+          lastSeq = data.events[data.events.length - 1].seq;
+          generated += data.events.filter((e) => e.event_type === "question_generated").length;
+          setProgress({ generated, message: data.events[data.events.length - 1].message });
+        }
+        if (data.run.status === "running") {
+          timer = setTimeout(poll, 2500);
+        } else {
+          setRun(data.run);
+          setProgress(null);
+          loadBank();
+        }
+      } catch {
+        if (!stopped) timer = setTimeout(poll, 5000);
+      }
+    };
+    poll();
+
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [run?.id, running, loadBank]);
+
+  async function handleStart() {
+    if (
+      totalQuestions > 0 &&
+      !window.confirm(
+        "Regenerating replaces this material's existing questions (and any learner answers to them). Continue?",
+      )
+    ) {
+      return;
+    }
+    setStarting(true);
+    onError("");
+    try {
+      const response = await startQuestionGeneration(material.id);
+      setRun({ id: response.run_id, status: "running" });
+      setProgress({ generated: 0, message: "Starting..." });
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return (
+    <section className="generated-result-panel">
+      <div className="generated-section-header">
+        <div>
+          <h5>Practice Questions</h5>
+          <p className="muted-text">
+            Generated from each confirmed learning object and stored with it. Difficulty is
+            assigned by the Bloom&apos;s classifier.
+          </p>
+        </div>
+        <button
+          className="btn btn-primary btn-small"
+          type="button"
+          disabled={!confirmed || running || starting}
+          onClick={handleStart}
+        >
+          {running || starting
+            ? "Generating..."
+            : totalQuestions
+              ? "Regenerate questions"
+              : "Generate questions"}
+        </button>
+      </div>
+
+      {!confirmed && (
+        <p className="muted-text">Confirm the learning objects above before generating questions.</p>
+      )}
+
+      {progress && (
+        <div className="success-banner">
+          Generating&hellip; {progress.generated} question{progress.generated === 1 ? "" : "s"} so far
+          &middot; {progress.message}
+        </div>
+      )}
+
+      {run?.status === "failed" && (
+        <div className="error-banner">Question generation failed. Check the backend log and try again.</div>
+      )}
+
+      {!totalQuestions ? (
+        !running && <p className="muted-text">No questions generated yet.</p>
+      ) : (
+        <div className="generated-list">
+          {bank.map((node) => (
+            <details className="question-node-group" key={node.node_id}>
+              <summary>
+                <strong>{node.node_title}</strong>
+                <span className="muted-text"> &middot; {node.questions.length} questions</span>
+              </summary>
+              {node.questions.map((question) => (
+                <div className="generated-item question-card" key={question.id}>
+                  <div className="question-card-header">
+                    <span className={`difficulty-pill difficulty-${question.difficulty}`}>
+                      {question.difficulty}
+                    </span>
+                    <span className="muted-text">
+                      {question.question_format} &middot; {question.bloom_level}
+                    </span>
+                  </div>
+                  <p className="question-text">{question.question_text}</p>
+                  {question.question_format === "MCQ" && question.choices ? (
+                    <ul className="question-choices">
+                      {Object.entries(question.choices).map(([letter, text]) => (
+                        <li
+                          key={letter}
+                          className={letter === question.correct_answer ? "is-correct" : ""}
+                        >
+                          <strong>{letter}.</strong> {text}
+                          {letter === question.correct_answer && " ✓"}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="question-choices">
+                      Answer: <strong>{question.correct_answer}</strong>
+                    </p>
+                  )}
+                  {question.explanation && (
+                    <p className="muted-text">{question.explanation}</p>
+                  )}
+                </div>
+              ))}
+            </details>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -359,6 +537,12 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
           </>
         )}
       </section>
+
+      <QuestionBankSection
+        material={material}
+        confirmed={learningObjectsConfirmed}
+        onError={onError}
+      />
 
       <section className="generated-result-panel">
         <div className="generated-section-header">
