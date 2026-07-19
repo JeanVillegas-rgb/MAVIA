@@ -1,0 +1,49 @@
+Performing system checks...
+
+System check identified no issues (0 silenced).
+July 19, 2026 - 19:09:37
+Django version 5.2.16, using settings 'config.settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CTRL-BREAK.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+[BloomClassifier] Using backend: roberta
+Generating questions for: Particle arrangement in solids, liquids, and gases
+  Attempt 1/3 failed: Expecting property name enclosed in double quotes: line 3 column 5 (char 368)
+  Attempt 1/3 failed: Expecting ',' delimiter: line 43 column 85 (char 1826)
+  Rebalance round 1: short {'easy': 3}
+  Rebalance round 2: short {'easy': 2}
+  Attempt 1/3 failed: Expecting ',' delimiter: line 4 column 172 (char 535)
+  Rebalance round 3: short {'easy': 2}
+  WARNING: still short after 3 rebalance rounds for node 2: {'easy': 1} — keeping what we have
+  Generated 12 questions
+Generating questions for: Matter
+  Attempt 1/3 failed: Expecting property name enclosed in double quotes: line 7 column 1 (char 451)
+  Attempt 2/3 failed: Expecting ',' delimiter: line 5 column 333 (char 1410)
+  Attempt 1/3 failed: Extra data: line 1 column 476 (char 475)
+  Attempt 2/3 failed: Expecting property name enclosed in double quotes: line 5 column 1 (char 524)
+  Attempt 3/3 failed: Expecting ',' delimiter: line 3 column 1 (char 314)
+  WARNING: Failed to generate after 3 attempts
+  Rebalance round 1: short {'hard': 3}
+  Rebalance round 2: short {'hard': 3}
+  Attempt 1/3 failed: Expecting property name enclosed in double quotes: line 12 column 1 (char 570)
+  Rebalance round 3: short {'hard': 2}
+  WARNING: still short after 3 rebalance rounds for node 3: {'hard': 1} — keeping what we have
+  Generated 12 questions
+Generating questions for: Solid
+  Attempt 1/3 failed: Expecting ',' delimiter: line 1 column 916 (char 915)
+[TRACE material 6] start: extracting PDF text (+0s)
+[TRACE material 6] text extracted: 4450 chars, 58 blocks (+2s)
+[TRACE material 6] images extracted: 1 (+2s)
+[TRACE material 6] generating lesson metadata (LLM) (+2s)
+[TRACE llm] -> llama3.2:3b (timeout=300s, prompt_chars=4968, vision=no)
+[TRACE llm] <- llama3.2:3b OK in 143s
+[TRACE material 6] classifying instructional blocks (+145s)
+[TRACE llm] -> llama3.2:3b (timeout=240s, prompt_chars=2236, vision=no)
+[TRACE llm] <- llama3.2:3b OK in 104s
+[TRACE material 6] describing 1 images (vision LLM) (+250s)
+[TRACE llm] -> gemma3:4b (timeout=300s, prompt_chars=2208, vision=yes)
+[TRACE llm] <- gemma3:4b OK in 211s
+[TRACE material 6] building learning objects (+461s)
+[TRACE material 6] done: status=completed (+463s)

@@ -137,9 +137,9 @@ class QuestionStatsView(APIView):
 STALE_RUN_SECONDS = 300
 
 
-def _run_pipeline(run_id, material_id):
-    """Thread target: run the full pipeline, streaming trace events to the DB."""
-    from .services.pipeline import generate_questions_for_material, save_questions_to_db
+def _run_pipeline(run_id, material_id, node_ids=None):
+    """Thread target: run the pipeline, streaming trace events to the DB."""
+    from .services.pipeline import generate_questions_for_material
 
     seq_counter = [0]
 
@@ -155,10 +155,11 @@ def _run_pipeline(run_id, material_id):
 
     try:
         material = LearningMaterial.objects.get(id=material_id)
-        questions = generate_questions_for_material(material, on_event=on_event)
-        created = save_questions_to_db(material, questions)
-        on_event("saved", f"Saved {len(created)} questions to database",
-                 {"count": len(created)})
+        # questions are saved to the DB per node as the pipeline progresses
+        questions = generate_questions_for_material(
+            material, on_event=on_event, node_ids=node_ids)
+        on_event("saved", f"Saved {len(questions)} questions to database",
+                 {"count": len(questions)})
         GenerationRun.objects.filter(id=run_id).update(
             status="finished", finished_at=timezone.now())
     except Exception as e:  # noqa: BLE001 — surface anything to the trace
@@ -170,9 +171,11 @@ def _run_pipeline(run_id, material_id):
 class StartGenerationView(APIView):
     """
     POST /api/generation/materials/<material_id>/start/
+    Body (optional): {"node_id": <learning_object_id>}
 
     Teacher-triggered: generate questions for every text learning object of
-    a completed material. Runs in the background; poll the trace endpoint.
+    a completed material, or for a single learning object when node_id is
+    given. Runs in the background; poll the trace endpoint.
     """
     def post(self, request, material_id):
         try:
@@ -187,11 +190,23 @@ class StartGenerationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not material.learning_objects.filter(kind="text").exclude(content="").exists():
+        text_nodes = material.learning_objects.filter(kind="text").exclude(content="")
+        if not text_nodes.exists():
             return Response(
                 {"error": "Material has no text learning objects to generate from"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        node = None
+        node_id = request.data.get("node_id")
+        if node_id is not None:
+            node = text_nodes.filter(id=node_id).first()
+            if node is None:
+                return Response(
+                    {"error": "Learning object not found for this material "
+                              "(or it has no text content)"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         # one run at a time; unstick runs orphaned by a server restart
         for run in GenerationRun.objects.filter(status="running"):
@@ -207,11 +222,16 @@ class StartGenerationView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-        run = GenerationRun.objects.create(material=material)
+        run = GenerationRun.objects.create(material=material, node=node)
         threading.Thread(
-            target=_run_pipeline, args=(run.id, material.id), daemon=True,
+            target=_run_pipeline,
+            args=(run.id, material.id, [node.id] if node else None),
+            daemon=True,
         ).start()
-        return Response({"run_id": run.id}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"run_id": run.id, "node_id": node.id if node else None},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class MaterialQuestionsView(APIView):
@@ -250,6 +270,7 @@ class MaterialQuestionsView(APIView):
                         "explanation": q.explanation,
                         "difficulty": q.difficulty,
                         "bloom_level": q.bloom_level,
+                        "category": q.category,
                         "difficulty_match": q.difficulty_match,
                     }
                     for q in questions
@@ -261,7 +282,7 @@ class MaterialQuestionsView(APIView):
 class GenerationRunsView(APIView):
     """GET /api/generation/runs/?material_id=<id> — recent runs, newest first."""
     def get(self, request):
-        runs = GenerationRun.objects.select_related("material").order_by("-started_at")
+        runs = GenerationRun.objects.select_related("material", "node").order_by("-started_at")
         material_id = request.query_params.get("material_id")
         if material_id:
             runs = runs.filter(material_id=material_id)
@@ -270,6 +291,8 @@ class GenerationRunsView(APIView):
                 "id": r.id,
                 "material_id": r.material_id,
                 "material_title": r.material.title,
+                "node_id": r.node_id,
+                "node_title": r.node.title if r.node else None,
                 "status": r.status,
                 "started_at": r.started_at,
                 "finished_at": r.finished_at,
@@ -287,7 +310,7 @@ class GenerationTraceView(APIView):
     """
     def get(self, request, run_id):
         try:
-            run = GenerationRun.objects.select_related("material").get(id=run_id)
+            run = GenerationRun.objects.select_related("material", "node").get(id=run_id)
         except GenerationRun.DoesNotExist:
             return Response({"error": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -302,6 +325,8 @@ class GenerationTraceView(APIView):
                 "id": run.id,
                 "material_id": run.material_id,
                 "material_title": run.material.title,
+                "node_id": run.node_id,
+                "node_title": run.node.title if run.node else None,
                 "status": run.status,
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,

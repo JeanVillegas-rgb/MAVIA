@@ -195,9 +195,11 @@ export function confirmModuleConceptDag(courseId, moduleId) {
   });
 }
 
-export function startQuestionGeneration(materialId) {
+export function startQuestionGeneration(materialId, nodeId = null) {
   return request(`/generation/materials/${materialId}/start/`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(nodeId ? { node_id: nodeId } : {}),
   });
 }
 

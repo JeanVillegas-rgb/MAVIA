@@ -78,7 +78,10 @@ class LearnerResponse(models.Model):
 
 
 class GenerationRun(models.Model):
-    """One teacher-triggered execution of question generation for a material."""
+    """One teacher-triggered execution of question generation for a material.
+
+    When `node` is set, the run covered only that learning object; otherwise
+    it covered every text learning object of the material."""
     STATUS_CHOICES = [
         ("running", "Running"),
         ("finished", "Finished"),
@@ -90,12 +93,20 @@ class GenerationRun(models.Model):
         related_name="question_generation_runs",
         on_delete=models.CASCADE,
     )
+    node = models.ForeignKey(
+        LearningObject,
+        null=True,
+        blank=True,
+        related_name="question_generation_runs",
+        on_delete=models.SET_NULL,
+    )
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="running")
     started_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"Run {self.id} [{self.status}] {self.material.title}"
+        scope = self.node.title if self.node else "all nodes"
+        return f"Run {self.id} [{self.status}] {self.material.title} ({scope})"
 
 
 class GenerationEvent(models.Model):

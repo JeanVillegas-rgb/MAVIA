@@ -1,6 +1,8 @@
 from collections import Counter
 from math import ceil
 
+from django.db import transaction
+
 from .bloom_classifier import BloomClassifier
 from .question_generator import generate_questions
 
@@ -173,19 +175,35 @@ def generate_questions_for_node(node, classifier, on_event=None):
     return final
 
 
-def generate_questions_for_material(material, on_event=None):
-    """Full pipeline: LearningMaterial → classified questions for all its
-    text learning objects, straight from the database (no JSON handoff)."""
+def generate_questions_for_material(material, on_event=None, node_ids=None):
+    """Full pipeline: LearningMaterial → classified questions for its text
+    learning objects, straight from the database (no JSON handoff).
+
+    With node_ids, only those learning objects are (re)generated; other
+    nodes' stored questions are left untouched. Each node's curated set is
+    saved to the DB as soon as the node finishes, so an interrupted run
+    keeps every completed node's questions."""
+    from question_generation.models import GeneratedQuestion
+
     if _classifier_cache is None:
         _emit(on_event, "classifier_loading", "Loading Bloom's classifier model")
     classifier = _get_classifier()
 
-    nodes = list(
+    nodes_qs = (
         material.learning_objects
         .filter(kind="text")
         .exclude(content="")
         .order_by("order")
     )
+    if node_ids is not None:
+        nodes_qs = nodes_qs.filter(id__in=node_ids)
+    nodes = list(nodes_qs)
+    if node_ids is None:
+        # full-material run: drop stale questions on nodes this run will not
+        # touch (e.g. a learning object whose content was emptied since the
+        # last run)
+        GeneratedQuestion.objects.filter(node__material=material).exclude(
+            node__in=nodes).delete()
     _emit(
         on_event, "material_started",
         f"Generating questions for {len(nodes)} content nodes",
@@ -201,13 +219,15 @@ def generate_questions_for_material(material, on_event=None):
             node_id=node.id, title=node.title,
         )
         questions = generate_questions_for_node(node, classifier, on_event=on_event)
+        created = save_node_questions(node, questions)
         all_questions.extend(questions)
         print(f"  Generated {len(questions)} questions")
         _emit(
             on_event, "node_finished",
-            f"Finished node: {len(questions)} questions",
+            f"Finished node: saved {len(created)} questions",
             node_id=node.id,
             count=len(questions),
+            saved=len(created),
             by_difficulty=dict(Counter(q["difficulty"] for q in questions)),
         )
 
@@ -229,22 +249,14 @@ def generate_questions_for_material(material, on_event=None):
     return all_questions
 
 
-def save_questions_to_db(material, questions, replace_existing=True):
-    """Save pipeline output for a material.
+def save_node_questions(node, questions):
+    """Atomically replace one node's stored questions with its latest final
+    set, so the DB always holds exactly one run's output per node.
 
-    With replace_existing (default), previously stored questions for the
-    material are deleted first, so the DB always holds exactly the final
-    set from the latest run. NOTE: deleting a question cascades to its
-    LearnerResponse rows — regenerating resets learner history for the
-    material's questions.
+    NOTE: deleting a question cascades to its LearnerResponse rows —
+    regenerating resets learner history for that node's questions.
     """
     from question_generation.models import GeneratedQuestion
-
-    if replace_existing:
-        deleted, _ = GeneratedQuestion.objects.filter(
-            node__material=material).delete()
-        if deleted:
-            print(f"Replaced {deleted} existing rows for material {material.id}")
 
     db_objects = [
         GeneratedQuestion(
@@ -263,6 +275,10 @@ def save_questions_to_db(material, questions, replace_existing=True):
         for q in questions
     ]
 
-    created = GeneratedQuestion.objects.bulk_create(db_objects)
-    print(f"Saved {len(created)} questions to database")
+    with transaction.atomic():
+        deleted, _ = GeneratedQuestion.objects.filter(node=node).delete()
+        created = GeneratedQuestion.objects.bulk_create(db_objects)
+    if deleted:
+        print(f"Replaced {deleted} existing rows for node {node.id}")
+    print(f"Saved {len(created)} questions for node {node.id}")
     return created

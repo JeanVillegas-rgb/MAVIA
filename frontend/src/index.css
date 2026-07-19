@@ -1798,3 +1798,50 @@ button {
   color: #3e8b50;
   font-weight: 600;
 }
+
+.generation-log summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  font-weight: 600;
+}
+
+.generation-log-lines {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.generation-log-line {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.generation-log-line .log-time {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.generation-log-line .log-type {
+  color: var(--muted);
+  flex-shrink: 0;
+  min-width: 9.5rem;
+}
+
+.generation-log-line.log-error .log-type,
+.generation-log-line.log-error .log-message {
+  color: #d4654a;
+  font-weight: 600;
+}
+
+.generation-log-line.log-node_started .log-message,
+.generation-log-line.log-node_finished .log-message,
+.generation-log-line.log-material_finished .log-message,
+.generation-log-line.log-saved .log-message {
+  font-weight: 600;
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   confirmLearningObjects,
@@ -90,89 +90,56 @@ function LearningObjectForm({ initialValue, submitLabel, busy, onCancel, onSubmi
   );
 }
 
-function QuestionBankSection({ material, confirmed, onError }) {
-  const [run, setRun] = useState(null);
-  const [progress, setProgress] = useState(null);
-  const [bank, setBank] = useState([]);
-  const [starting, setStarting] = useState(false);
+function QuestionCard({ question }) {
+  return (
+    <div className="generated-item question-card">
+      <div className="question-card-header">
+        <span className={`difficulty-pill difficulty-${question.difficulty}`}>
+          {question.difficulty}
+        </span>
+        <span className="muted-text">
+          {question.question_format} &middot; {question.bloom_level}
+          {question.category && <> &middot; {question.category}</>}
+        </span>
+      </div>
+      <p className="question-text">{question.question_text}</p>
+      {question.question_format === "MCQ" && question.choices ? (
+        <ul className="question-choices">
+          {Object.entries(question.choices).map(([letter, text]) => (
+            <li
+              key={letter}
+              className={letter === question.correct_answer ? "is-correct" : ""}
+            >
+              <strong>{letter}.</strong> {text}
+              {letter === question.correct_answer && " ✓"}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="question-choices">
+          Answer: <strong>{question.correct_answer}</strong>
+        </p>
+      )}
+      {question.explanation && <p className="muted-text">{question.explanation}</p>}
+    </div>
+  );
+}
 
-  const running = run?.status === "running";
-  const totalQuestions = bank.reduce((sum, node) => sum + node.questions.length, 0);
-
-  const loadBank = useCallback(async () => {
-    try {
-      setBank(await fetchMaterialQuestions(material.id));
-    } catch {
-      // backend unreachable — leave the bank as-is
-    }
-  }, [material.id]);
+function QuestionBankSection({
+  confirmed,
+  running,
+  starting,
+  totalQuestions,
+  progress,
+  runFailed,
+  log,
+  onStart,
+}) {
+  const logEndRef = useRef(null);
 
   useEffect(() => {
-    loadBank();
-    // pick up a run that is already in flight (e.g. after a page reload)
-    fetchQuestionRuns(material.id)
-      .then((runs) => {
-        if (runs[0]?.status === "running") setRun(runs[0]);
-      })
-      .catch(() => {});
-  }, [material.id, loadBank]);
-
-  useEffect(() => {
-    if (!running) return undefined;
-    let lastSeq = 0;
-    let generated = 0;
-    let stopped = false;
-    let timer = null;
-
-    const poll = async () => {
-      try {
-        const data = await fetchQuestionRunEvents(run.id, lastSeq);
-        if (stopped) return;
-        if (data.events.length) {
-          lastSeq = data.events[data.events.length - 1].seq;
-          generated += data.events.filter((e) => e.event_type === "question_generated").length;
-          setProgress({ generated, message: data.events[data.events.length - 1].message });
-        }
-        if (data.run.status === "running") {
-          timer = setTimeout(poll, 2500);
-        } else {
-          setRun(data.run);
-          setProgress(null);
-          loadBank();
-        }
-      } catch {
-        if (!stopped) timer = setTimeout(poll, 5000);
-      }
-    };
-    poll();
-
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [run?.id, running, loadBank]);
-
-  async function handleStart() {
-    if (
-      totalQuestions > 0 &&
-      !window.confirm(
-        "Regenerating replaces this material's existing questions (and any learner answers to them). Continue?",
-      )
-    ) {
-      return;
-    }
-    setStarting(true);
-    onError("");
-    try {
-      const response = await startQuestionGeneration(material.id);
-      setRun({ id: response.run_id, status: "running" });
-      setProgress({ generated: 0, message: "Starting..." });
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setStarting(false);
-    }
-  }
+    logEndRef.current?.scrollIntoView({ block: "nearest" });
+  }, [log.length]);
 
   return (
     <section className="generated-result-panel">
@@ -180,21 +147,21 @@ function QuestionBankSection({ material, confirmed, onError }) {
         <div>
           <h5>Practice Questions</h5>
           <p className="muted-text">
-            Generated from each confirmed learning object and stored with it. Difficulty is
-            assigned by the Bloom&apos;s classifier.
+            Generated from each confirmed learning object and shown under its content above.
+            Difficulty is assigned by the Bloom&apos;s classifier.
           </p>
         </div>
         <button
           className="btn btn-primary btn-small"
           type="button"
           disabled={!confirmed || running || starting}
-          onClick={handleStart}
+          onClick={() => onStart(null)}
         >
           {running || starting
             ? "Generating..."
             : totalQuestions
-              ? "Regenerate questions"
-              : "Generate questions"}
+              ? "Regenerate all questions"
+              : "Generate all questions"}
         </button>
       </div>
 
@@ -209,56 +176,30 @@ function QuestionBankSection({ material, confirmed, onError }) {
         </div>
       )}
 
-      {run?.status === "failed" && (
-        <div className="error-banner">Question generation failed. Check the backend log and try again.</div>
+      {runFailed && (
+        <div className="error-banner">Question generation failed. Check the log below and try again.</div>
       )}
 
-      {!totalQuestions ? (
-        !running && <p className="muted-text">No questions generated yet.</p>
-      ) : (
-        <div className="generated-list">
-          {bank.map((node) => (
-            <details className="question-node-group" key={node.node_id}>
-              <summary>
-                <strong>{node.node_title}</strong>
-                <span className="muted-text"> &middot; {node.questions.length} questions</span>
-              </summary>
-              {node.questions.map((question) => (
-                <div className="generated-item question-card" key={question.id}>
-                  <div className="question-card-header">
-                    <span className={`difficulty-pill difficulty-${question.difficulty}`}>
-                      {question.difficulty}
-                    </span>
-                    <span className="muted-text">
-                      {question.question_format} &middot; {question.bloom_level}
-                    </span>
-                  </div>
-                  <p className="question-text">{question.question_text}</p>
-                  {question.question_format === "MCQ" && question.choices ? (
-                    <ul className="question-choices">
-                      {Object.entries(question.choices).map(([letter, text]) => (
-                        <li
-                          key={letter}
-                          className={letter === question.correct_answer ? "is-correct" : ""}
-                        >
-                          <strong>{letter}.</strong> {text}
-                          {letter === question.correct_answer && " ✓"}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="question-choices">
-                      Answer: <strong>{question.correct_answer}</strong>
-                    </p>
-                  )}
-                  {question.explanation && (
-                    <p className="muted-text">{question.explanation}</p>
-                  )}
-                </div>
-              ))}
-            </details>
-          ))}
-        </div>
+      {log.length > 0 && (
+        <details className="generation-log" open>
+          <summary>
+            Generation log <span className="muted-text">&middot; {log.length} events</span>
+          </summary>
+          <div className="generation-log-lines">
+            {log.map((event) => (
+              <div className={`generation-log-line log-${event.event_type}`} key={event.seq}>
+                <span className="log-time">{new Date(event.created_at).toLocaleTimeString()}</span>
+                <span className="log-type">{event.event_type}</span>
+                <span className="log-message">{event.message}</span>
+              </div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        </details>
+      )}
+
+      {!totalQuestions && !running && !log.length && (
+        <p className="muted-text">No questions generated yet.</p>
       )}
     </section>
   );
@@ -270,6 +211,108 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
   const [reviewEditMode, setReviewEditMode] = useState(false);
   const [selectedId, setSelectedId] = useState(material.learning_objects[0]?.id || null);
   const [busyAction, setBusyAction] = useState("");
+  const [questionBank, setQuestionBank] = useState([]);
+
+  const loadQuestionBank = useCallback(async () => {
+    try {
+      setQuestionBank(await fetchMaterialQuestions(material.id));
+    } catch {
+      // backend unreachable — leave the bank as-is
+    }
+  }, [material.id]);
+
+  useEffect(() => {
+    loadQuestionBank();
+  }, [loadQuestionBank]);
+
+  const questionsByNode = useMemo(
+    () => new Map(questionBank.map((node) => [node.node_id, node.questions])),
+    [questionBank],
+  );
+  const totalQuestions = questionBank.reduce((sum, node) => sum + node.questions.length, 0);
+
+  const [genRun, setGenRun] = useState(null);
+  const [genProgress, setGenProgress] = useState(null);
+  const [genLog, setGenLog] = useState([]);
+  const [genStarting, setGenStarting] = useState(false);
+  const genRunning = genRun?.status === "running";
+
+  useEffect(() => {
+    // pick up a run that is already in flight (e.g. after a page reload)
+    fetchQuestionRuns(material.id)
+      .then((runs) => {
+        if (runs[0]?.status === "running") setGenRun(runs[0]);
+      })
+      .catch(() => {});
+  }, [material.id]);
+
+  useEffect(() => {
+    if (!genRunning) return undefined;
+    let lastSeq = 0;
+    let generated = 0;
+    let stopped = false;
+    let timer = null;
+
+    const poll = async () => {
+      try {
+        const data = await fetchQuestionRunEvents(genRun.id, lastSeq);
+        if (stopped) return;
+        if (data.events.length) {
+          lastSeq = data.events[data.events.length - 1].seq;
+          generated += data.events.filter((e) => e.event_type === "question_generated").length;
+          setGenProgress({ generated, message: data.events[data.events.length - 1].message });
+          setGenLog((current) => [...current, ...data.events]);
+          // questions are saved per node — refresh the inline lists as nodes finish
+          if (data.events.some((e) => e.event_type === "node_finished")) {
+            loadQuestionBank();
+          }
+        }
+        if (data.run.status === "running") {
+          timer = setTimeout(poll, 2500);
+        } else {
+          setGenRun(data.run);
+          setGenProgress(null);
+          loadQuestionBank();
+        }
+      } catch {
+        if (!stopped) timer = setTimeout(poll, 5000);
+      }
+    };
+    poll();
+
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [genRun?.id, genRunning, loadQuestionBank]);
+
+  async function startGeneration(nodeId = null) {
+    const existingCount = nodeId
+      ? (questionsByNode.get(nodeId) || []).length
+      : totalQuestions;
+    if (
+      existingCount > 0 &&
+      !window.confirm(
+        nodeId
+          ? "Regenerating replaces this learning object's existing questions (and any learner answers to them). Continue?"
+          : "Regenerating replaces this material's existing questions (and any learner answers to them). Continue?",
+      )
+    ) {
+      return;
+    }
+    setGenStarting(true);
+    onError("");
+    try {
+      const response = await startQuestionGeneration(material.id, nodeId);
+      setGenLog([]);
+      setGenRun({ id: response.run_id, node_id: response.node_id, status: "running" });
+      setGenProgress({ generated: 0, message: "Starting..." });
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setGenStarting(false);
+    }
+  }
   const llmMetadata = material.generated_json?.llm_metadata;
   const generatedJson = material.generated_json || {};
   const learningObjectsConfirmed = Boolean(generatedJson.learning_objects_confirmed);
@@ -516,6 +559,38 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                         </div>
                       </div>
                       <p>{item.content}</p>
+                      {learningObjectsConfirmed && (
+                        <div className="generated-item-actions">
+                          <button
+                            className="btn btn-secondary btn-small"
+                            type="button"
+                            disabled={genRunning || genStarting}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              startGeneration(item.id);
+                            }}
+                          >
+                            {genRunning && genRun?.node_id === item.id
+                              ? "Generating..."
+                              : (questionsByNode.get(item.id) || []).length
+                                ? "Regenerate questions"
+                                : "Generate questions"}
+                          </button>
+                        </div>
+                      )}
+                      {(questionsByNode.get(item.id) || []).length > 0 && (
+                        <details className="question-node-group" open>
+                          <summary>
+                            <strong>Practice questions</strong>
+                            <span className="muted-text">
+                              {" "}&middot; {questionsByNode.get(item.id).length}
+                            </span>
+                          </summary>
+                          {questionsByNode.get(item.id).map((question) => (
+                            <QuestionCard key={question.id} question={question} />
+                          ))}
+                        </details>
+                      )}
                     </>
                   )}
                 </div>
@@ -539,9 +614,14 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
       </section>
 
       <QuestionBankSection
-        material={material}
         confirmed={learningObjectsConfirmed}
-        onError={onError}
+        running={genRunning}
+        starting={genStarting}
+        totalQuestions={totalQuestions}
+        progress={genProgress}
+        runFailed={genRun?.status === "failed"}
+        log={genLog}
+        onStart={startGeneration}
       />
 
       <section className="generated-result-panel">
