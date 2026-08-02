@@ -1,7 +1,6 @@
 import { Link, Route, Routes } from "react-router-dom";
 import HomePage from "./pages/HomePage";
 import CourseDetailPage from "./pages/CourseDetailPage";
-import ModuleLearnerPathPage from "./pages/ModuleLearnerPathPage";
 import TopicDetailPage from "./pages/TopicDetailPage";
 
 export default function App() {
@@ -16,7 +15,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/courses/:id" element={<CourseDetailPage />} />
-        <Route path="/courses/:courseId/modules/:moduleId/learner-path" element={<ModuleLearnerPathPage />} />
         <Route path="/courses/:courseId/topics/:topicId" element={<TopicDetailPage />} />
       </Routes>
     </div>

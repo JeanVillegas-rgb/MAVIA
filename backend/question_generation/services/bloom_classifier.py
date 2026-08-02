@@ -22,10 +22,20 @@ BLOOM_TO_CATEGORY = {
     "create":      "Outcome",
 }
 
-MODEL_DIR = os.path.join(
+BT_LABELS = {
+    "bt1": "remember",
+    "bt2": "understand",
+    "bt3": "apply",
+    "bt4": "analyze",
+    "bt5": "evaluate",
+    "bt6": "create",
+}
+
+DEFAULT_MODEL_DIR = os.path.join(
     Path(__file__).resolve().parent.parent,
     "classifier", "trained_model"
 )
+MODEL_DIR = os.getenv("BLOOM_MODEL_DIR", DEFAULT_MODEL_DIR)
 
 
 class BloomClassifier:
@@ -48,8 +58,14 @@ class BloomClassifier:
                 print(f"[BloomClassifier] RoBERTa unavailable ({e}), falling back to SVM")
 
         if self.backend is None:
-            self._load_svm()
-            self.backend = "svm"
+            try:
+                self._load_svm()
+                self.backend = "svm"
+            except Exception as e:
+                if backend == "svm":
+                    raise
+                print(f"[BloomClassifier] SVM unavailable ({e}), using rule fallback")
+                self.backend = "rules"
 
         print(f"[BloomClassifier] Using backend: {self.backend}")
 
@@ -97,14 +113,66 @@ class BloomClassifier:
 
     def _classify_svm(self, question_text: str) -> str:
         cleaned = self._preprocess_for_svm(question_text)
-        return self.svm_pipeline.predict([cleaned])[0]
+        try:
+            return self.svm_pipeline.predict([cleaned])[0]
+        except Exception as e:
+            print(f"[BloomClassifier] SVM prediction failed ({e}), using rule fallback")
+            self.backend = "rules"
+            return self._classify_rules(question_text)
+
+    def _classify_rules(self, question_text: str) -> str:
+        text = question_text.lower().strip()
+        cue_groups = (
+            ("create", (
+                "create", "design", "construct", "develop", "compose",
+                "formulate", "make", "plan", "propose", "invent",
+            )),
+            ("evaluate", (
+                "evaluate", "judge", "justify", "defend", "critique",
+                "recommend", "which is best", "which is better",
+                "do you agree", "why or why not",
+            )),
+            ("analyze", (
+                "analyze", "compare", "contrast", "differentiate",
+                "distinguish", "classify", "categorize", "examine",
+                "relationship", "cause",
+            )),
+            ("apply", (
+                "apply", "use", "solve", "demonstrate", "show how",
+                "calculate", "choose", "select", "what should",
+                "in this situation",
+            )),
+            ("understand", (
+                "explain", "describe", "summarize", "interpret",
+                "give an example", "why", "how does", "what happens",
+            )),
+            ("remember", (
+                "define", "identify", "list", "name", "state", "what is",
+                "who is", "when", "where", "true or false",
+            )),
+        )
+        for level, cues in cue_groups:
+            if any(cue in text for cue in cues):
+                return level
+        return "understand"
+
+    def _normalize_level(self, raw_level: str) -> str:
+        level = str(raw_level or "").strip().lower()
+        level = BT_LABELS.get(level, level)
+        if level not in BLOOM_TO_DIFFICULTY:
+            return "understand"
+        return level
 
     # ── Public API ──
     def classify(self, question_text: str) -> dict:
         if self.backend == "roberta":
             bloom_level = self._classify_roberta(question_text)
-        else:
+        elif self.backend == "svm":
             bloom_level = self._classify_svm(question_text)
+        else:
+            bloom_level = self._classify_rules(question_text)
+
+        bloom_level = self._normalize_level(bloom_level)
 
         return {
             "bloom_level": bloom_level,

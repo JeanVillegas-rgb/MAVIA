@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from lessons.models import LearningMaterial
+from lessons.services.audio_generator import mark_material_audio_stale
 
 from .models import GeneratedQuestion, GenerationEvent, GenerationRun, LearnerResponse
 from .serializers import QuestionSerializer
@@ -177,7 +178,7 @@ class StartGenerationView(APIView):
     a completed material, or for a single learning object when node_id is
     given. Runs in the background; poll the trace endpoint.
     """
-    def post(self, request, material_id):
+    def post(self, request, material_id, node_id=None):
         try:
             material = LearningMaterial.objects.get(id=material_id)
         except LearningMaterial.DoesNotExist:
@@ -198,9 +199,9 @@ class StartGenerationView(APIView):
             )
 
         node = None
-        node_id = request.data.get("node_id")
-        if node_id is not None:
-            node = text_nodes.filter(id=node_id).first()
+        requested_node_id = node_id if node_id is not None else request.data.get("node_id")
+        if requested_node_id is not None:
+            node = text_nodes.filter(id=requested_node_id).first()
             if node is None:
                 return Response(
                     {"error": "Learning object not found for this material "
@@ -334,6 +335,7 @@ class QuestionDetailView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
         question.save()
+        mark_material_audio_stale(question.node.material, scope="questions")
         return Response({
             "id": question.id,
             "question_text": question.question_text,
@@ -348,10 +350,16 @@ class QuestionDetailView(APIView):
         })
 
     def delete(self, request, question_id):
+        question = GeneratedQuestion.objects.select_related("node__material").filter(id=question_id).first()
+        if question is None:
+            return Response({"error": "Question not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+        material = question.node.material
         deleted, _ = GeneratedQuestion.objects.filter(id=question_id).delete()
         if not deleted:
             return Response({"error": "Question not found"},
                             status=status.HTTP_404_NOT_FOUND)
+        mark_material_audio_stale(material, scope="questions")
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

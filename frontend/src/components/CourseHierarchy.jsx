@@ -6,6 +6,35 @@ function countDescendants(node) {
   return (node.children || []).reduce((total, child) => total + 1 + countDescendants(child), 0);
 }
 
+function flattenRelatedInfo(value) {
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, item]) => {
+    const label = key.replace(/_/g, " ");
+    if (Array.isArray(item)) {
+      return item.filter(Boolean).map((entry) => ({ label, value: String(entry) }));
+    }
+    if (item && typeof item === "object") {
+      return flattenRelatedInfo(item);
+    }
+    return item ? [{ label, value: String(item) }] : [];
+  });
+}
+
+function RelatedInfo({ info }) {
+  const items = flattenRelatedInfo(info).slice(0, 4);
+  if (!items.length) return null;
+
+  return (
+    <div className="hierarchy-related-info">
+      {items.map((item, index) => (
+        <p key={`${item.label}-${index}`}>
+          <span>{item.label}:</span> {item.value}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function IconButton({ label, children, tone = "quiet", ...props }) {
   return (
     <button
@@ -109,27 +138,30 @@ function ChildTopicRow({
       <div className={`hierarchy-child-row ${readOnly ? "is-clickable" : ""}`}>
         <span className="hierarchy-grip" aria-hidden="true">::</span>
         <span className={`hierarchy-dot hierarchy-dot-${color}`} aria-hidden="true" />
-        {isEditing ? (
-          <InlineTitleForm
-            initialTitle={node.title}
-            label={`Rename ${node.title}`}
-            busy={busy}
-            onSave={saveTitle}
-            onCancel={() => setIsEditing(false)}
-          />
-        ) : (
-          readOnly ? (
-            <button
-              type="button"
-              className="hierarchy-title-button"
-              onClick={() => onSelectNode(node)}
-            >
-              {node.title}
-            </button>
+        <div className="hierarchy-title-stack">
+          {isEditing ? (
+            <InlineTitleForm
+              initialTitle={node.title}
+              label={`Rename ${node.title}`}
+              busy={busy}
+              onSave={saveTitle}
+              onCancel={() => setIsEditing(false)}
+            />
           ) : (
-            <strong>{node.title}</strong>
-          )
-        )}
+            readOnly ? (
+              <button
+                type="button"
+                className="hierarchy-title-button"
+                onClick={() => onSelectNode(node)}
+              >
+                {node.title}
+              </button>
+            ) : (
+              <strong>{node.title}</strong>
+            )
+          )}
+          {!isEditing && <RelatedInfo info={node.related_info} />}
+        </div>
         {!readOnly && !isEditing && (
           <div className="hierarchy-row-actions">
             <IconButton label={`Add child under ${node.title}`} disabled={busy} onClick={() => setIsAddingChild(true)}>
@@ -180,7 +212,6 @@ function TopLevelTopic({
   index,
   busy,
   readOnly,
-  renderModuleActions,
   onSelectNode,
   onCreateNode,
   onUpdateNode,
@@ -203,43 +234,37 @@ function TopLevelTopic({
     setIsAddingChild(false);
   }
 
-  function IconButton({ label, children, tone ="quiet", ...props }){
-    
-  }
   return (
     <section className={`hierarchy-section hierarchy-section-${color}`}>
       <div className={`hierarchy-section-header ${readOnly ? "is-clickable" : ""}`}>
         <div className="hierarchy-section-main">
           <span className={`hierarchy-number hierarchy-number-${color}`}>{index + 1}</span>
           <span className="hierarchy-chevron" aria-hidden="true">v</span>
-          {isEditing ? (
-            <InlineTitleForm
-              initialTitle={node.title}
-              label={`Rename ${node.title}`}
-              busy={busy}
-              onSave={saveTitle}
-              onCancel={() => setIsEditing(false)}
-            />
-          ) : (
-            readOnly ? (
-              <button
-                type="button"
-                className="hierarchy-title-button hierarchy-title-button-strong"
-                onClick={() => onSelectNode(node)}
-              >
-                {node.title}
-              </button>
+          <div className="hierarchy-title-stack">
+            {isEditing ? (
+              <InlineTitleForm
+                initialTitle={node.title}
+                label={`Rename ${node.title}`}
+                busy={busy}
+                onSave={saveTitle}
+                onCancel={() => setIsEditing(false)}
+              />
             ) : (
-              <h4>{node.title}</h4>
-            )
-          )}
-        </div>
-
-        {readOnly && !isEditing && (
-          <div className="hierarchy-section-actions">
-            {renderModuleActions?.(node)}
+              readOnly ? (
+                <button
+                  type="button"
+                  className="hierarchy-title-button hierarchy-title-button-strong"
+                  onClick={() => onSelectNode(node)}
+                >
+                  {node.title}
+                </button>
+              ) : (
+                <h4>{node.title}</h4>
+              )
+            )}
+            {!isEditing && <RelatedInfo info={node.related_info} />}
           </div>
-        )}
+        </div>
 
         {!readOnly && !isEditing && (
           <div className="hierarchy-section-actions">
@@ -289,11 +314,10 @@ function TopLevelTopic({
   );
 }
 
-export default function CourseDAG({
+export default function CourseHierarchy({
   hierarchy,
   busy = false,
   readOnly = false,
-  renderModuleActions,
   onSelectNode = () => {},
   onCreateNode,
   onUpdateNode,
@@ -340,7 +364,6 @@ export default function CourseDAG({
               index={index}
               busy={busy}
               readOnly={readOnly}
-              renderModuleActions={renderModuleActions}
               onSelectNode={onSelectNode}
               onCreateNode={onCreateNode}
               onUpdateNode={onUpdateNode}

@@ -1,23 +1,18 @@
 from rest_framework import serializers
 
 from .models import (
-    ConceptPrerequisiteEdge,
-    ConceptSource,
     CourseGroup,
-    ExtractedConcept,
     LearningMaterial,
     LearningObject,
-    LearningObjectPrerequisiteEdge,
-    ModuleConceptDAGState,
-    OutlineEdge,
     OutlineNode,
 )
+from .services.audio_generator import remove_missing_audio_urls
 
 
 class OutlineNodeSerializer(serializers.ModelSerializer):
     class Meta:
         model = OutlineNode
-        fields = ["id", "title", "depth", "order", "parent"]
+        fields = ["id", "title", "depth", "order", "parent", "related_info"]
 
 
 class OutlineNodeMutationSerializer(serializers.Serializer):
@@ -42,28 +37,12 @@ class OutlineNodeMutationSerializer(serializers.Serializer):
         return value
 
 
-class OutlineEdgeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OutlineEdge
-        fields = [
-            "id",
-            "source",
-            "target",
-            "score",
-            "semantic_similarity",
-            "outline_order_score",
-            "validation_status",
-            "is_manual",
-            "explanation",
-        ]
-
-
 class OutlineHierarchyNodeSerializer(serializers.ModelSerializer):
     children = serializers.SerializerMethodField()
 
     class Meta:
         model = OutlineNode
-        fields = ["id", "title", "order", "depth", "parent", "children"]
+        fields = ["id", "title", "order", "depth", "parent", "related_info", "children"]
 
     def get_children(self, obj):
         children = obj.children.all()
@@ -122,37 +101,10 @@ class LearningObjectMutationSerializer(serializers.ModelSerializer):
         return value
 
 
-class LearningObjectPrerequisiteEdgeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LearningObjectPrerequisiteEdge
-        fields = [
-            "id",
-            "course",
-            "module_node",
-            "source",
-            "target",
-            "score",
-            "semantic_similarity",
-            "dependency_cue_score",
-            "source_order_score",
-            "title_overlap_score",
-            "validation_status",
-            "is_manual",
-            "explanation",
-            "created_at",
-            "updated_at",
-        ]
-
-    def validate_content(self, value):
-        value = value.strip()
-        if not value:
-            raise serializers.ValidationError("Content cannot be blank.")
-        return value
-
-
 class LearningMaterialSerializer(serializers.ModelSerializer):
     learning_objects = LearningObjectSerializer(many=True, read_only=True)
     filename = serializers.SerializerMethodField()
+    generated_json = serializers.SerializerMethodField()
 
     class Meta:
         model = LearningMaterial
@@ -172,110 +124,8 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
     def get_filename(self, obj):
         return obj.pdf_file.name.split("/")[-1] if obj.pdf_file else ""
 
-
-class ConceptSourceSerializer(serializers.ModelSerializer):
-    material_title = serializers.CharField(source="learning_material.title", read_only=True)
-    material_filename = serializers.SerializerMethodField()
-
-    class Meta:
-        model = ConceptSource
-        fields = [
-            "id",
-            "learning_material",
-            "material_title",
-            "material_filename",
-            "page_number",
-            "section_title",
-            "source_excerpt",
-            "first_appearance_order",
-        ]
-
-    def get_material_filename(self, obj):
-        return obj.learning_material.pdf_file.name.split("/")[-1] if obj.learning_material.pdf_file else ""
-
-
-class ExtractedConceptSerializer(serializers.ModelSerializer):
-    sources = ConceptSourceSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = ExtractedConcept
-        fields = [
-            "id",
-            "course",
-            "module_node",
-            "canonical_title",
-            "normalized_title",
-            "description",
-            "order",
-            "confidence",
-            "validation_status",
-            "is_manual",
-            "created_at",
-            "updated_at",
-            "sources",
-        ]
-
-
-class ExtractedConceptWriteSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ExtractedConcept
-        fields = ["canonical_title", "description", "order"]
-        extra_kwargs = {
-            "canonical_title": {"required": False},
-            "description": {"required": False},
-            "order": {"required": False},
-        }
-
-    def validate_canonical_title(self, value):
-        value = value.strip()
-        if not value:
-            raise serializers.ValidationError("Concept title cannot be blank.")
-        return value
-
-
-class ConceptPrerequisiteEdgeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ConceptPrerequisiteEdge
-        fields = [
-            "id",
-            "course",
-            "module_node",
-            "source",
-            "target",
-            "score",
-            "semantic_similarity",
-            "dependency_cue_score",
-            "source_order_score",
-            "title_overlap_score",
-            "instructional_order_score",
-            "validation_status",
-            "is_manual",
-            "explanation",
-            "created_at",
-            "updated_at",
-        ]
-
-
-class ConceptPrerequisiteEdgeWriteSerializer(serializers.Serializer):
-    source = serializers.PrimaryKeyRelatedField(queryset=ExtractedConcept.objects.all(), required=False)
-    target = serializers.PrimaryKeyRelatedField(queryset=ExtractedConcept.objects.all(), required=False)
-    validation_status = serializers.ChoiceField(
-        choices=ConceptPrerequisiteEdge.ValidationStatus.choices,
-        required=False,
-    )
-    explanation = serializers.CharField(required=False, allow_blank=True)
-
-
-class ModuleConceptDAGStateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ModuleConceptDAGState
-        fields = [
-            "is_confirmed",
-            "confirmed_at",
-            "invalidated_at",
-            "invalidation_reason",
-            "updated_at",
-        ]
+    def get_generated_json(self, obj):
+        return remove_missing_audio_urls(obj)
 
 
 class CourseDetailSerializer(serializers.ModelSerializer):
@@ -316,3 +166,4 @@ class CourseCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CourseGroup
         fields = ["id", "title", "description"]
+

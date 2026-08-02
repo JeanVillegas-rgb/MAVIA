@@ -1,7 +1,15 @@
 const API_BASE = "/api";
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, options);
+  } catch (error) {
+    throw new Error(
+      "API server unreachable. Start the Django backend at http://127.0.0.1:8000, then refresh this page."
+    );
+  }
+
   if (!response.ok) {
     let message = `Request failed: ${response.status}`;
     const responseForText = response.clone();
@@ -93,6 +101,12 @@ export function regenerateLearningMaterial(courseId, materialId) {
   });
 }
 
+export function deleteLearningMaterial(courseId, materialId) {
+  return request(`/courses/${courseId}/materials/${materialId}/`, {
+    method: "DELETE",
+  });
+}
+
 export function createLearningObject(courseId, materialId, data) {
   return request(`/courses/${courseId}/materials/${materialId}/learning-objects/`, {
     method: "POST",
@@ -121,9 +135,11 @@ export function confirmLearningObjects(courseId, materialId) {
   });
 }
 
-export function generateAudioPlaylist(courseId, materialId) {
+export function generateAudioPlaylist(courseId, materialId, scope = "all") {
   return request(`/courses/${courseId}/materials/${materialId}/generate-audio-playlist/`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope }),
   });
 }
 
@@ -145,67 +161,14 @@ export function deleteCourse(id) {
   return request(`/courses/${id}/`, { method: "DELETE" });
 }
 
-export function fetchModuleConceptDag(courseId, moduleId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/learning-object-dag/`);
-}
-
-export function fetchModuleConcepts(courseId, moduleId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/concepts/`);
-}
-
-export function extractModuleConcepts(courseId, moduleId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/extract-concepts/`, {
-    method: "POST",
-  });
-}
-
-export function approveModuleConcepts(courseId, moduleId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/approve-concepts/`, {
-    method: "POST",
-  });
-}
-
-export function generateModuleConceptDag(courseId, moduleId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/generate-learning-object-dag/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ regenerate: true }),
-  });
-}
-
-export function updateModuleConceptEdge(courseId, moduleId, edgeId, data) {
-  return request(`/courses/${courseId}/modules/${moduleId}/learning-object-edges/${edgeId}/`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-}
-
-export function createModuleConceptEdge(courseId, moduleId, data) {
-  return request(`/courses/${courseId}/modules/${moduleId}/learning-object-edges/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-}
-
-export function deleteModuleConceptEdge(courseId, moduleId, edgeId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/learning-object-edges/${edgeId}/`, {
-    method: "DELETE",
-  });
-}
-
-export function confirmModuleConceptDag(courseId, moduleId) {
-  return request(`/courses/${courseId}/modules/${moduleId}/confirm-learning-object-dag/`, {
-    method: "POST",
-  });
-}
-
 export function startQuestionGeneration(materialId, nodeId = null) {
-  return request(`/generation/materials/${materialId}/start/`, {
+  const path = nodeId
+    ? `/generation/materials/${materialId}/nodes/${nodeId}/start/`
+    : `/generation/materials/${materialId}/start/`;
+  return request(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(nodeId ? { node_id: nodeId } : {}),
+    body: JSON.stringify({}),
   });
 }
 

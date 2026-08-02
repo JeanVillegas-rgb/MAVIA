@@ -9,30 +9,16 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from .models import ConceptPrerequisiteEdge, CourseGroup, CourseOutline, ExtractedConcept, LearningMaterial, LearningObject, OutlineNode
+from .models import CourseGroup, CourseOutline, LearningMaterial, LearningObject, OutlineNode
 from .serializers import (
-    ConceptPrerequisiteEdgeSerializer,
-    ConceptPrerequisiteEdgeWriteSerializer,
     CourseCreateSerializer,
     CourseDetailSerializer,
     CourseListSerializer,
-    ExtractedConceptSerializer,
-    ExtractedConceptWriteSerializer,
     LearningMaterialSerializer,
     LearningObjectMutationSerializer,
-    OutlineEdgeSerializer,
     OutlineNodeMutationSerializer,
     OutlineNodeSerializer,
 )
-from .services.concept_dag_state import confirm_module_dag, get_or_create_module_dag_state, invalidate_module_dag
-from .services.concept_edge_generator import (
-    edge_would_create_cycle,
-    generate_module_concept_dag,
-    get_unlocked_concepts,
-    is_module_concept_dag_acyclic,
-    validate_manual_concept_edge,
-)
-from .services.concept_extractor import ConceptExtractionError, extract_module_concepts
 from .services.audio_generator import AudioGenerationError, generate_material_audio_playlist
 from .services.content_generator import (
     apply_classification_override,
@@ -40,7 +26,6 @@ from .services.content_generator import (
     build_narration_script_from_learning_objects,
     generate_material_outputs,
 )
-from .services.edge_generator import generate_prerequisite_edges
 from .services.instructional_content_classifier import CLASSIFICATION_CATEGORIES
 from .services.llm_client import LocalLLMError
 from .services.outline_parser import build_dag_from_outline
@@ -49,36 +34,9 @@ from .services.outline_parser import build_dag_from_outline
 logger = logging.getLogger(__name__)
 
 
-def _get_descendant_ids(module_node):
-    descendant_ids = set()
-    stack = list(module_node.children.all())
-    while stack:
-        node = stack.pop()
-        descendant_ids.add(node.id)
-        stack.extend(node.children.all())
-    return descendant_ids
-
-
-def get_concept_readiness_summary(concepts):
-    total = concepts.count()
-    pending = concepts.filter(validation_status=ExtractedConcept.ValidationStatus.PENDING).count()
-    approved = concepts.filter(validation_status=ExtractedConcept.ValidationStatus.APPROVED).count()
-    rejected = concepts.filter(validation_status=ExtractedConcept.ValidationStatus.REJECTED).count()
-    manual = concepts.filter(is_manual=True).count()
-    return {
-        "total": total,
-        "pending": pending,
-        "approved": approved,
-        "rejected": rejected,
-        "manual": manual,
-        "ready_for_dag": approved >= 2 and pending == 0,
-    }
-
-
 class CourseGroupViewSet(viewsets.ModelViewSet):
     queryset = CourseGroup.objects.prefetch_related(
         "nodes",
-        "outline_edges",
         "outline",
         "materials__learning_objects",
     ).all()
@@ -90,19 +48,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         if self.action == "create":
             return CourseCreateSerializer
         return CourseDetailSerializer
-
-    @action(detail=True, methods=["get"], url_path="dag")
-    def dag(self, request, pk=None):
-        course = self.get_object()
-        nodes = course.nodes.all()
-        edges = course.outline_edges.all()
-
-        return Response(
-            {
-                "nodes": OutlineNodeSerializer(nodes, many=True, context={"request": request}).data,
-                "edges": OutlineEdgeSerializer(edges, many=True, context={"request": request}).data,
-            }
-        )
 
     def _get_module_node(self, course, module_id):
         try:
@@ -137,617 +82,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             .order_by("-created_at")
         )
         return Response(LearningMaterialSerializer(materials, many=True, context={"request": request}).data)
-
-    def _serialize_module_concepts(self, request, module):
-        concepts = (
-            module.extracted_concepts.select_related("course", "module_node")
-            .prefetch_related("sources__learning_material")
-            .order_by("order", "id")
-        )
-        return {
-            "summary": get_concept_readiness_summary(concepts),
-            "concepts": ExtractedConceptSerializer(concepts, many=True, context={"request": request}).data,
-        }
-
-    @action(
-        detail=True,
-        methods=["get", "post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concepts",
-    )
-
-    def module_concepts(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response(
-                {"detail": "Top-level module was not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if request.method == "POST":
-            serializer = ExtractedConceptWriteSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            if not serializer.validated_data.get("canonical_title"):
-                return Response(
-                    {"canonical_title": ["This field is required."]},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            max_order = module.extracted_concepts.aggregate(Max("order"))["order__max"]
-            concept = ExtractedConcept(
-                course=course,
-                module_node=module,
-                canonical_title=serializer.validated_data["canonical_title"],
-                description=serializer.validated_data.get("description", ""),
-                order=serializer.validated_data.get("order", (max_order or 0) + 1 if max_order is not None else 0),
-                validation_status=ExtractedConcept.ValidationStatus.APPROVED,
-                is_manual=True,
-            )
-            try:
-                concept.full_clean()
-                concept.save()
-                invalidate_module_dag(course, module, "A concept was added.")
-            except ValidationError as exc:
-                return Response(exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-            return Response(
-                ExtractedConceptSerializer(concept, context={"request": request}).data,
-                status=status.HTTP_201_CREATED,
-            )
-
-        return Response(self._serialize_module_concepts(request, module))
-
-    def _get_module_concept(self, course, module, concept_id):
-        try:
-            return ExtractedConcept.objects.select_related("course", "module_node").prefetch_related(
-                "sources__learning_material"
-            ).get(pk=concept_id, course=course, module_node=module)
-        except ExtractedConcept.DoesNotExist:
-            return None
-
-    @action(
-        detail=True,
-        methods=["get", "patch", "delete"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concepts/(?P<concept_id>[^/.]+)",
-    )
-    def module_concept_detail(self, request, pk=None, module_id=None, concept_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response(
-                {"detail": "Top-level module was not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        concept = self._get_module_concept(course, module, concept_id)
-        if concept is None:
-            return Response(
-                {"detail": "Concept was not found for this module."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if request.method == "GET":
-            return Response(ExtractedConceptSerializer(concept, context={"request": request}).data)
-
-        if request.method == "DELETE":
-            concept.delete()
-            invalidate_module_dag(course, module, "A concept was deleted.")
-            return Response({"message": "Concept deleted successfully."})
-
-        serializer = ExtractedConceptWriteSerializer(concept, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        for field in ["canonical_title", "description", "order"]:
-            if field in serializer.validated_data:
-                setattr(concept, field, serializer.validated_data[field])
-        try:
-            concept.full_clean()
-            concept.save()
-            invalidate_module_dag(course, module, "A concept was edited.")
-        except ValidationError as exc:
-            return Response(exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ExtractedConceptSerializer(concept, context={"request": request}).data)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concepts/(?P<concept_id>[^/.]+)/approve",
-    )
-    def approve_module_concept(self, request, pk=None, module_id=None, concept_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-        concept = self._get_module_concept(course, module, concept_id)
-        if concept is None:
-            return Response({"detail": "Concept was not found for this module."}, status=status.HTTP_404_NOT_FOUND)
-        concept.validation_status = ExtractedConcept.ValidationStatus.APPROVED
-        concept.save(update_fields=["validation_status", "updated_at"])
-        invalidate_module_dag(course, module, "A concept was approved.")
-        return Response(ExtractedConceptSerializer(concept, context={"request": request}).data)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concepts/(?P<concept_id>[^/.]+)/reject",
-    )
-    def reject_module_concept(self, request, pk=None, module_id=None, concept_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-        concept = self._get_module_concept(course, module, concept_id)
-        if concept is None:
-            return Response({"detail": "Concept was not found for this module."}, status=status.HTTP_404_NOT_FOUND)
-        concept.validation_status = ExtractedConcept.ValidationStatus.REJECTED
-        concept.save(update_fields=["validation_status", "updated_at"])
-        invalidate_module_dag(course, module, "A concept was rejected.")
-        return Response(ExtractedConceptSerializer(concept, context={"request": request}).data)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/approve-concepts",
-    )
-    def approve_module_concepts(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response(
-                {"detail": "Top-level module was not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        concepts = module.extracted_concepts.all()
-        approved_count = concepts.filter(validation_status=ExtractedConcept.ValidationStatus.PENDING).update(
-            validation_status=ExtractedConcept.ValidationStatus.APPROVED,
-            updated_at=timezone.now(),
-        )
-        if approved_count:
-            invalidate_module_dag(course, module, "Module concepts were approved.")
-        refreshed = (
-            module.extracted_concepts.select_related("course", "module_node")
-            .prefetch_related("sources__learning_material")
-            .order_by("order", "id")
-        )
-        return Response(
-            {
-                "message": "Pending concepts approved successfully.",
-                "approved_count": approved_count,
-                "already_approved_count": refreshed.filter(
-                    validation_status=ExtractedConcept.ValidationStatus.APPROVED
-                ).count()
-                - approved_count,
-                "rejected_count": refreshed.filter(validation_status=ExtractedConcept.ValidationStatus.REJECTED).count(),
-                "concepts": ExtractedConceptSerializer(refreshed, many=True, context={"request": request}).data,
-            }
-        )
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/extract-concepts",
-    )
-    def extract_module_concepts(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response(
-                {"detail": "Top-level module was not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if not course.materials.filter(module_node=module).exists():
-            return Response(
-                {"detail": "Upload at least one PDF material under this module before extracting concepts."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            result = extract_module_concepts(module)
-        except ConceptExtractionError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            logger.exception("Unexpected concept extraction failure for course %s module %s", course.id, module.id)
-            return Response(
-                {"detail": "Concepts could not be extracted from this module."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        module = course.nodes.get(pk=module.pk)
-        if result["concepts_created"] or result["concepts_updated"]:
-            invalidate_module_dag(course, module, "Module concepts were extracted or updated.")
-        return Response(
-            {
-                "module": OutlineNodeSerializer(module, context={"request": request}).data,
-                "materials_processed": result["materials_processed"],
-                "concepts_created": result["concepts_created"],
-                "concepts_updated": result["concepts_updated"],
-                "duplicates_merged": result["duplicates_merged"],
-                "summary": get_concept_readiness_summary(result["concepts"]),
-                "concepts": ExtractedConceptSerializer(
-                    result["concepts"],
-                    many=True,
-                    context={"request": request},
-                ).data,
-            }
-        )
-
-    def _serialize_module_concept_dag(self, request, course, module):
-        state = get_or_create_module_dag_state(course, module)
-        concepts = (
-            ExtractedConcept.objects.filter(
-                course=course,
-                module_node=module,
-                validation_status=ExtractedConcept.ValidationStatus.APPROVED,
-            )
-            .prefetch_related("sources__learning_material")
-            .order_by("order", "id")
-        )
-        edges = (
-            ConceptPrerequisiteEdge.objects.filter(course=course, module_node=module)
-            .select_related("source", "target")
-            .order_by("source__order", "target__order", "id")
-        )
-        nodes = []
-        for concept in concepts:
-            sources = list(concept.sources.all())
-            nodes.append(
-                {
-                    "id": concept.id,
-                    "title": concept.canonical_title,
-                    "description": concept.description,
-                    "validation_status": concept.validation_status,
-                    "material_ids": sorted({source.learning_material_id for source in sources}),
-                    "source_count": len(sources),
-                    "order": concept.order,
-                    "is_manual": concept.is_manual,
-                }
-            )
-        return {
-            "module": {
-                "id": module.id,
-                "title": module.title,
-            },
-            "confirmed": state.is_confirmed,
-            "state": {
-                "is_confirmed": state.is_confirmed,
-                "confirmed_at": state.confirmed_at,
-                "invalidated_at": state.invalidated_at,
-                "invalidation_reason": state.invalidation_reason,
-            },
-            "is_acyclic": is_module_concept_dag_acyclic(module),
-            "nodes": nodes,
-            "edges": ConceptPrerequisiteEdgeSerializer(edges, many=True, context={"request": request}).data,
-        }
-
-    def _get_module_concept_edge(self, course, module, edge_id):
-        try:
-            return ConceptPrerequisiteEdge.objects.select_related("source", "target").get(
-                pk=edge_id,
-                course=course,
-                module_node=module,
-            )
-        except ConceptPrerequisiteEdge.DoesNotExist:
-            return None
-
-    @action(
-        detail=True,
-        methods=["get"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concept-dag",
-    )
-    def module_concept_dag(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(self._serialize_module_concept_dag(request, course, module))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/generate-concept-dag",
-    )
-    def generate_module_concept_dag(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            threshold = request.data.get("threshold") if isinstance(request.data, dict) else None
-            summary = generate_module_concept_dag(
-                course,
-                module,
-                regenerate=bool(request.data.get("regenerate", False)) if isinstance(request.data, dict) else False,
-                threshold=threshold,
-            )
-        except RuntimeError:
-            logger.exception("Concept prerequisite model unavailable for course %s module %s", course.id, module.id)
-            return Response(
-                {"detail": "The semantic similarity model could not be loaded."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        except (ValueError, ValidationError) as exc:
-            detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": getattr(exc, "messages", [str(exc)])}
-            return Response(detail, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            logger.exception("Unexpected concept DAG generation failure for course %s module %s", course.id, module.id)
-            return Response({"detail": "Concept learner path could not be generated."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response(
-            {
-                "message": "Concept learner path generated successfully.",
-                "summary": summary,
-                **self._serialize_module_concept_dag(request, course, module),
-            }
-        )
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concept-edges",
-    )
-    def create_module_concept_edge(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = ConceptPrerequisiteEdgeWriteSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        source = serializer.validated_data.get("source")
-        target = serializer.validated_data.get("target")
-        if source is None or target is None:
-            return Response({"detail": "source and target are required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            validate_manual_concept_edge(course, module, source, target)
-            edge = ConceptPrerequisiteEdge(
-                course=course,
-                module_node=module,
-                source=source,
-                target=target,
-                score=1.0,
-                semantic_similarity=None,
-                dependency_cue_score=None,
-                source_order_score=None,
-                title_overlap_score=None,
-                instructional_order_score=None,
-                explanation=serializer.validated_data.get("explanation", "Teacher-created prerequisite edge."),
-                validation_status=serializer.validated_data.get(
-                    "validation_status",
-                    ConceptPrerequisiteEdge.ValidationStatus.APPROVED,
-                ),
-                is_manual=True,
-            )
-            edge.full_clean()
-            edge.save()
-            invalidate_module_dag(course, module, "A manual concept edge was added.")
-        except ValidationError as exc:
-            return Response(exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ConceptPrerequisiteEdgeSerializer(edge, context={"request": request}).data, status=status.HTTP_201_CREATED)
-
-    @action(
-        detail=True,
-        methods=["patch", "delete"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/concept-edges/(?P<edge_id>[^/.]+)",
-    )
-    def module_concept_edge_detail(self, request, pk=None, module_id=None, edge_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-
-        edge = self._get_module_concept_edge(course, module, edge_id)
-        if edge is None:
-            return Response({"detail": "Concept prerequisite edge was not found for this module."}, status=status.HTTP_404_NOT_FOUND)
-
-        if request.method == "DELETE":
-            if not edge.is_manual:
-                return Response({"detail": "Only manual concept edges can be deleted."}, status=status.HTTP_400_BAD_REQUEST)
-            edge.delete()
-            invalidate_module_dag(course, module, "A manual concept edge was deleted.")
-            return Response({"message": "Concept prerequisite edge deleted successfully."})
-
-        serializer = ConceptPrerequisiteEdgeWriteSerializer(data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        source = serializer.validated_data.get("source", edge.source)
-        target = serializer.validated_data.get("target", edge.target)
-        try:
-            if source.id != edge.source_id or target.id != edge.target_id:
-                validate_manual_concept_edge(course, module, source, target, edge_id=edge.id)
-                edge.source = source
-                edge.target = target
-                edge.is_manual = True
-            if "validation_status" in serializer.validated_data:
-                next_status = serializer.validated_data["validation_status"]
-                if next_status != ConceptPrerequisiteEdge.ValidationStatus.REJECTED:
-                    validate_manual_concept_edge(course, module, edge.source, edge.target, edge_id=edge.id)
-                edge.validation_status = next_status
-            if "explanation" in serializer.validated_data:
-                edge.explanation = serializer.validated_data["explanation"]
-            edge.full_clean()
-            edge.save()
-            invalidate_module_dag(course, module, "A concept edge was changed.")
-        except ValidationError as exc:
-            return Response(exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ConceptPrerequisiteEdgeSerializer(edge, context={"request": request}).data)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/confirm-concept-dag",
-    )
-    def confirm_module_concept_dag(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-
-        pending_count = ConceptPrerequisiteEdge.objects.filter(
-            course=course,
-            module_node=module,
-            validation_status=ConceptPrerequisiteEdge.ValidationStatus.PENDING,
-        ).count()
-        if pending_count:
-            return Response(
-                {"detail": "Resolve all pending concept edges before confirming the learner path."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not is_module_concept_dag_acyclic(module):
-            return Response({"detail": "The concept learner path contains a cycle."}, status=status.HTTP_400_BAD_REQUEST)
-        state = confirm_module_dag(course, module)
-        return Response(
-            {
-                "message": "Concept learner path confirmed.",
-                "state": {
-                    "is_confirmed": state.is_confirmed,
-                    "confirmed_at": state.confirmed_at,
-                    "invalidated_at": state.invalidated_at,
-                    "invalidation_reason": state.invalidation_reason,
-                },
-                **self._serialize_module_concept_dag(request, course, module),
-            }
-        )
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/unlocked-concepts",
-    )
-    def unlocked_module_concepts(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response({"detail": "Top-level module was not found for this course."}, status=status.HTTP_404_NOT_FOUND)
-        mastered_ids = request.data.get("mastered_concept_ids", [])
-        if not isinstance(mastered_ids, list):
-            return Response({"detail": "mastered_concept_ids must be a list."}, status=status.HTTP_400_BAD_REQUEST)
-        concepts = get_unlocked_concepts(module, mastered_ids)
-        return Response(
-            {
-                "concepts": ExtractedConceptSerializer(concepts, many=True, context={"request": request}).data,
-            }
-        )
-
-    def _serialize_module_dag(self, request, course, module):
-        descendant_ids = _get_descendant_ids(module)
-        nodes = course.nodes.filter(id__in=descendant_ids).order_by("depth", "order", "id")
-        edges = course.outline_edges.filter(
-            source_id__in=descendant_ids,
-            target_id__in=descendant_ids,
-        )
-        return {
-            "module": OutlineNodeSerializer(module, context={"request": request}).data,
-            "nodes": OutlineNodeSerializer(nodes, many=True, context={"request": request}).data,
-            "edges": OutlineEdgeSerializer(edges, many=True, context={"request": request}).data,
-        }
-
-    @action(
-        detail=True,
-        methods=["get"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/dag",
-    )
-    def module_dag(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response(
-                {"detail": "Top-level module was not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        return Response(self._serialize_module_dag(request, course, module))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"modules/(?P<module_id>[^/.]+)/generate-dag",
-    )
-    def generate_module_dag(self, request, pk=None, module_id=None):
-        course = self.get_object()
-        module = self._get_module_node(course, module_id)
-        if module is None:
-            return Response(
-                {"detail": "Top-level module was not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        descendant_ids = _get_descendant_ids(module)
-        if len(descendant_ids) < 2:
-            return Response(
-                {"detail": "This module needs at least two lesson concepts before a DAG can be generated."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            summary = generate_prerequisite_edges(course, module_node=module)
-        except RuntimeError:
-            logger.exception("Prerequisite edge generation model unavailable for course %s module %s", course.id, module.id)
-            return Response(
-                {
-                    "detail": (
-                        "The semantic similarity model could not be loaded. "
-                        "Please try again after the model is installed or cached."
-                    )
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        except Exception:
-            logger.exception("Unexpected prerequisite edge generation failure for course %s module %s", course.id, module.id)
-            return Response(
-                {"detail": "Candidate prerequisite edges could not be generated."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        course = self.get_queryset().get(pk=course.pk)
-        module = course.nodes.get(pk=module.pk)
-        return Response(
-            {
-                "message": "Candidate prerequisite edges generated successfully.",
-                "summary": summary,
-                **self._serialize_module_dag(request, course, module),
-            }
-        )
-
-    @action(detail=True, methods=["post"], url_path="generate-dag")
-    def generate_dag(self, request, pk=None):
-        course = self.get_object()
-        if not course.nodes.exists():
-            return Response(
-                {"detail": "Generate or upload an outline before generating prerequisite edges."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            summary = generate_prerequisite_edges(course)
-        except RuntimeError as exc:
-            logger.exception("Prerequisite edge generation model unavailable for course %s", course.id)
-            return Response(
-                {
-                    "detail": (
-                        "The semantic similarity model could not be loaded. "
-                        "Please try again after the model is installed or cached."
-                    )
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        except Exception:
-            logger.exception("Unexpected prerequisite edge generation failure for course %s", course.id)
-            return Response(
-                {"detail": "Candidate prerequisite edges could not be generated."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        course = self.get_queryset().get(pk=course.pk)
-        nodes = course.nodes.all()
-        edges = course.outline_edges.all()
-
-        return Response(
-            {
-                "message": "Candidate prerequisite edges generated successfully.",
-                "summary": summary,
-                "nodes": OutlineNodeSerializer(nodes, many=True, context={"request": request}).data,
-                "edges": OutlineEdgeSerializer(edges, many=True, context={"request": request}).data,
-            }
-        )
 
     def _serialize_course_detail(self, course, request):
         course = self.get_queryset().get(pk=course.pk)
@@ -834,13 +168,18 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "outline_file is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if not outline_file.name.lower().endswith(".pdf"):
+            return Response(
+                {"detail": "Only PDF course outlines are supported."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if hasattr(course, "outline"):
             course.outline.outline_file.delete(save=False)
             course.outline.delete()
 
         outline = CourseOutline.objects.create(course=course, outline_file=outline_file)
-        extension = Path(outline_file.name).suffix or ".txt"
+        extension = Path(outline_file.name).suffix
         try:
             build_dag_from_outline(course, outline.outline_file.path, extension)
         except LocalLLMError as exc:
@@ -959,6 +298,28 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         except LearningMaterial.DoesNotExist:
             return None
 
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"materials/(?P<material_id>[^/.]+)",
+    )
+    def material_detail(self, request, pk=None, material_id=None):
+        course = self.get_object()
+        material = self._get_course_material(course, material_id)
+        if material is None:
+            return Response(
+                {"detail": "Learning material not found for this course."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if material.pdf_file:
+            material.pdf_file.delete(save=False)
+        material.delete()
+
+        course = self.get_queryset().get(pk=course.pk)
+        serializer = CourseDetailSerializer(course, context={"request": request})
+        return Response(serializer.data)
+
     def _learning_objects_snapshot(self, material):
         return [
             {
@@ -979,6 +340,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         generated_json["narration_script"] = narration_script
         generated_json["lesson_playlist"] = build_lesson_playlist(narration_script)
         generated_json["audio_playlist_generated"] = False
+        generated_json["lesson_audio_generated"] = False
+        generated_json["question_audio_generated"] = False
         generated_json["learning_objects_confirmed"] = confirmed
         generated_json["learning_objects_confirmed_at"] = timezone.now().isoformat() if confirmed else None
         material.generated_json = generated_json
@@ -1087,8 +450,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        scope = request.data.get("scope", "all")
         try:
-            result = generate_material_audio_playlist(material)
+            result = generate_material_audio_playlist(material, scope=scope)
         except AudioGenerationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1098,6 +462,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             {
                 "message": "Audio playlist generated successfully.",
                 "generated_count": result["generated_count"],
+                "scope": result.get("scope", scope),
                 "course": serializer.data,
             }
         )
@@ -1172,3 +537,4 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         serializer.save(kind=LearningObject.Kind.TEXT, image_prompt="")
         self._set_learning_objects_confirmed(material, False)
         return self._serialize_course_detail(course, request)
+

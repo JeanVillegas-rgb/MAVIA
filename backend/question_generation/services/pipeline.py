@@ -258,6 +258,21 @@ def save_node_questions(node, questions):
     """
     from question_generation.models import GeneratedQuestion
 
+    def _corrected_for_storage(question):
+        """Persist the classifier's difficulty as the final accepted label."""
+        corrected = dict(question)
+        original_intended = corrected.get("intended_difficulty")
+        classified = corrected.get("difficulty")
+        if original_intended != classified or corrected.get("difficulty_match") is not True:
+            print(
+                "Corrected question difficulty before save: "
+                f"intended={original_intended} -> stored={classified}; "
+                f"question={corrected.get('question', '')[:120]}"
+            )
+        corrected["intended_difficulty"] = corrected["difficulty"]
+        corrected["difficulty_match"] = True
+        return corrected
+
     db_objects = [
         GeneratedQuestion(
             node=q["node"],
@@ -272,12 +287,19 @@ def save_node_questions(node, questions):
             intended_difficulty=q["intended_difficulty"],
             difficulty_match=q["difficulty_match"],
         )
-        for q in questions
+        for q in (_corrected_for_storage(question) for question in questions)
     ]
 
     with transaction.atomic():
         deleted, _ = GeneratedQuestion.objects.filter(node=node).delete()
         created = GeneratedQuestion.objects.bulk_create(db_objects)
+        material = node.material
+        generated_json = material.generated_json or {}
+        if generated_json:
+            generated_json["question_audio_generated"] = False
+            generated_json["audio_playlist_generated"] = False
+            material.generated_json = generated_json
+            material.save(update_fields=["generated_json"])
     if deleted:
         print(f"Replaced {deleted} existing rows for node {node.id}")
     print(f"Saved {len(created)} questions for node {node.id}")

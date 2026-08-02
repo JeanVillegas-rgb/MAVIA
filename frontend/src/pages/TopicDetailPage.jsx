@@ -4,6 +4,7 @@ import {
   confirmLearningObjects,
   createLearningObject,
   deleteGeneratedQuestion,
+  deleteLearningMaterial,
   deleteLearningObject,
   fetchCourse,
   fetchMaterialQuestions,
@@ -309,7 +310,9 @@ function QuestionBankSection({
           onClick={() => onStart(null)}
         >
           {running || starting
-            ? "Generating..."
+            ? progress?.scope?.startsWith("Only ")
+              ? "Please wait"
+              : "Generating..."
             : totalQuestions
               ? "Regenerate all questions"
               : "Generate all questions"}
@@ -322,6 +325,7 @@ function QuestionBankSection({
 
       {progress && (
         <div className="success-banner">
+          {progress.scope ? `${progress.scope}: ` : ""}
           Generating&hellip; {progress.generated} question{progress.generated === 1 ? "" : "s"} so far
           &middot; {progress.message}
         </div>
@@ -362,6 +366,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
   const [reviewEditMode, setReviewEditMode] = useState(false);
   const [selectedId, setSelectedId] = useState(material.learning_objects[0]?.id || null);
   const [busyAction, setBusyAction] = useState("");
+  const [activeTab, setActiveTab] = useState("content");
   const [questionBank, setQuestionBank] = useState([]);
 
   const loadQuestionBank = useCallback(async () => {
@@ -386,7 +391,9 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
   const [genProgress, setGenProgress] = useState(null);
   const [genLog, setGenLog] = useState([]);
   const [genStarting, setGenStarting] = useState(false);
+  const [genStartingNodeId, setGenStartingNodeId] = useState(null);
   const genRunning = genRun?.status === "running";
+  const allQuestionsRunning = genRunning && !genRun?.node_id;
 
   useEffect(() => {
     // pick up a run that is already in flight (e.g. after a page reload)
@@ -411,7 +418,11 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
         if (data.events.length) {
           lastSeq = data.events[data.events.length - 1].seq;
           generated += data.events.filter((e) => e.event_type === "question_generated").length;
-          setGenProgress({ generated, message: data.events[data.events.length - 1].message });
+          setGenProgress((current) => ({
+            generated,
+            message: data.events[data.events.length - 1].message,
+            scope: current?.scope,
+          }));
           setGenLog((current) => [...current, ...data.events]);
           // questions are saved per node — refresh the inline lists as nodes finish
           if (data.events.some((e) => e.event_type === "node_finished")) {
@@ -438,6 +449,9 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
   }, [genRun?.id, genRunning, loadQuestionBank]);
 
   async function startGeneration(nodeId = null) {
+    const targetObject = nodeId
+      ? material.learning_objects.find((item) => item.id === nodeId)
+      : null;
     const existingCount = nodeId
       ? (questionsByNode.get(nodeId) || []).length
       : totalQuestions;
@@ -452,16 +466,23 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
       return;
     }
     setGenStarting(true);
+    setGenStartingNodeId(nodeId);
     onError("");
     try {
+      setActiveTab("questions");
       const response = await startQuestionGeneration(material.id, nodeId);
       setGenLog([]);
       setGenRun({ id: response.run_id, node_id: response.node_id, status: "running" });
-      setGenProgress({ generated: 0, message: "Starting..." });
+      setGenProgress({
+        generated: 0,
+        message: "Starting...",
+        scope: targetObject ? `Only ${targetObject.title}` : "All learning objects",
+      });
     } catch (err) {
       onError(err.message);
     } finally {
       setGenStarting(false);
+      setGenStartingNodeId(null);
     }
   }
   const llmMetadata = material.generated_json?.llm_metadata;
@@ -469,6 +490,12 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
   const learningObjectsConfirmed = Boolean(generatedJson.learning_objects_confirmed);
   const lessonPlaylist = generatedJson.lesson_playlist || [];
   const audioGenerated = Boolean(generatedJson.audio_playlist_generated);
+  const lessonAudioGenerated = Boolean(generatedJson.lesson_audio_generated);
+  const questionAudioGenerated = Boolean(generatedJson.question_audio_generated);
+  const audioCount = lessonPlaylist.filter((item) => item.audio_url).length;
+  const lessonAudioItems = lessonPlaylist.filter((item) => item.type !== "practice_question");
+  const questionAudioItems = lessonPlaylist.filter((item) => item.type === "practice_question");
+  const questionAudioCount = questionAudioItems.filter((item) => item.audio_url).length;
   const canEditLearningObjects = !learningObjectsConfirmed || reviewEditMode;
   const selectedObject = material.learning_objects.find((item) => item.id === selectedId);
 
@@ -566,14 +593,19 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
     }
   }
 
-  async function generateAudio() {
-    setBusyAction("audio");
+  async function generateAudio(scope) {
+    setBusyAction(`audio-${scope}`);
     onError("");
     onMessage("");
     try {
-      const response = await generateAudioPlaylist(courseId, material.id);
+      setActiveTab("audio");
+      const response = await generateAudioPlaylist(courseId, material.id, scope);
       onCourseChange(response.course);
-      onMessage(`${response.generated_count} audio playlist item${response.generated_count === 1 ? "" : "s"} generated.`);
+      onMessage(
+        `${response.generated_count} ${scope === "questions" ? "question" : "lesson"} audio item${
+          response.generated_count === 1 ? "" : "s"
+        } generated.`,
+      );
     } catch (err) {
       onError(err.message);
     } finally {
@@ -595,6 +627,22 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
           ? `${objectCount} learning object${objectCount === 1 ? "" : "s"} regenerated from the PDF.`
           : "Regeneration finished, but no learning objects were extracted.",
       );
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function removeMaterial() {
+    if (!window.confirm("Delete this uploaded PDF and its learning objects?")) return;
+    setBusyAction("delete-material");
+    onError("");
+    onMessage("");
+    try {
+      const updatedCourse = await deleteLearningMaterial(courseId, material.id);
+      onCourseChange(updatedCourse);
+      onMessage("Uploaded PDF deleted.");
     } catch (err) {
       onError(err.message);
     } finally {
@@ -624,6 +672,14 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
           >
             {busyAction === "regenerate" ? "Regenerating..." : "Regenerate extraction"}
           </button>
+          <button
+            className="btn btn-danger btn-small"
+            type="button"
+            disabled={Boolean(busyAction)}
+            onClick={removeMaterial}
+          >
+            {busyAction === "delete-material" ? "Deleting..." : "Delete PDF"}
+          </button>
           <span className={`status-pill status-${material.status}`}>{material.status}</span>
         </div>
       </div>
@@ -634,6 +690,31 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
         Review only the learning objects extracted from this PDF. You can add, edit, delete, then confirm.
       </div>
 
+      <div className="material-workspace-tabs" role="tablist" aria-label="Generated content sections">
+        <button
+          type="button"
+          className={activeTab === "content" ? "is-active" : ""}
+          onClick={() => setActiveTab("content")}
+        >
+          Content <span>{material.learning_objects.length}</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "questions" ? "is-active" : ""}
+          onClick={() => setActiveTab("questions")}
+        >
+          Questions <span>{totalQuestions}</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "audio" ? "is-active" : ""}
+          onClick={() => setActiveTab("audio")}
+        >
+          Audio <span>{audioCount}</span>
+        </button>
+      </div>
+
+      {activeTab === "content" && (
       <section className="generated-result-panel">
         <div className="generated-section-header">
           <div>
@@ -743,6 +824,12 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                       <p>{item.content}</p>
                       {learningObjectsConfirmed && (
                         <div className="generated-item-actions">
+                          {(questionsByNode.get(item.id) || []).length > 0 && (
+                            <span className="object-kind">
+                              {(questionsByNode.get(item.id) || []).length} question
+                              {(questionsByNode.get(item.id) || []).length === 1 ? "" : "s"}
+                            </span>
+                          )}
                           <button
                             className="btn btn-secondary btn-small"
                             type="button"
@@ -752,31 +839,15 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                               startGeneration(item.id);
                             }}
                           >
-                            {genRunning && genRun?.node_id === item.id
+                            {genStartingNodeId === item.id || (genRunning && genRun?.node_id === item.id)
                               ? "Generating..."
+                              : genRunning || genStarting
+                                ? "Please wait"
                               : (questionsByNode.get(item.id) || []).length
                                 ? "Regenerate questions"
                                 : "Generate questions"}
                           </button>
                         </div>
-                      )}
-                      {(questionsByNode.get(item.id) || []).length > 0 && (
-                        <details className="question-node-group" open>
-                          <summary>
-                            <strong>Practice questions</strong>
-                            <span className="muted-text">
-                              {" "}&middot; {questionsByNode.get(item.id).length}
-                            </span>
-                          </summary>
-                          {questionsByNode.get(item.id).map((question) => (
-                            <QuestionCard
-                              key={question.id}
-                              question={question}
-                              onSaved={loadQuestionBank}
-                              onError={onError}
-                            />
-                          ))}
-                        </details>
                       )}
                     </>
                   )}
@@ -799,7 +870,10 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
           </>
         )}
       </section>
+      )}
 
+      {activeTab === "questions" && (
+      <>
       <QuestionBankSection
         confirmed={learningObjectsConfirmed}
         running={genRunning}
@@ -811,6 +885,44 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
         onStart={startGeneration}
       />
 
+      {totalQuestions > 0 && (
+        <section className="generated-result-panel">
+          <div className="generated-section-header">
+            <div>
+              <h5>Question Review</h5>
+              <p className="muted-text">Review questions grouped by learning object.</p>
+            </div>
+          </div>
+          <div className="question-review-list">
+            {material.learning_objects.map((item, index) => {
+              const questions = questionsByNode.get(item.id) || [];
+              if (!questions.length) return null;
+              return (
+                <details className="question-node-group" key={item.id} open={index === 0}>
+                  <summary>
+                    <strong>{item.title}</strong>
+                    <span className="muted-text">
+                      {" "}&middot; {questions.length} question{questions.length === 1 ? "" : "s"}
+                    </span>
+                  </summary>
+                  {questions.map((question) => (
+                    <QuestionCard
+                      key={question.id}
+                      question={question}
+                      onSaved={loadQuestionBank}
+                      onError={onError}
+                    />
+                  ))}
+                </details>
+              );
+            })}
+          </div>
+        </section>
+      )}
+      </>
+      )}
+
+      {activeTab === "audio" && (
       <section className="generated-result-panel">
         <div className="generated-section-header">
           <div>
@@ -820,39 +932,95 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
               questions read after its lesson (answers are not spoken).
             </p>
           </div>
-          <button
-            className="btn btn-primary btn-small"
-            type="button"
-            disabled={!material.learning_objects.length || Boolean(busyAction)}
-            onClick={generateAudio}
-          >
-            {busyAction === "audio" ? "Generating audio..." : audioGenerated ? "Regenerate audio" : "Generate audio"}
-          </button>
+          <div className="generated-item-actions">
+            <button
+              className="btn btn-primary btn-small"
+              type="button"
+              disabled={!material.learning_objects.length || Boolean(busyAction)}
+              onClick={() => generateAudio("lessons")}
+            >
+              {busyAction === "audio-lessons"
+                ? "Generating lessons..."
+                : lessonAudioGenerated
+                  ? "Regenerate lesson audio"
+                  : "Generate lesson audio"}
+            </button>
+            <button
+              className="btn btn-secondary btn-small"
+              type="button"
+              disabled={!totalQuestions || Boolean(busyAction)}
+              onClick={() => generateAudio("questions")}
+            >
+              {busyAction === "audio-questions"
+                ? "Generating questions..."
+                : questionAudioGenerated
+                  ? "Regenerate question audio"
+                  : "Generate question audio"}
+            </button>
+          </div>
         </div>
 
         {!lessonPlaylist.length ? (
           <p className="muted-text">No playlist items are ready yet.</p>
         ) : (
-          <div className="generated-list">
-            {lessonPlaylist.map((item, index) => (
-              <div className="generated-item playlist-item" key={`${item.narration_item_order}-${index}`}>
-                <span>{index + 1}</span>
-                <div>
-                  <strong>{item.title || `Playlist item ${index + 1}`}</strong>
-                  <small>{(item.type || "lesson").replace(/_/g, " ")}</small>
-                </div>
-                {item.audio_url ? (
-                  <audio controls src={item.audio_url}>
-                    <track kind="captions" />
-                  </audio>
-                ) : (
-                  <small className="muted-text">No audio yet</small>
-                )}
+          <div className="audio-playlist-groups">
+            <div className="audio-playlist-group">
+              <div className="audio-playlist-group-header">
+                <strong>Lesson narration</strong>
+                <span>{lessonAudioItems.filter((item) => item.audio_url).length} ready</span>
               </div>
-            ))}
+              <div className="generated-list">
+                {lessonAudioItems.map((item, index) => (
+                  <div className="generated-item playlist-item" key={`${item.narration_item_order || "lesson"}-${index}`}>
+                    <span>{index + 1}</span>
+                    <div>
+                      <strong>{item.title || `Lesson audio ${index + 1}`}</strong>
+                      <small>{(item.type || "lesson").replace(/_/g, " ")}</small>
+                    </div>
+                    {item.audio_url ? (
+                      <audio controls src={item.audio_url}>
+                        <track kind="captions" />
+                      </audio>
+                    ) : (
+                      <small className="muted-text">No audio yet</small>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="audio-playlist-group">
+              <div className="audio-playlist-group-header">
+                <strong>Practice question audio</strong>
+                <span>{questionAudioCount} ready</span>
+              </div>
+              {!questionAudioItems.length ? (
+                <p className="muted-text">Generate questions first, then generate audio to create question tracks.</p>
+              ) : (
+                <div className="generated-list">
+                  {questionAudioItems.map((item, index) => (
+                    <div className="generated-item playlist-item" key={`${item.question_id || "question"}-${index}`}>
+                      <span>{index + 1}</span>
+                      <div>
+                        <strong>{item.title || `Question audio ${index + 1}`}</strong>
+                        <small>{(item.type || "practice question").replace(/_/g, " ")}</small>
+                      </div>
+                      {item.audio_url ? (
+                        <audio controls src={item.audio_url}>
+                          <track kind="captions" />
+                        </audio>
+                      ) : (
+                        <small className="muted-text">No audio yet</small>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>
+      )}
     </article>
   );
 }

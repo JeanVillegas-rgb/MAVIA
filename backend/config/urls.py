@@ -7,6 +7,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("lessons.urls")),
     path("api/", include("question_generation.urls")),
+    path("api/course/", include("course.urls")),
+    path("api/adaptive/", include("adaptive.urls")),
 ]
 
 if settings.DEBUG:

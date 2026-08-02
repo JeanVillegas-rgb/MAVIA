@@ -4,6 +4,7 @@ django-cors-headers>=4.3
 PyMuPDF>=1.24
 python-dotenv>=1.0
 requests>=2.31
+edge-tts>=7.0
 sentence-transformers>=3.0
 
 # question_generation: Bloom's classifier

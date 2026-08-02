@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import CourseDAG from "../components/CourseDAG";
+import CourseHierarchy from "../components/CourseHierarchy";
 import {
   confirmCourseOutline,
   createOutlineNode,
@@ -185,8 +185,8 @@ export default function CourseDetailPage() {
         <section className="card" style={{ marginBottom: "1.25rem" }}>
           <h3>Course outline extraction</h3>
           <p className="muted-text">
-            Upload a TXT, Markdown, or PDF outline. The LLM extracts a draft hierarchy. Review it,
-            then confirm it before it appears as ready in Your courses.
+            Upload a PDF course outline. The LLM extracts a draft hierarchy. Review it, then
+            confirm it before it appears as ready in Your courses.
           </p>
           <div className="action-row">
             <label className="btn btn-primary">
@@ -194,7 +194,7 @@ export default function CourseDetailPage() {
               <input
                 ref={outlineInputRef}
                 type="file"
-                accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+                accept=".pdf,application/pdf"
                 hidden
                 disabled={outlineBusy}
                 onChange={handleOutlineUpload}
@@ -234,22 +234,12 @@ export default function CourseDetailPage() {
           </p>
         )}
         {course.outline?.is_approved && (
-          <p className="muted-text">Editing is hidden after confirmation so the topic structure stays stable for DAG generation.</p>
+          <p className="muted-text">Editing is hidden after confirmation so generated content stays mapped to the approved topics.</p>
         )}
-        <CourseDAG
+        <CourseHierarchy
           hierarchy={course.hierarchy}
           busy={hierarchyBusy || outlineBusy}
           readOnly={hierarchyConfirmed}
-          renderModuleActions={(module) => (
-            <div className="module-header-actions">
-              <Link className="btn btn-secondary btn-small" to={`/courses/${id}/modules/${module.id}/learner-path`}>
-                Review concepts
-              </Link>
-              <Link className="btn btn-primary btn-small" to={`/courses/${id}/modules/${module.id}/learner-path`}>
-                View learner path
-              </Link>
-            </div>
-          )}
           onSelectNode={(node) => navigate(`/courses/${id}/topics/${node.id}`)}
           onCreateNode={handleCreateNode}
           onUpdateNode={handleUpdateNode}

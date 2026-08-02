@@ -31,6 +31,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "lessons",
     "question_generation",
+    "course",
+    "adaptive",
 ]
 
 MIDDLEWARE = [
@@ -97,9 +99,14 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082",
     ).split(",")
     if origin.strip()
+]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
 ]
 
 REST_FRAMEWORK = {
