@@ -1,5 +1,5 @@
 import React, { useContext, useState } from "react";
-import { View, Text, StyleSheet, SafeAreaView, ScrollView } from "react-native";
+import { View, Text, StyleSheet, SafeAreaView } from "react-native";
 
 import { LessonContext } from "../context/LessonContext";
 import { startLearning } from "../services/lessonService";
@@ -8,45 +8,37 @@ import { colors, spacing, typography, radii } from "../theme/theme";
 
 export default function HomeScreen({ navigation }: any) {
   const {
-    setLesson,
+    setModule,
+    setLearningStateId,
     setMastery,
     setCurrentVariant,
     setCurrentBloom,
-    setLearningStateId,
-    setCurrentNodeId,
-    setCurrentQuestionIndex
-  } =
-    useContext(LessonContext);
+    setCurrentLessonIndex,
+    setCurrentQuestionIndex,
+  } = useContext(LessonContext);
 
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
 
   async function startLesson() {
     try {
       setLoading(true);
-      setErrorMessage("");
 
-      const session = await startLearning();
+      const result = await startLearning();
 
-      setLesson(session.lesson);
-      setMastery(session.mastery);
-      setCurrentVariant(session.current_variant);
-      setCurrentBloom(session.current_bloom);
-      setLearningStateId(session.learning_state_id);
-      setCurrentNodeId(session.current_node_id);
+      setLearningStateId(result.learning_state_id);
+      setModule(result.lesson);
+
+      setMastery(result.mastery);
+      setCurrentVariant(result.current_variant);
+      setCurrentBloom(result.current_bloom);
+
+      // Start at the first lesson in the package
+      setCurrentLessonIndex(0);
       setCurrentQuestionIndex(0);
 
-      navigation.navigate("Lesson");
+      navigation.replace("Lesson");
     } catch (err) {
       console.log(err);
-      const detail =
-        (err as any)?.response?.data?.error ||
-        (err as any)?.response?.data?.detail ||
-        (err as any)?.message ||
-        "Make sure the backend is running and questions are generated.";
-      setErrorMessage(
-        `Unable to start lesson. ${detail}`
-      );
     } finally {
       setLoading(false);
     }
@@ -54,38 +46,43 @@ export default function HomeScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={styles.container}>
         <View style={styles.hero}>
-          <Text style={styles.wordmark} accessibilityRole="header">
+          <Text
+            style={styles.wordmark}
+            accessibilityRole="header"
+          >
             MAVIA
           </Text>
-          <Text style={[typography.bodyMuted, styles.tagline]}>
-            Adaptive learning, built for how you learn best.
+
+          <Text
+            style={[
+              typography.bodyMuted,
+              styles.tagline,
+            ]}
+          >
+            Adaptive learning, built for how you
+            learn best.
           </Text>
         </View>
 
         <View style={styles.moduleCard}>
-          <Text style={typography.label}>Up next</Text>
-          <Text style={styles.moduleTitle}>Module 1</Text>
-        </View>
+          <Text style={typography.label}>
+            Up next
+          </Text>
 
-        {errorMessage ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{errorMessage}</Text>
-          </View>
-        ) : null}
+          <Text style={styles.moduleTitle}>
+            Adaptive Module
+          </Text>
+        </View>
 
         <PrimaryButton
           label="Start lesson"
           onPress={startLesson}
           loading={loading}
-          accessibilityHint="Begins the next lesson in this module"
+          accessibilityHint="Begins the adaptive lesson"
         />
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -95,32 +92,30 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  scroll: {
-    flex: 1,
-  },
+
   container: {
-    flexGrow: 1,
+    flex: 1,
     justifyContent: "center",
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xxl,
-    alignSelf: "center",
-    width: "100%",
-    maxWidth: 520,
   },
+
   hero: {
     alignItems: "center",
     marginBottom: spacing.xxl,
   },
+
   wordmark: {
     fontSize: 44,
     fontWeight: "800",
     letterSpacing: 1,
     color: colors.primary,
   },
+
   tagline: {
     marginTop: spacing.sm,
     textAlign: "center",
   },
+
   moduleCard: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -129,22 +124,11 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.xl,
   },
+
   moduleTitle: {
     fontSize: 22,
     fontWeight: "700",
     color: colors.textPrimary,
     marginTop: spacing.xs,
-  },
-  errorCard: {
-    backgroundColor: colors.retryMuted,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.retry,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  errorText: {
-    ...typography.bodyMuted,
-    color: colors.retry,
   },
 });
