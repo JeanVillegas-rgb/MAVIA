@@ -106,11 +106,20 @@ def _choice_texts(question):
 
 
 def _material_text_for_source(source):
-    objects = LearningObject.objects.filter(
-        kind=LearningObject.Kind.TEXT,
-        material__outline_node=source,
-        material__status="completed",
-    ).order_by("material_id", "order", "id")
+    if isinstance(source, LearningMaterial):
+        objects = LearningObject.objects.filter(
+            material=source,
+            kind=LearningObject.Kind.TEXT,
+        ).order_by("material_id", "order", "id")
+    else:
+        # source is an OutlineNode; find TEXT learning objects attached to materials
+        # that reference this outline node and are completed.
+        objects = LearningObject.objects.filter(
+            kind=LearningObject.Kind.TEXT,
+            material__outline_node=source,
+            material__status="completed",
+        ).order_by("material_id", "order", "id")
+
     lines = []
     for obj in objects:
         lines.append(f"{obj.title}\n{obj.content}".strip())
@@ -127,8 +136,20 @@ def sync_course_outline(course_id):
             module.is_active = True
             module.save(update_fields=["is_active"])
 
+            # Discover lesson sources for this module and ensure LessonNode exists for each
             for source in _lesson_sources_for_module(root):
-                LessonNode.objects.get_or_create(module=module, source=source)
+                # If the source is a LearningMaterial, create/get LessonNode using that material
+                if isinstance(source, LearningMaterial):
+                    LessonNode.objects.get_or_create(module=module, source=source)
+                else:
+                    # source is likely an OutlineNode; try to find a completed LearningMaterial
+                    # attached to this outline node and use that as the LessonNode.source.
+                    material = LearningMaterial.objects.filter(outline_node=source, status="completed").order_by("created_at", "id").first()
+                    if material:
+                        LessonNode.objects.get_or_create(module=module, source=material)
+                    else:
+                        # No suitable LearningMaterial found — skip creating a LessonNode for this outline node
+                        continue
 
     return CourseModule.objects.filter(source__course=course, is_active=True)
 
