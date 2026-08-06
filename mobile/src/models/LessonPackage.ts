@@ -45,3 +45,12 @@ export interface SubmitResponseResult {
   node_changed: boolean;
   completed: boolean;
 }
+
+export interface StartLearningResult {
+  learning_state_id: number;
+  current_node_id: number;
+  mastery: number;
+  current_variant: VariantType;
+  current_bloom: BloomType;
+  lesson: LessonPackage;
+}

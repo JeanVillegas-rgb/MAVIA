@@ -1,6 +1,6 @@
 from django.db import transaction
 
-from lessons.models import CourseGroup, LearningMaterial, LearningObject
+from lessons.models import CourseGroup, LearningObject, OutlineNode
 from question_generation.models import GeneratedQuestion
 
 from .models import CourseModule, LessonNode, ModuleQuestion
@@ -12,16 +12,49 @@ VARIANT_KEYS = ("normal", "elaborated", "simplified")
 
 
 def _module_descendants(module_node):
-    stack = list(module_node.children.order_by("order", "id"))
-    while stack:
-        node = stack.pop(0)
-        yield node
-        stack[0:0] = list(node.children.order_by("order", "id"))
+    """
+    Return the CourseModule instance for the given top-level OutlineNode (module_node),
+    or None if it doesn't exist.
+    """
+    try:
+        return CourseModule.objects.get(source=module_node)
+    except CourseModule.DoesNotExist:
+        return None
 
 
 def _lesson_sources_for_module(module_node):
-    children = list(_module_descendants(module_node))
-    return children or [module_node]
+    module = _module_descendants(module_node)
+    if not module:
+        return []
+
+    # Prefer LearningMaterial objects that reference this module via module_node
+    materials = list(
+        LearningMaterial.objects.filter(module_node=module_node, status="completed").order_by("created_at", "id")
+    )
+
+    if materials:
+        return materials
+
+    # Fallback: if no materials directly reference the module, try to find materials
+    # attached to outline nodes under the module's outline node, or use the outline node
+    # itself as the single lesson source.
+    descendants = list(module_node.children.order_by("order", "id"))
+    nodes = []
+    while descendants:
+        node = descendants.pop(0)
+        nodes.append(node)
+        descendants[0:0] = list(node.children.order_by("order", "id"))
+
+    # Find materials attached to those outline nodes (completed only) and return them
+    if nodes:
+        materials = list(
+            LearningMaterial.objects.filter(module_node__isnull=True, outline_node__in=nodes, status="completed").order_by("created_at", "id")
+        )
+        if materials:
+            return materials
+
+    # As a final fallback return the module's outline node so the old behaviour still works
+    return [module_node]
 
 
 def _bloom_bucket(level):
@@ -39,12 +72,45 @@ def _bloom_bucket(level):
     return "analyze"
 
 
-def _material_text_for_source(material):
+def _answer_label(question):
+    answer = (question.correct_answer or "").strip()
+    if answer.upper() in {"A", "B", "C", "D"}:
+        return answer.upper()
+
+    choices = question.choices or []
+    if question.question_format == "TF":
+        if answer.lower() == "true":
+            return "A"
+        if answer.lower() == "false":
+            return "B"
+
+    if isinstance(choices, dict):
+        for label in ("A", "B", "C", "D"):
+            if str(choices.get(label, "")).strip().lower() == answer.lower():
+                return label
+        return answer
+
+    for index, choice in enumerate(choices[:4]):
+        if str(choice).strip().lower() == answer.lower():
+            return "ABCD"[index]
+    return answer
+
+
+def _choice_texts(question):
+    choices = question.choices or []
+    if isinstance(choices, dict):
+        return [str(choices.get(label, "")) for label in ("A", "B", "C", "D") if choices.get(label)]
+    if question.question_format == "TF" and not choices:
+        return ["True", "False"]
+    return [str(choice) for choice in choices[:4]]
+
+
+def _material_text_for_source(source):
     objects = LearningObject.objects.filter(
         kind=LearningObject.Kind.TEXT,
-        material=material,
+        material__outline_node=source,
         material__status="completed",
-    ).order_by("order", "id")
+    ).order_by("material_id", "order", "id")
     lines = []
     for obj in objects:
         lines.append(f"{obj.title}\n{obj.content}".strip())
@@ -61,28 +127,15 @@ def sync_course_outline(course_id):
             module.is_active = True
             module.save(update_fields=["is_active"])
 
-            for outline_node in _lesson_sources_for_module(root):
-                materials = LearningMaterial.objects.filter(outline_node=outline_node)
-                for material in materials:
-                    LessonNode.objects.get_or_create(module=module, source=material)
-
-            # upload_material() lets a PDF be attached directly to a module
-            # with no outline_node_id (see lessons/views.py upload_material),
-            # so outline_node stays NULL there. Those materials would never
-            # match the outline_node-keyed lookup above, so pick them up
-            # separately via module_node instead of losing them silently.
-            topicless_materials = LearningMaterial.objects.filter(
-                module_node=root, outline_node__isnull=True
-            )
-            for material in topicless_materials:
-                LessonNode.objects.get_or_create(module=module, source=material)
+            for source in _lesson_sources_for_module(root):
+                LessonNode.objects.get_or_create(module=module, source=source)
 
     return CourseModule.objects.filter(source__course=course, is_active=True)
 
 
 def sync_module_questions(lesson_node):
     learning_objects = LearningObject.objects.filter(
-        material=lesson_node.source,
+        material__outline_node=lesson_node.source,
         kind=LearningObject.Kind.TEXT,
     )
     questions = GeneratedQuestion.objects.filter(
@@ -107,16 +160,11 @@ def first_lesson_node(course_id=None):
             return None
         course_id = course.id
 
+    # Ensure CourseModule/LessonNode records reflect the latest outline/materials
     sync_course_outline(course_id)
     return (
         LessonNode.objects.filter(module__source__course_id=course_id, module__is_active=True)
-        .order_by(
-            "module__source__order",
-            "source__outline_node__depth",
-            "source__outline_node__order",
-            "source__created_at",
-            "source__id",
-        )
+        .order_by("module__source__order", "source__depth", "source__order", "source__id")
         .first()
     )
 
@@ -131,10 +179,7 @@ class LessonPackageService:
 
         normal_text = _material_text_for_source(node.source)
         if not normal_text:
-            description = ""
-            if node.source.outline_node_id:
-                description = node.source.outline_node.related_info.get("description", "")
-            normal_text = description or node.title
+            normal_text = node.source.related_info.get("description", "") or node.title
 
         variants = {}
         saved_variants = {
@@ -164,6 +209,9 @@ class LessonPackageService:
                 }
             )
 
+        # compute node_order defensively — source may not expose an 'order' attribute
+        node_order = getattr(node.source, "order", None) or getattr(node, "id", None)
+
         return {
             "module": {
                 "id": node.module.id,
@@ -173,7 +221,7 @@ class LessonPackageService:
             "lesson_node": {
                 "id": node.id,
                 "title": node.title,
-                "node_order": node.source.outline_node.order if node.source.outline_node_id else 0,
+                "node_order": node.node_order,
             },
             "variants": variants,
             "questions": questions,
