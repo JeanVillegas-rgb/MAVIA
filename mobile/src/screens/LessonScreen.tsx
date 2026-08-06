@@ -14,46 +14,76 @@ import BloomProgress from "../components/BloomProgress";
 import { colors, spacing, typography, radii } from "../theme/theme";
 
 export default function LessonScreen({ navigation }: any) {
-  const { lesson, mastery, currentVariant, currentBloom, currentNodeId } =
-    useContext(LessonContext);
+  const {
+    module,
+    mastery,
+    currentVariant,
+    currentBloom,
+    currentLessonIndex,
+  } = useContext(LessonContext);
 
-  const previousNodeId = useRef<number | null>(null);
+  const previousLessonId = useRef<number | null>(null);
   const [justAdvanced, setJustAdvanced] = useState(false);
 
-  const variant =
-    lesson?.variants?.[currentVariant] ?? lesson?.variants?.normal;
+  if (!module) {
+    return (
+      <View style={styles.center}>
+        <Text style={typography.body}>No lesson package loaded.</Text>
+      </View>
+    );
+  }
 
-  const nodeTitle = lesson?.lesson_node?.title ?? "";
+  const lesson = module.lesson_nodes[currentLessonIndex];
+
+  if (!lesson) {
+    return (
+      <View style={styles.center}>
+        <Text style={typography.body}>Lesson not found.</Text>
+      </View>
+    );
+  }
+
+  const variant =
+    lesson.variants[currentVariant] ??
+    lesson.variants.normal;
+
+  const lessonTitle = lesson.title;
 
   useEffect(() => {
-    if (!lesson || !variant) return;
+    if (!variant) return;
 
     const advanced =
-      previousNodeId.current !== null &&
-      previousNodeId.current !== currentNodeId;
+      previousLessonId.current !== null &&
+      previousLessonId.current !== lesson.id;
 
     setJustAdvanced(advanced);
-    previousNodeId.current = currentNodeId;
+    previousLessonId.current = lesson.id;
 
     let cancelled = false;
+
     Speech.stop();
 
-    const intro = advanced ? `Next lesson: ${nodeTitle}. ` : "";
+    const intro = advanced
+      ? `Next lesson. ${lessonTitle}. `
+      : "";
 
     if (advanced) {
       AccessibilityInfo.announceForAccessibility(
-        `Moving on to the next lesson: ${nodeTitle}`
+        `Moving to the next lesson: ${lessonTitle}`
       );
     }
 
     Speech.speak(`${intro}${variant.text}`, {
       rate: 0.95,
       onDone: () => {
-        if (!cancelled) navigation.replace("Question");
+        if (!cancelled) {
+          navigation.replace("Question");
+        }
       },
-      onStopped: () => {},
       onError: () => {
-        if (!cancelled) navigation.replace("Question");
+        if (!cancelled) {
+          navigation.replace("Question");
+        }
       },
     });
 
@@ -61,31 +91,21 @@ export default function LessonScreen({ navigation }: any) {
       cancelled = true;
       Speech.stop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVariant, currentBloom, currentNodeId, lesson, variant]);
-
-  if (!lesson) {
-    return (
-      <View style={styles.center}>
-        <Text style={typography.body}>No lesson loaded.</Text>
-      </View>
-    );
-  }
+  }, [
+    lesson.id,
+    lessonTitle,
+    variant,
+    currentVariant,
+    currentBloom,
+    navigation,
+  ]);
 
   function replay() {
-    if (!variant) return;
     Speech.stop();
-    Speech.speak(variant.text, { rate: 0.95 });
-  }
 
-  if (!variant) {
-    return (
-      <View style={styles.center}>
-        <Text style={typography.body}>
-          This lesson variant isn't available yet.
-        </Text>
-      </View>
-    );
+    Speech.speak(variant.text, {
+      rate: 0.95,
+    });
   }
 
   return (
@@ -98,33 +118,54 @@ export default function LessonScreen({ navigation }: any) {
           style={styles.banner}
           accessibilityLiveRegion="polite"
         >
-          <Text style={styles.bannerText}>Next lesson</Text>
+          <Text style={styles.bannerText}>
+            Next lesson
+          </Text>
         </View>
       )}
 
-      <Text style={typography.title}>{nodeTitle}</Text>
+      <Text style={typography.title}>
+        {lessonTitle}
+      </Text>
 
       <BloomProgress currentBloom={currentBloom} />
 
       <View style={styles.statsRow}>
         <View style={styles.statPill}>
-          <Text style={styles.statLabel}>Mastery</Text>
-          <Text style={styles.statValue}>{Math.round(mastery * 100)}%</Text>
-        </View>
-        <View style={styles.statPill}>
-          <Text style={styles.statLabel}>Variant</Text>
+          <Text style={styles.statLabel}>
+            Mastery
+          </Text>
+
           <Text style={styles.statValue}>
-            {currentVariant.charAt(0).toUpperCase() + currentVariant.slice(1)}
+            {Math.round(mastery * 100)}%
+          </Text>
+        </View>
+
+        <View style={styles.statPill}>
+          <Text style={styles.statLabel}>
+            Variant
+          </Text>
+
+          <Text style={styles.statValue}>
+            {currentVariant.charAt(0).toUpperCase() +
+              currentVariant.slice(1)}
           </Text>
         </View>
       </View>
 
       <View style={styles.card}>
-        <Text style={typography.body}>{variant.text}</Text>
+        <Text style={typography.body}>
+          {variant.text}
+        </Text>
       </View>
 
-      <Text style={[typography.bodyMuted, styles.playing]}>
-        Playing lesson...
+      <Text
+        style={[
+          typography.bodyMuted,
+          styles.playing,
+        ]}
+      >
+        Playing lesson…
       </Text>
 
       <PrimaryButton
@@ -142,16 +183,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+
   content: {
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
   },
+
   center: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: colors.background,
   },
+
   banner: {
     alignSelf: "flex-start",
     backgroundColor: colors.accentMuted,
@@ -160,16 +204,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     marginBottom: spacing.md,
   },
+
   bannerText: {
     color: colors.accent,
     fontWeight: "700",
     fontSize: 13,
   },
+
   statsRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
     marginBottom: spacing.lg,
   },
+
   statPill: {
     backgroundColor: colors.surface,
     borderRadius: radii.md,
@@ -178,17 +224,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     marginRight: spacing.sm,
-    marginBottom: spacing.sm,
   },
+
   statLabel: {
     ...typography.label,
     marginBottom: 2,
   },
+
   statValue: {
     fontSize: 18,
     fontWeight: "700",
     color: colors.textPrimary,
   },
+
   card: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -197,6 +245,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
+
   playing: {
     marginBottom: spacing.lg,
     fontStyle: "italic",
