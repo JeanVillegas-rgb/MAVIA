@@ -127,3 +127,24 @@ OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 
 # Model for question generation (separate from the content generation model)
 QUESTION_LLM_MODEL = os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
+
+# Quiet the dev server's per-request access log (e.g. the frontend's
+# generation-trace polling floods it at 200 OK / INFO). 4xx/5xx still show
+# since runserver logs those at WARNING/ERROR — only successful requests are
+# silenced, so print()-based pipeline traces are no longer buried.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "django.server": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
