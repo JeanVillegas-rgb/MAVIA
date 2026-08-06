@@ -7,24 +7,48 @@ export interface LessonVariantContent {
   audio_url?: string;
 }
 
-export interface LessonQuestion {
+export interface SerializedLessonQuestion {
   id: number;
   question: string;
   choices: string[];
 }
 
-export interface LessonNode {
+export interface PackageLessonQuestion {
+  id: number;
+  order: number;
+  bloom_level: BloomType;
+  question: string;
+  choices: string[];
+  correct_answer?: string;
+}
+
+export interface LessonNodeSerialized {
   id: number;
   title: string;
   variants: Record<VariantType, LessonVariantContent>;
-  questions: Partial<Record<BloomType, LessonQuestion[]>>;
+  questions: Partial<Record<BloomType, SerializedLessonQuestion[]>>;
 }
 
-export interface CourseModule {
+export interface CourseModuleSerialized {
   id: number;
   sequence_order: number;
   title: string;
-  lesson_nodes: LessonNode[];
+  lesson_nodes: LessonNodeSerialized[];
+}
+
+export interface LessonPackage {
+  module: {
+    id: number;
+    title: string;
+    sequence_order: number;
+  };
+  lesson_node: {
+    id: number;
+    title: string;
+    node_order: number | null;
+  };
+  variants: Record<VariantType, LessonVariantContent>;
+  questions: Record<BloomType, PackageLessonQuestion[]>;
 }
 
 export interface StartLearningResult {
@@ -32,7 +56,7 @@ export interface StartLearningResult {
   mastery: number;
   current_variant: VariantType;
   current_bloom: BloomType;
-  lesson: CourseModule;
+  lesson: CourseModuleSerialized;
 }
 
 export interface SubmitResponseResult {
