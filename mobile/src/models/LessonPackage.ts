@@ -51,12 +51,15 @@ export interface LessonPackage {
   questions: Record<BloomType, PackageLessonQuestion[]>;
 }
 
+// Consolidated StartLearningResult — accepts either the serialized module shape or the full package.
+// Also keep current_node_id optional for backward compatibility.
 export interface StartLearningResult {
   learning_state_id: number;
   mastery: number;
   current_variant: VariantType;
   current_bloom: BloomType;
-  lesson: CourseModuleSerialized;
+  lesson: CourseModuleSerialized | LessonPackage;
+  current_node_id?: number;
 }
 
 export interface SubmitResponseResult {
@@ -70,11 +73,8 @@ export interface SubmitResponseResult {
   completed: boolean;
 }
 
-export interface StartLearningResult {
-  learning_state_id: number;
-  current_node_id: number;
-  mastery: number;
-  current_variant: VariantType;
-  current_bloom: BloomType;
-  lesson: LessonPackage;
-}
+// Backwards-compatible aliases so existing code that imports the older (no "Serialized")
+// names continues to work without changing import sites.
+export type LessonNode = LessonNodeSerialized;
+export type LessonQuestion = SerializedLessonQuestion;
+export type CourseModule = CourseModuleSerialized;
