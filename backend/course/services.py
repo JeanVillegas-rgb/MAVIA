@@ -22,15 +22,6 @@ def _module_descendants(module_node):
 
 
 def _lesson_sources_for_module(module_node):
-    """
-    Given an OutlineNode (module_node) that represents a module (CourseModule.source),
-    return a list of source objects for lesson nodes in that module in stable order.
-
-    The source objects may be LearningMaterial instances (preferred) or OutlineNode when
-    materials are not available. This function intentionally avoids walking the outline
-    tree and instead discovers lesson sources by looking for LearningMaterial records
-    that point at the module via LearningMaterial.module_node.
-    """
     module = _module_descendants(module_node)
     if not module:
         return []
@@ -108,11 +99,6 @@ def _choice_texts(question):
 
 
 def _material_text_for_source(source):
-    """
-    Return concatenated text for text LearningObject(s) associated with the provided
-    source object. The source may be either an OutlineNode (old behaviour) or a
-    LearningMaterial (new behaviour).
-    """
     if isinstance(source, LearningMaterial):
         objects = LearningObject.objects.filter(
             kind=LearningObject.Kind.TEXT,
