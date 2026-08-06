@@ -3,7 +3,7 @@ import api from "./api";
 import {
   CourseModule,
   StartLearningResult,
-} from "../models/CourseModule";
+} from "../models/LessonPackage";
 
 export async function fetchLesson(
   nodeId: number
