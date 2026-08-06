@@ -1,4 +1,4 @@
-import React, { useContext, useState } from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, SafeAreaView } from "react-native";
 import { useLessonContext } from "../context/LessonContext";
 import { startLearning } from "../services/lessonService";
