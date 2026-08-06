@@ -27,6 +27,14 @@ export interface CourseModule {
   lesson_nodes: LessonNode[];
 }
 
+export interface StartLearningResult {
+  learning_state_id: number;
+  mastery: number;
+  current_variant: VariantType;
+  current_bloom: BloomType;
+  lesson: CourseModule;
+}
+
 export interface SubmitResponseResult {
   is_correct: boolean;
   mastery: number;
