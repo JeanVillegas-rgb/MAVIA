@@ -1,21 +1,12 @@
 import React, { useContext, useState } from "react";
 import { View, Text, StyleSheet, SafeAreaView } from "react-native";
-import { LessonContext } from "../context/LessonContext";
+import { useLessonContext } from "../context/LessonContext";
 import { startLearning } from "../services/lessonService";
 import PrimaryButton from "../components/PrimaryButton";
 import { colors, spacing, typography, radii } from "../theme/theme";
 
 export default function HomeScreen({ navigation }: any) {
-  const {
-    setModule,
-    setLearningStateId,
-    setMastery,
-    setCurrentVariant,
-    setCurrentBloom,
-    setCurrentLessonIndex,
-    setCurrentQuestionIndex,
-    setCurrentLessonNodeId,
-  } = useContext(LessonContext);
+  const { setLearningState, setCurrentQuestionIndex } = useLessonContext();
 
   const [loading, setLoading] = useState(false);
 
@@ -23,15 +14,8 @@ export default function HomeScreen({ navigation }: any) {
     try {
       setLoading(true);
       const result = await startLearning();
-      setLearningStateId(result.learning_state_id);
-      setModule(result.lesson);
-      setMastery(result.mastery);
-      setCurrentVariant(result.current_variant);
-      setCurrentBloom(result.current_bloom);
-      // Start at the first lesson in the package
-      setCurrentLessonIndex(0);
+      setLearningState(result);
       setCurrentQuestionIndex(0);
-      setCurrentLessonNodeId(result.lesson.lesson_nodes[0]?.id ?? 0);
       navigation.replace("Lesson");
     } catch (err) {
       console.log(err);
