@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -14,8 +14,8 @@ import PrimaryButton from "../components/PrimaryButton";
 import BloomProgress from "../components/BloomProgress";
 import HiddenHardwareInput from "../components/HiddenHardwareInput";
 
-import { LessonContext } from "../context/LessonContext";
-import { BloomType, CourseModule } from "../models/LessonPackage";
+import { useLessonContext } from "../context/LessonContext";
+import { BloomType } from "../models/LessonPackage";
 import api from "../services/api";
 
 const BLOOM_ORDER: BloomType[] = ["remember", "understand", "analyze"];
@@ -99,26 +99,24 @@ function nextBloomInOrder(bloom: BloomType): BloomType {
 
 export default function QuestionScreen({ navigation }: any) {
   const {
-    module,
-    setModule,
-    setMastery,
-    currentVariant,
-    setCurrentVariant,
-    currentBloom,
-    setCurrentBloom,
+    learningState,
     learningStateId,
-    currentLessonIndex,
-    setCurrentLessonIndex,
     currentQuestionIndex,
     setCurrentQuestionIndex,
-    setCurrentLessonNodeId,
-  } = useContext(LessonContext);
+    getCurrentNode,
+    getCurrentQuestions,
+    getCurrentBloom,
+    getCurrentVariant,
+    updateFromSubmitResponse,
+  } = useLessonContext();
 
   const [selectedAnswer, setSelectedAnswer] = useState("");
 
-  const lesson = module?.lesson_nodes[currentLessonIndex];
-  const questions = lesson?.questions?.[currentBloom] || [];
-  const question = questions[currentQuestionIndex];
+  const currentNode = getCurrentNode();
+  const currentQuestions = getCurrentQuestions();
+  const currentBloom = getCurrentBloom();
+  const currentVariant = getCurrentVariant();
+  const question = currentQuestions[currentQuestionIndex];
   const answerLabels = ["A", "B", "C", "D"];
 
   useEffect(() => {
@@ -130,8 +128,25 @@ export default function QuestionScreen({ navigation }: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestionIndex, currentBloom, question?.id]);
 
-  if (!module || !lesson || !lesson.questions || !lesson.questions[currentBloom]) {
-    return null;
+  if (!learningState || !currentNode || !currentQuestions.length) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.content}>
+          <Text style={typography.title}>No questions yet</Text>
+          <View style={styles.card}>
+            <Text style={typography.body}>
+              Generate questions for this topic in the teacher web app before
+              continuing the mobile adaptive flow.
+            </Text>
+          </View>
+          <PrimaryButton
+            label="Back to lesson"
+            onPress={() => navigation.replace("Lesson")}
+            variant="outline"
+          />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   if (!question) {
@@ -184,13 +199,10 @@ export default function QuestionScreen({ navigation }: any) {
         learning_state_id: learningStateId,
         question_id: question.id,
         selected_answer: selectedAnswer,
-        response_time: 3.5
+        response_time: 3.5,
       });
 
       Speech.stop();
-      setMastery(response.data.mastery);
-
-      const targetBloomKey = response.data.next_bloom.toLowerCase() as BloomType;
 
       // 1. Total completion check
       if (response.data.completed) {
@@ -200,61 +212,36 @@ export default function QuestionScreen({ navigation }: any) {
         return;
       }
 
+      // Update learning state with backend response
+      updateFromSubmitResponse(response.data);
+
       // 2. Node progression check
       if (response.data.node_changed) {
-        try {
-          const nextNodeId = response.data.next_node;
-          const packageResponse = await api.get(`course/lesson-package/${nextNodeId}/`);
-          const newModule: CourseModule = packageResponse.data;
-
-          const nodeIndex = newModule.lesson_nodes.findIndex(
-            (n) => n.id === nextNodeId
-          );
-
-          setSelectedAnswer("");
-          setModule(newModule);
-          setCurrentLessonIndex(nodeIndex >= 0 ? nodeIndex : 0);
-          setCurrentLessonNodeId(nextNodeId);
-          setCurrentQuestionIndex(0);
-          setCurrentVariant(response.data.next_variant.toLowerCase());
-          setCurrentBloom(targetBloomKey);
-
-          navigation.replace("Lesson");
-        } catch (fetchErr) {
-          console.log(fetchErr);
-          Alert.alert("Unable to load the next lesson.");
-        }
+        navigation.replace("Lesson");
         return;
       }
 
       // 3. Incorrect answer flow
       if (!response.data.is_correct) {
         setSelectedAnswer("");
-        setCurrentVariant(response.data.next_variant.toLowerCase());
-        setCurrentBloom(targetBloomKey);
-
         navigation.replace("Lesson");
         return;
       }
 
       // 4. Correct answer flow
       setSelectedAnswer("");
-      const backendEscalated = targetBloomKey !== currentBloom;
+      const targetBloom = response.data.next_bloom.toLowerCase() as BloomType;
+      const backendEscalated = targetBloom !== currentBloom;
       const nextIndex = currentQuestionIndex + 1;
-      const moreQuestionsInTier = nextIndex < questions.length;
+      const moreQuestionsInTier = nextIndex < currentQuestions.length;
 
       if (backendEscalated) {
-        setCurrentVariant(response.data.next_variant.toLowerCase());
-        setCurrentBloom(targetBloomKey);
         setCurrentQuestionIndex(0);
         navigation.replace("Lesson");
       } else if (moreQuestionsInTier) {
-        setCurrentVariant(response.data.next_variant.toLowerCase());
         setCurrentQuestionIndex(nextIndex);
       } else {
         const forcedBloom = nextBloomInOrder(currentBloom);
-        setCurrentVariant(response.data.next_variant.toLowerCase());
-        setCurrentBloom(forcedBloom);
         setCurrentQuestionIndex(0);
         navigation.replace("Lesson");
       }
@@ -264,59 +251,56 @@ export default function QuestionScreen({ navigation }: any) {
     }
   }
 
- return (
-  <SafeAreaView style={styles.container}>
-    <HiddenHardwareInput
-      onKey={handleHardwareKey}
-      onSubmit={submitAnswer}
-    />
-
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={typography.title}>Question</Text>
-
-      <BloomProgress currentBloom={currentBloom} />
-
-      <View style={styles.card}>
-        <Text style={typography.body}>{question.question}</Text>
-      </View>
-
-      <PrimaryButton
-        label="Replay question"
-        onPress={speakQuestion}
-        variant="outline"
-        accessibilityHint="Plays the question narration again"
+  return (
+    <SafeAreaView style={styles.container}>
+      <HiddenHardwareInput
+        onKey={handleHardwareKey}
+        onSubmit={submitAnswer}
       />
 
-      <View style={styles.choices}>
-        {question.choices.map((choice: string, index: number) => {
-          const label = answerLabels[index];
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={typography.title}>Question</Text>
 
-          return (
-            <Pressable
-              key={index}
-              onPress={() => setSelectedAnswer(label)}
-              style={[
-                styles.choice,
-                selectedAnswer === label && styles.choiceSelected,
-              ]}
-            >
-              <Text style={styles.choiceLetter}>{label}.</Text>
+        <BloomProgress currentBloom={currentBloom} />
 
-              <Text style={styles.choiceText}>{choice}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+        <View style={styles.card}>
+          <Text style={typography.body}>{question.question}</Text>
+        </View>
 
-      <PrimaryButton
-        label="Submit Answer"
-        onPress={submitAnswer}
-      />
-    </ScrollView>
-  </SafeAreaView>
-);
+        <PrimaryButton
+          label="Replay question"
+          onPress={speakQuestion}
+          variant="outline"
+          accessibilityHint="Plays the question narration again"
+        />
+
+        <View style={styles.choices}>
+          {question.choices.map((choice: string, index: number) => {
+            const label = answerLabels[index];
+
+            return (
+              <Pressable
+                key={index}
+                onPress={() => setSelectedAnswer(label)}
+                style={[
+                  styles.choice,
+                  selectedAnswer === label && styles.choiceSelected,
+                ]}
+              >
+                <Text style={styles.choiceLetter}>{label}.</Text>
+
+                <Text style={styles.choiceText}>{choice}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <PrimaryButton label="Submit Answer" onPress={submitAnswer} />
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
