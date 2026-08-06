@@ -1,6 +1,5 @@
 from django.db import models
-
-from lessons.models import OutlineNode
+from lessons.models import LearningMaterial, OutlineNode
 
 
 class CourseModule(models.Model):
@@ -9,19 +8,21 @@ class CourseModule(models.Model):
         on_delete=models.CASCADE,
         related_name="adaptive_module",
         limit_choices_to={"parent__isnull": True},
+        null=True,
+        blank=True,
     )
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["source__order", "source__id"]
+        ordering = ["source__order"]
 
     @property
     def sequence_order(self):
-        return self.source.order
+        return self.source.order if self.source_id else 0
 
     @property
     def title(self):
-        return self.source.title
+        return self.source.title if self.source_id else "(unlinked)"
 
     def __str__(self):
         return f"Module {self.sequence_order}: {self.title}"
@@ -34,64 +35,37 @@ class LessonNode(models.Model):
         related_name="lesson_nodes",
     )
     source = models.OneToOneField(
-        OutlineNode,
+        LearningMaterial,
         on_delete=models.CASCADE,
         related_name="adaptive_lesson_node",
     )
 
     class Meta:
-        ordering = ["source__depth", "source__order", "source__id"]
-
-    @property
-    def node_order(self):
-        return self.source.order
+        ordering = ["source__created_at"]
 
     @property
     def title(self):
         return self.source.title
+
+    @property
+    def learning_objects(self):
+        return self.source.learning_objects.all()
 
     def __str__(self):
         return self.title
 
 
 class LessonVariant(models.Model):
-    class Variant(models.TextChoices):
-        NORMAL = "NORMAL", "Normal"
-        ELABORATED = "ELABORATED", "Elaborated"
-        SIMPLIFIED = "SIMPLIFIED", "Simplified"
-
-    lesson_node = models.ForeignKey(
-        LessonNode,
-        on_delete=models.CASCADE,
-        related_name="variants",
-    )
-    variant = models.CharField(max_length=20, choices=Variant.choices)
+    VARIANTS = [("NORMAL", "Normal"), ("ELABORATED", "Elaborated"), ("SIMPLIFIED", "Simplified")]
+    lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="variants")
+    variant = models.CharField(max_length=20, choices=VARIANTS)
     narration = models.TextField()
     audio_url = models.CharField(max_length=255, blank=True)
 
-    class Meta:
-        unique_together = ("lesson_node", "variant")
-        ordering = ["lesson_node_id", "variant"]
-
 
 class ModuleQuestion(models.Model):
-    class BloomLevel(models.TextChoices):
-        REMEMBER = "REMEMBER", "Remember"
-        UNDERSTAND = "UNDERSTAND", "Understand"
-        ANALYZE = "ANALYZE", "Analyze"
-
-    lesson_node = models.ForeignKey(
-        LessonNode,
-        on_delete=models.CASCADE,
-        related_name="module_questions",
-    )
-    question = models.ForeignKey(
-        "question_generation.GeneratedQuestion",
-        on_delete=models.CASCADE,
-    )
-    bloom_level = models.CharField(max_length=20, choices=BloomLevel.choices)
+    BLOOM_LEVELS = [("REMEMBER", "Remember"), ("UNDERSTAND", "Understand"), ("ANALYZE", "Analyze")]
+    lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="module_questions")
+    question = models.ForeignKey("questions.Question", on_delete=models.CASCADE)
+    bloom_level = models.CharField(max_length=20, choices=BLOOM_LEVELS)
     order = models.PositiveIntegerField(default=1)
-
-    class Meta:
-        unique_together = ("lesson_node", "question")
-        ordering = ["lesson_node_id", "bloom_level", "order", "id"]
