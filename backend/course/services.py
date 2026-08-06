@@ -1,6 +1,6 @@
 from django.db import transaction
 
-from lessons.models import CourseGroup, LearningObject, OutlineNode
+from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 from question_generation.models import GeneratedQuestion
 
 from .models import CourseModule, LessonNode, LessonVariant, ModuleQuestion
@@ -65,12 +65,12 @@ def _choice_texts(question):
     return [str(choice) for choice in choices[:4]]
 
 
-def _material_text_for_source(source):
+def _material_text_for_source(material):
     objects = LearningObject.objects.filter(
         kind=LearningObject.Kind.TEXT,
-        material__outline_node=source,
+        material=material,
         material__status="completed",
-    ).order_by("material_id", "order", "id")
+    ).order_by("order", "id")
     lines = []
     for obj in objects:
         lines.append(f"{obj.title}\n{obj.content}".strip())
@@ -87,15 +87,17 @@ def sync_course_outline(course_id):
             module.is_active = True
             module.save(update_fields=["is_active"])
 
-            for source in _lesson_sources_for_module(root):
-                LessonNode.objects.get_or_create(module=module, source=source)
+            for outline_node in _lesson_sources_for_module(root):
+                materials = LearningMaterial.objects.filter(outline_node=outline_node)
+                for material in materials:
+                    LessonNode.objects.get_or_create(module=module, source=material)
 
     return CourseModule.objects.filter(source__course=course, is_active=True)
 
 
 def sync_module_questions(lesson_node):
     learning_objects = LearningObject.objects.filter(
-        material__outline_node=lesson_node.source,
+        material=lesson_node.source,
         kind=LearningObject.Kind.TEXT,
     )
     questions = GeneratedQuestion.objects.filter(
@@ -123,7 +125,12 @@ def first_lesson_node(course_id=None):
     sync_course_outline(course_id)
     return (
         LessonNode.objects.filter(module__source__course_id=course_id, module__is_active=True)
-        .order_by("module__source__order", "source__depth", "source__order", "source__id")
+        .order_by(
+            "module__source__order",
+            "source__outline_node__depth",
+            "source__outline_node__order",
+            "source__id",
+        )
         .first()
     )
 
@@ -131,12 +138,14 @@ def first_lesson_node(course_id=None):
 class LessonPackageService:
     @staticmethod
     def build_package(node_id):
-        node = LessonNode.objects.select_related("module", "source", "module__source").get(id=node_id)
+        node = LessonNode.objects.select_related(
+            "module", "source", "module__source", "source__outline_node"
+        ).get(id=node_id)
         sync_module_questions(node)
 
         normal_text = _material_text_for_source(node.source)
         if not normal_text:
-            normal_text = node.source.related_info.get("description", "") or node.title
+            normal_text = node.source.outline_node.related_info.get("description", "") or node.title
 
         variants = {}
         saved_variants = {
@@ -175,7 +184,7 @@ class LessonPackageService:
             "lesson_node": {
                 "id": node.id,
                 "title": node.title,
-                "node_order": node.node_order,
+                "node_order": node.source.outline_node.order,
             },
             "variants": variants,
             "questions": questions,
