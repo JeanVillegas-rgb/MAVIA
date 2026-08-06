@@ -1,39 +1,31 @@
 import api from "./api";
 
 import {
-    LessonPackage,
-    StartLearningResult
-} from "../models/LessonPackage";
-
+  CourseModule,
+  StartLearningResult,
+} from "../models/CourseModule";
 
 export async function fetchLesson(
-    nodeId: number
-): Promise<LessonPackage> {
+  nodeId: number
+): Promise<CourseModule> {
+  const response = await api.get(
+    `course/lesson-package/${nodeId}/`
+  );
 
-    const response =
-    await api.get(
-        `course/lesson-package/${nodeId}/`
-    );
-
-    return response.data;
-
+  return response.data;
 }
 
-
 export async function startLearning(
-    courseId?: number,
-    learnerId = "default"
+  courseId?: number,
+  learnerId = "default"
 ): Promise<StartLearningResult> {
+  const response = await api.post(
+    "adaptive/start/",
+    {
+      learner_id: learnerId,
+      ...(courseId ? { course_id: courseId } : {}),
+    }
+  );
 
-    const response =
-    await api.post(
-        "adaptive/start/",
-        {
-            learner_id: learnerId,
-            ...(courseId ? { course_id: courseId } : {})
-        }
-    );
-
-    return response.data;
-
+  return response.data;
 }
