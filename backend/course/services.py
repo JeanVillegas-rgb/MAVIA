@@ -106,6 +106,10 @@ def _choice_texts(question):
 
 
 def _material_text_for_source(source):
+    """
+    Return concatenated text for a lesson source. Accepts either a LearningMaterial
+    instance or an OutlineNode (legacy fallback).
+    """
     if isinstance(source, LearningMaterial):
         objects = LearningObject.objects.filter(
             material=source,
@@ -155,10 +159,21 @@ def sync_course_outline(course_id):
 
 
 def sync_module_questions(lesson_node):
-    learning_objects = LearningObject.objects.filter(
-        material__outline_node=lesson_node.source,
-        kind=LearningObject.Kind.TEXT,
-    )
+    """
+    Sync ModuleQuestion entries for a LessonNode. Handles the case where lesson_node.source
+    is either a LearningMaterial or an OutlineNode (legacy).
+    """
+    if isinstance(lesson_node.source, LearningMaterial):
+        learning_objects = LearningObject.objects.filter(
+            material=lesson_node.source,
+            kind=LearningObject.Kind.TEXT,
+        )
+    else:
+        learning_objects = LearningObject.objects.filter(
+            material__outline_node=lesson_node.source,
+            kind=LearningObject.Kind.TEXT,
+        )
+
     questions = GeneratedQuestion.objects.filter(
         node__in=learning_objects,
     ).order_by("node__order", "id")
@@ -183,24 +198,33 @@ def first_lesson_node(course_id=None):
 
     # Ensure CourseModule/LessonNode records reflect the latest outline/materials
     sync_course_outline(course_id)
-    return (
-        LessonNode.objects.filter(module__source__course_id=course_id, module__is_active=True)
-        .order_by("module__source__order", "source__depth", "source__order", "source__id")
-        .first()
-    )
+
+    # Pick the first active module for the course ordered by its outline order
+    module = CourseModule.objects.filter(source__course_id=course_id, is_active=True).select_related("source").order_by("source__order", "source__id").first()
+    if not module:
+        return None
+
+    # Find the first lesson node for this module, preferring a source.order if present
+    lesson_nodes = list(LessonNode.objects.filter(module=module).select_related("source"))
+    if not lesson_nodes:
+        return None
+
+    def ln_key(ln):
+        src = getattr(ln, "source", None)
+        return (getattr(src, "order", None) if src is not None else None, ln.pk)
+
+    return sorted(lesson_nodes, key=ln_key)[0]
 
 
 class LessonPackageService:
     @staticmethod
     def build_package(node_id):
-        node = LessonNode.objects.select_related(
-            "module", "source", "module__source", "source__outline_node"
-        ).get(id=node_id)
+        node = LessonNode.objects.select_related("module", "source", "module__source", "source__outline_node").get(id=node_id)
         sync_module_questions(node)
 
         normal_text = _material_text_for_source(node.source)
         if not normal_text:
-            normal_text = node.source.related_info.get("description", "") or node.title
+            normal_text = getattr(node.source, "related_info", {}).get("description", "") or node.title
 
         variants = {}
         saved_variants = {
@@ -242,7 +266,7 @@ class LessonPackageService:
             "lesson_node": {
                 "id": node.id,
                 "title": node.title,
-                "node_order": node.node_order,
+                "node_order": node_order,
             },
             "variants": variants,
             "questions": questions,
