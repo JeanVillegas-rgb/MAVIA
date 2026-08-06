@@ -5,7 +5,7 @@ from .question_formatting import choice_texts
 from .services import VARIANT_KEYS, _material_text_for_source
 
 
-class LessonNode(serializers.ModelSerializer):
+class LessonNodeSerializer(serializers.ModelSerializer):
     variants = serializers.SerializerMethodField()
     questions = serializers.SerializerMethodField()
 
@@ -14,7 +14,7 @@ class LessonNode(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class CourseModule(serializers.ModelSerializer):
+class CourseModuleSerializer(serializers.ModelSerializer):
     lesson_nodes = LessonNodeSerializer(many=True, read_only=True)
 
     class Meta:
