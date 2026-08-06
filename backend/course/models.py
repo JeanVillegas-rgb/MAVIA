@@ -1,5 +1,8 @@
+from django.core.exceptions import ValidationError
 from django.db import models
+
 from lessons.models import LearningMaterial, OutlineNode
+from question_generation.models import GeneratedQuestion
 
 
 class CourseModule(models.Model):
@@ -57,15 +60,34 @@ class LessonNode(models.Model):
 
 class LessonVariant(models.Model):
     VARIANTS = [("NORMAL", "Normal"), ("ELABORATED", "Elaborated"), ("SIMPLIFIED", "Simplified")]
+
     lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="variants")
     variant = models.CharField(max_length=20, choices=VARIANTS)
     narration = models.TextField()
     audio_url = models.CharField(max_length=255, blank=True)
 
+    class Meta:
+        unique_together = ("lesson_node", "variant")
+        ordering = ["lesson_node_id", "variant"]
+
 
 class ModuleQuestion(models.Model):
     BLOOM_LEVELS = [("REMEMBER", "Remember"), ("UNDERSTAND", "Understand"), ("ANALYZE", "Analyze")]
+
     lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="module_questions")
-    question = models.ForeignKey("questions.Question", on_delete=models.CASCADE)
+    question = models.ForeignKey(GeneratedQuestion, on_delete=models.CASCADE)
     bloom_level = models.CharField(max_length=20, choices=BLOOM_LEVELS)
     order = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        unique_together = ("lesson_node", "question")
+        ordering = ["lesson_node_id", "bloom_level", "order", "id"]
+
+    def clean(self):
+        if not self.lesson_node.source.learning_objects.filter(
+            pk=self.question.node_id
+        ).exists():
+            raise ValidationError({
+                "question": "Question's learning object must belong to this "
+                             "lesson node's LearningMaterial."
+            })
