@@ -42,15 +42,15 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('dependency_cue_score__isnull', True), models.Q(('dependency_cue_score__gte', 0.0), ('dependency_cue_score__lte', 1.0)), _connector='OR'), name='concept_edge_dependency_cue_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('dependency_cue_score__isnull', True), models.Q(('dependency_cue_score__gte', 0.0), ('dependency_cue_score__lte', 1.0)), _connector='OR'), name='concept_edge_dependency_cue_between_0_and_1'),
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('source_order_score__isnull', True), models.Q(('source_order_score__gte', 0.0), ('source_order_score__lte', 1.0)), _connector='OR'), name='concept_edge_source_order_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('source_order_score__isnull', True), models.Q(('source_order_score__gte', 0.0), ('source_order_score__lte', 1.0)), _connector='OR'), name='concept_edge_source_order_between_0_and_1'),
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('title_overlap_score__isnull', True), models.Q(('title_overlap_score__gte', 0.0), ('title_overlap_score__lte', 1.0)), _connector='OR'), name='concept_edge_title_overlap_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('title_overlap_score__isnull', True), models.Q(('title_overlap_score__gte', 0.0), ('title_overlap_score__lte', 1.0)), _connector='OR'), name='concept_edge_title_overlap_between_0_and_1'),
         ),
         migrations.AddField(
             model_name='moduleconceptdagstate',

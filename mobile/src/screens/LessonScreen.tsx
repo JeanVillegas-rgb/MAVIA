@@ -14,8 +14,16 @@ import BloomProgress from "../components/BloomProgress";
 import { colors, spacing, typography, radii } from "../theme/theme";
 
 export default function LessonScreen({ navigation }: any) {
-  const { lesson, mastery, currentVariant, currentBloom, currentNodeId } =
-    useContext(LessonContext);
+  const {
+    module,
+    mastery,
+    currentVariant,
+    currentBloom,
+    currentLessonIndex,
+    currentLessonNodeId,
+  } = useContext(LessonContext);
+
+  const lesson = module?.lesson_nodes[currentLessonIndex];
 
   const previousNodeId = useRef<number | null>(null);
   const [justAdvanced, setJustAdvanced] = useState(false);
@@ -23,17 +31,17 @@ export default function LessonScreen({ navigation }: any) {
   const variant =
     lesson?.variants?.[currentVariant] ?? lesson?.variants?.normal;
 
-  const nodeTitle = lesson?.lesson_node?.title ?? "";
+  const nodeTitle = lesson?.title ?? "";
 
   useEffect(() => {
     if (!lesson || !variant) return;
 
     const advanced =
       previousNodeId.current !== null &&
-      previousNodeId.current !== currentNodeId;
+      previousNodeId.current !== currentLessonNodeId;
 
     setJustAdvanced(advanced);
-    previousNodeId.current = currentNodeId;
+    previousNodeId.current = currentLessonNodeId;
 
     let cancelled = false;
     Speech.stop();
@@ -62,9 +70,9 @@ export default function LessonScreen({ navigation }: any) {
       Speech.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVariant, currentBloom, currentNodeId, lesson, variant]);
+  }, [currentVariant, currentBloom, currentLessonNodeId, lesson, variant]);
 
-  if (!lesson) {
+  if (!module || !lesson) {
     return (
       <View style={styles.center}>
         <Text style={typography.body}>No lesson loaded.</Text>

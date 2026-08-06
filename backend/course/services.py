@@ -1,9 +1,10 @@
 from django.db import transaction
 
-from lessons.models import CourseGroup, LearningObject, OutlineNode
+from lessons.models import CourseGroup, LearningMaterial, LearningObject
 from question_generation.models import GeneratedQuestion
 
-from .models import CourseModule, LessonNode, LessonVariant, ModuleQuestion
+from .models import CourseModule, LessonNode, ModuleQuestion
+from .question_formatting import answer_label, choice_texts
 
 
 BLOOM_BUCKETS = ("remember", "understand", "analyze")
@@ -24,6 +25,12 @@ def _lesson_sources_for_module(module_node):
 
 
 def _bloom_bucket(level):
+    """Collapse GeneratedQuestion's six Bloom levels into three UI buckets.
+
+    remember -> remember, understand -> understand, everything else
+    (apply/analyze/evaluate/create) -> analyze. This is a deliberate
+    many-to-one simplification for the three-tier UI, not a bug.
+    """
     level = (level or "").lower()
     if level == "remember":
         return "remember"
@@ -32,45 +39,12 @@ def _bloom_bucket(level):
     return "analyze"
 
 
-def _answer_label(question):
-    answer = (question.correct_answer or "").strip()
-    if answer.upper() in {"A", "B", "C", "D"}:
-        return answer.upper()
-
-    choices = question.choices or []
-    if question.question_format == "TF":
-        if answer.lower() == "true":
-            return "A"
-        if answer.lower() == "false":
-            return "B"
-
-    if isinstance(choices, dict):
-        for label in ("A", "B", "C", "D"):
-            if str(choices.get(label, "")).strip().lower() == answer.lower():
-                return label
-        return answer
-
-    for index, choice in enumerate(choices[:4]):
-        if str(choice).strip().lower() == answer.lower():
-            return "ABCD"[index]
-    return answer
-
-
-def _choice_texts(question):
-    choices = question.choices or []
-    if isinstance(choices, dict):
-        return [str(choices.get(label, "")) for label in ("A", "B", "C", "D") if choices.get(label)]
-    if question.question_format == "TF" and not choices:
-        return ["True", "False"]
-    return [str(choice) for choice in choices[:4]]
-
-
-def _material_text_for_source(source):
+def _material_text_for_source(material):
     objects = LearningObject.objects.filter(
         kind=LearningObject.Kind.TEXT,
-        material__outline_node=source,
+        material=material,
         material__status="completed",
-    ).order_by("material_id", "order", "id")
+    ).order_by("order", "id")
     lines = []
     for obj in objects:
         lines.append(f"{obj.title}\n{obj.content}".strip())
@@ -87,15 +61,28 @@ def sync_course_outline(course_id):
             module.is_active = True
             module.save(update_fields=["is_active"])
 
-            for source in _lesson_sources_for_module(root):
-                LessonNode.objects.get_or_create(module=module, source=source)
+            for outline_node in _lesson_sources_for_module(root):
+                materials = LearningMaterial.objects.filter(outline_node=outline_node)
+                for material in materials:
+                    LessonNode.objects.get_or_create(module=module, source=material)
+
+            # upload_material() lets a PDF be attached directly to a module
+            # with no outline_node_id (see lessons/views.py upload_material),
+            # so outline_node stays NULL there. Those materials would never
+            # match the outline_node-keyed lookup above, so pick them up
+            # separately via module_node instead of losing them silently.
+            topicless_materials = LearningMaterial.objects.filter(
+                module_node=root, outline_node__isnull=True
+            )
+            for material in topicless_materials:
+                LessonNode.objects.get_or_create(module=module, source=material)
 
     return CourseModule.objects.filter(source__course=course, is_active=True)
 
 
 def sync_module_questions(lesson_node):
     learning_objects = LearningObject.objects.filter(
-        material__outline_node=lesson_node.source,
+        material=lesson_node.source,
         kind=LearningObject.Kind.TEXT,
     )
     questions = GeneratedQuestion.objects.filter(
@@ -123,7 +110,13 @@ def first_lesson_node(course_id=None):
     sync_course_outline(course_id)
     return (
         LessonNode.objects.filter(module__source__course_id=course_id, module__is_active=True)
-        .order_by("module__source__order", "source__depth", "source__order", "source__id")
+        .order_by(
+            "module__source__order",
+            "source__outline_node__depth",
+            "source__outline_node__order",
+            "source__created_at",
+            "source__id",
+        )
         .first()
     )
 
@@ -131,12 +124,17 @@ def first_lesson_node(course_id=None):
 class LessonPackageService:
     @staticmethod
     def build_package(node_id):
-        node = LessonNode.objects.select_related("module", "source", "module__source").get(id=node_id)
+        node = LessonNode.objects.select_related(
+            "module", "source", "module__source", "source__outline_node"
+        ).get(id=node_id)
         sync_module_questions(node)
 
         normal_text = _material_text_for_source(node.source)
         if not normal_text:
-            normal_text = node.source.related_info.get("description", "") or node.title
+            description = ""
+            if node.source.outline_node_id:
+                description = node.source.outline_node.related_info.get("description", "")
+            normal_text = description or node.title
 
         variants = {}
         saved_variants = {
@@ -161,8 +159,8 @@ class LessonPackageService:
                     "order": module_question.order,
                     "bloom_level": bucket,
                     "question": question.question_text,
-                    "choices": _choice_texts(question),
-                    "correct_answer": _answer_label(question),
+                    "choices": choice_texts(question),
+                    "correct_answer": answer_label(question),
                 }
             )
 
@@ -175,7 +173,7 @@ class LessonPackageService:
             "lesson_node": {
                 "id": node.id,
                 "title": node.title,
-                "node_order": node.node_order,
+                "node_order": node.source.outline_node.order if node.source.outline_node_id else 0,
             },
             "variants": variants,
             "questions": questions,

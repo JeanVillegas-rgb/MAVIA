@@ -32,7 +32,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'ordering': ['source__material_id', 'source__order', 'target__material_id', 'target__order', 'id'],
-                'constraints': [models.UniqueConstraint(fields=('course', 'module_node', 'source', 'target'), name='unique_learning_object_prerequisite_edge'), models.CheckConstraint(condition=models.Q(('source', models.F('target')), _negated=True), name='learning_object_edge_source_not_target'), models.CheckConstraint(condition=models.Q(('score__gte', 0.0), ('score__lte', 1.0)), name='learning_object_edge_score_between_0_and_1')],
+                'constraints': [models.UniqueConstraint(fields=('course', 'module_node', 'source', 'target'), name='unique_learning_object_prerequisite_edge'), models.CheckConstraint(check=models.Q(('source', models.F('target')), _negated=True), name='learning_object_edge_source_not_target'), models.CheckConstraint(check=models.Q(('score__gte', 0.0), ('score__lte', 1.0)), name='learning_object_edge_score_between_0_and_1')],
             },
         ),
     ]

@@ -1,19 +1,10 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
-from course.models import CourseModule, LessonNode
+from course.models import CourseModule, LessonNode, LessonVariant, ModuleQuestion
 
 
 class LearningState(models.Model):
-    class Variant(models.TextChoices):
-        NORMAL = "NORMAL", "Normal"
-        ELABORATED = "ELABORATED", "Elaborated"
-        SIMPLIFIED = "SIMPLIFIED", "Simplified"
-
-    class BloomLevel(models.TextChoices):
-        REMEMBER = "REMEMBER", "Remember"
-        UNDERSTAND = "UNDERSTAND", "Understand"
-        ANALYZE = "ANALYZE", "Analyze"
-
     learner_id = models.CharField(max_length=80, default="default", db_index=True)
     current_module = models.ForeignKey(CourseModule, on_delete=models.CASCADE)
     current_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE)
@@ -22,13 +13,13 @@ class LearningState(models.Model):
     tier_attempts = models.PositiveIntegerField(default=0)
     current_variant = models.CharField(
         max_length=20,
-        choices=Variant.choices,
-        default=Variant.NORMAL,
+        choices=LessonVariant.VARIANTS,
+        default="NORMAL",
     )
     current_bloom = models.CharField(
         max_length=20,
-        choices=BloomLevel.choices,
-        default=BloomLevel.REMEMBER,
+        choices=ModuleQuestion.BLOOM_LEVELS,
+        default="REMEMBER",
     )
     reward = models.FloatField(default=0.0)
     completed = models.BooleanField(default=False)
@@ -36,6 +27,12 @@ class LearningState(models.Model):
 
     def __str__(self):
         return f"{self.learner_id}: {self.current_module.title} | {self.current_node.title}"
+
+    def clean(self):
+        if self.current_node.module_id != self.current_module_id:
+            raise ValidationError({
+                "current_node": "current_node must belong to current_module."
+            })
 
 
 class StudentResponse(models.Model):

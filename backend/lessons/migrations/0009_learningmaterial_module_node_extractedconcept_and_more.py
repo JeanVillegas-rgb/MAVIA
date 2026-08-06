@@ -79,7 +79,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='extractedconcept',
-            constraint=models.CheckConstraint(condition=models.Q(('confidence__isnull', True), models.Q(('confidence__gte', 0.0), ('confidence__lte', 1.0)), _connector='OR'), name='extracted_concept_confidence_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('confidence__isnull', True), models.Q(('confidence__gte', 0.0), ('confidence__lte', 1.0)), _connector='OR'), name='extracted_concept_confidence_between_0_and_1'),
         ),
         migrations.AddConstraint(
             model_name='conceptsource',
@@ -91,18 +91,18 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('source', models.F('target')), _negated=True), name='concept_edge_source_not_target'),
+            constraint=models.CheckConstraint(check=models.Q(('source', models.F('target')), _negated=True), name='concept_edge_source_not_target'),
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('score__gte', 0.0), ('score__lte', 1.0)), name='concept_edge_score_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('score__gte', 0.0), ('score__lte', 1.0)), name='concept_edge_score_between_0_and_1'),
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('semantic_similarity__isnull', True), models.Q(('semantic_similarity__gte', 0.0), ('semantic_similarity__lte', 1.0)), _connector='OR'), name='concept_edge_semantic_similarity_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('semantic_similarity__isnull', True), models.Q(('semantic_similarity__gte', 0.0), ('semantic_similarity__lte', 1.0)), _connector='OR'), name='concept_edge_semantic_similarity_between_0_and_1'),
         ),
         migrations.AddConstraint(
             model_name='conceptprerequisiteedge',
-            constraint=models.CheckConstraint(condition=models.Q(('instructional_order_score__isnull', True), models.Q(('instructional_order_score__gte', 0.0), ('instructional_order_score__lte', 1.0)), _connector='OR'), name='concept_edge_instructional_order_between_0_and_1'),
+            constraint=models.CheckConstraint(check=models.Q(('instructional_order_score__isnull', True), models.Q(('instructional_order_score__gte', 0.0), ('instructional_order_score__lte', 1.0)), _connector='OR'), name='concept_edge_instructional_order_between_0_and_1'),
         ),
     ]

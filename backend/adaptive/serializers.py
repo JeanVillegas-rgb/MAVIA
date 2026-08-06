@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from question_generation.models import GeneratedQuestion
 from .models import LearningState
 
 
@@ -19,3 +20,33 @@ class StudentResponseSerializer(serializers.Serializer):
     question_id = serializers.IntegerField()
     selected_answer = serializers.CharField(max_length=255)
     response_time = serializers.FloatField(required=False, default=0)
+
+    def validate(self, data):
+        try:
+            learning_state = LearningState.objects.select_related("current_node").get(
+                pk=data["learning_state_id"]
+            )
+        except LearningState.DoesNotExist:
+            raise serializers.ValidationError({
+                "learning_state_id": "No such learning state."
+            })
+
+        try:
+            question = GeneratedQuestion.objects.select_related("node").get(
+                pk=data["question_id"]
+            )
+        except GeneratedQuestion.DoesNotExist:
+            raise serializers.ValidationError({
+                "question_id": "No such question."
+            })
+
+        if not learning_state.current_node.source.learning_objects.filter(
+            pk=question.node_id
+        ).exists():
+            raise serializers.ValidationError({
+                "question_id": "Question does not belong to the learner's current lesson node."
+            })
+
+        data["learning_state"] = learning_state
+        data["question"] = question
+        return data
