@@ -91,3 +91,11 @@ class ModuleQuestion(models.Model):
                 "question": "Question's learning object must belong to this "
                              "lesson node's LearningMaterial."
             })
+
+    def save(self, *args, **kwargs):
+        # clean() previously wasn't reachable: sync_module_questions() uses
+        # update_or_create(), which never calls full_clean(). Enforce the
+        # invariant here so it's actually checked on every save, including
+        # from admin, shell, or future call sites that skip services.py.
+        self.full_clean()
+        super().save(*args, **kwargs)
