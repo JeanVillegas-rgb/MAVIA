@@ -1,6 +1,5 @@
 import React, { useContext, useState } from "react";
 import { View, Text, StyleSheet, SafeAreaView } from "react-native";
-
 import { LessonContext } from "../context/LessonContext";
 import { startLearning } from "../services/lessonService";
 import PrimaryButton from "../components/PrimaryButton";
@@ -15,6 +14,7 @@ export default function HomeScreen({ navigation }: any) {
     setCurrentBloom,
     setCurrentLessonIndex,
     setCurrentQuestionIndex,
+    setCurrentLessonNodeId,
   } = useContext(LessonContext);
 
   const [loading, setLoading] = useState(false);
@@ -22,20 +22,16 @@ export default function HomeScreen({ navigation }: any) {
   async function startLesson() {
     try {
       setLoading(true);
-
       const result = await startLearning();
-
       setLearningStateId(result.learning_state_id);
       setModule(result.lesson);
-
       setMastery(result.mastery);
       setCurrentVariant(result.current_variant);
       setCurrentBloom(result.current_bloom);
-
       // Start at the first lesson in the package
       setCurrentLessonIndex(0);
       setCurrentQuestionIndex(0);
-
+      setCurrentLessonNodeId(result.lesson.lesson_nodes[0]?.id ?? 0);
       navigation.replace("Lesson");
     } catch (err) {
       console.log(err);
@@ -48,34 +44,17 @@ export default function HomeScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
         <View style={styles.hero}>
-          <Text
-            style={styles.wordmark}
-            accessibilityRole="header"
-          >
+          <Text style={styles.wordmark} accessibilityRole="header">
             MAVIA
           </Text>
-
-          <Text
-            style={[
-              typography.bodyMuted,
-              styles.tagline,
-            ]}
-          >
-            Adaptive learning, built for how you
-            learn best.
+          <Text style={[typography.bodyMuted, styles.tagline]}>
+            Adaptive learning, built for how you learn best.
           </Text>
         </View>
-
         <View style={styles.moduleCard}>
-          <Text style={typography.label}>
-            Up next
-          </Text>
-
-          <Text style={styles.moduleTitle}>
-            Adaptive Module
-          </Text>
+          <Text style={typography.label}>Up next</Text>
+          <Text style={styles.moduleTitle}>Adaptive Module</Text>
         </View>
-
         <PrimaryButton
           label="Start lesson"
           onPress={startLesson}
@@ -92,30 +71,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-
   container: {
     flex: 1,
     justifyContent: "center",
     paddingHorizontal: spacing.xl,
   },
-
   hero: {
     alignItems: "center",
     marginBottom: spacing.xxl,
   },
-
   wordmark: {
     fontSize: 44,
     fontWeight: "800",
     letterSpacing: 1,
     color: colors.primary,
   },
-
   tagline: {
     marginTop: spacing.sm,
     textAlign: "center",
   },
-
   moduleCard: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -124,7 +98,6 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.xl,
   },
-
   moduleTitle: {
     fontSize: 22,
     fontWeight: "700",
