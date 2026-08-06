@@ -3,8 +3,8 @@ from django.db import transaction
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 from question_generation.models import GeneratedQuestion
 
-from .models import CourseModule, LessonNode, LessonVariant, ModuleQuestion
-
+from .models import CourseModule, LessonNode, ModuleQuestion
+from .question_formatting import answer_label, choice_texts
 
 BLOOM_BUCKETS = ("remember", "understand", "analyze")
 VARIANT_KEYS = ("normal", "elaborated", "simplified")
@@ -24,45 +24,18 @@ def _lesson_sources_for_module(module_node):
 
 
 def _bloom_bucket(level):
+    """Collapse GeneratedQuestion's six Bloom levels into three UI buckets.
+
+    remember -> remember, understand -> understand, everything else
+    (apply/analyze/evaluate/create) -> analyze. This is a deliberate
+    many-to-one simplification for the three-tier UI, not a bug.
+    """
     level = (level or "").lower()
     if level == "remember":
         return "remember"
     if level == "understand":
         return "understand"
     return "analyze"
-
-
-def _answer_label(question):
-    answer = (question.correct_answer or "").strip()
-    if answer.upper() in {"A", "B", "C", "D"}:
-        return answer.upper()
-
-    choices = question.choices or []
-    if question.question_format == "TF":
-        if answer.lower() == "true":
-            return "A"
-        if answer.lower() == "false":
-            return "B"
-
-    if isinstance(choices, dict):
-        for label in ("A", "B", "C", "D"):
-            if str(choices.get(label, "")).strip().lower() == answer.lower():
-                return label
-        return answer
-
-    for index, choice in enumerate(choices[:4]):
-        if str(choice).strip().lower() == answer.lower():
-            return "ABCD"[index]
-    return answer
-
-
-def _choice_texts(question):
-    choices = question.choices or []
-    if isinstance(choices, dict):
-        return [str(choices.get(label, "")) for label in ("A", "B", "C", "D") if choices.get(label)]
-    if question.question_format == "TF" and not choices:
-        return ["True", "False"]
-    return [str(choice) for choice in choices[:4]]
 
 
 def _material_text_for_source(material):
@@ -170,8 +143,8 @@ class LessonPackageService:
                     "order": module_question.order,
                     "bloom_level": bucket,
                     "question": question.question_text,
-                    "choices": _choice_texts(question),
-                    "correct_answer": _answer_label(question),
+                    "choices": choice_texts(question),
+                    "correct_answer": answer_label(question),
                 }
             )
 
