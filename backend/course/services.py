@@ -1,6 +1,6 @@
 from django.db import transaction
 
-from lessons.models import CourseGroup, LearningObject, OutlineNode
+from lessons.models import CourseGroup, LearningObject, OutlineNode, LearningMaterial
 from question_generation.models import GeneratedQuestion
 
 from .models import CourseModule, LessonNode, ModuleQuestion
