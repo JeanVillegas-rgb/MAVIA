@@ -15,7 +15,7 @@ import BloomProgress from "../components/BloomProgress";
 import HiddenHardwareInput from "../components/HiddenHardwareInput";
 
 import { LessonContext } from "../context/LessonContext";
-import { BloomType } from "../models/LessonPackage";
+import { BloomType, CourseModule } from "../models/LessonPackage";
 import api from "../services/api";
 
 const BLOOM_ORDER: BloomType[] = ["remember", "understand", "analyze"];
@@ -99,20 +99,24 @@ function nextBloomInOrder(bloom: BloomType): BloomType {
 
 export default function QuestionScreen({ navigation }: any) {
   const {
-    lesson,
-    setLesson,
+    module,
+    setModule,
     setMastery,
+    currentVariant,
     setCurrentVariant,
     currentBloom,
     setCurrentBloom,
     learningStateId,
+    currentLessonIndex,
+    setCurrentLessonIndex,
     currentQuestionIndex,
     setCurrentQuestionIndex,
-    setCurrentNodeId,
+    setCurrentLessonNodeId,
   } = useContext(LessonContext);
 
   const [selectedAnswer, setSelectedAnswer] = useState("");
 
+  const lesson = module?.lesson_nodes[currentLessonIndex];
   const questions = lesson?.questions?.[currentBloom] || [];
   const question = questions[currentQuestionIndex];
   const answerLabels = ["A", "B", "C", "D"];
@@ -123,9 +127,10 @@ export default function QuestionScreen({ navigation }: any) {
     return () => {
       Speech.stop();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestionIndex, currentBloom, question?.id]);
 
-  if (!lesson || !lesson.questions || !lesson.questions[currentBloom]) {
+  if (!module || !lesson || !lesson.questions || !lesson.questions[currentBloom]) {
     return null;
   }
 
@@ -200,10 +205,16 @@ export default function QuestionScreen({ navigation }: any) {
         try {
           const nextNodeId = response.data.next_node;
           const packageResponse = await api.get(`course/lesson-package/${nextNodeId}/`);
+          const newModule: CourseModule = packageResponse.data;
+
+          const nodeIndex = newModule.lesson_nodes.findIndex(
+            (n) => n.id === nextNodeId
+          );
 
           setSelectedAnswer("");
-          setLesson(packageResponse.data);
-          setCurrentNodeId(nextNodeId);
+          setModule(newModule);
+          setCurrentLessonIndex(nodeIndex >= 0 ? nodeIndex : 0);
+          setCurrentLessonNodeId(nextNodeId);
           setCurrentQuestionIndex(0);
           setCurrentVariant(response.data.next_variant.toLowerCase());
           setCurrentBloom(targetBloomKey);
