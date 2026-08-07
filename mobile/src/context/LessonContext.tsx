@@ -7,6 +7,7 @@ import {
   VariantType,
   LessonNode,
   LessonQuestion,
+  LessonChunk,
   LessonPackage,
   CourseModuleSerialized,
 } from "../models/LessonPackage";
@@ -67,6 +68,12 @@ interface LessonContextType {
   setCurrentQuestionIndex: React.Dispatch<React.SetStateAction<number>>;
 
   /**
+   * Current UI state for chunk pagination within the active variant's content
+   */
+  currentChunkIndex: number;
+  setCurrentChunkIndex: React.Dispatch<React.SetStateAction<number>>;
+
+  /**
    * Update learning state after backend submits an answer
    * Applies mastery, bloom, variant, and node changes from the response
    */
@@ -76,6 +83,8 @@ interface LessonContextType {
    * Getters for current state (derived from learningState)
    */
   getCurrentNode: () => LessonNode | undefined;
+  getCurrentChunks: () => LessonChunk[];
+  getCurrentChunk: () => LessonChunk | undefined;
   getCurrentQuestions: () => LessonQuestion[];
   getCurrentBloom: () => BloomType;
   getCurrentVariant: () => VariantType;
@@ -95,6 +104,7 @@ export function LessonProvider({ children }: LessonProviderProps) {
   const [learningState, setLearningState] =
     React.useState<StartLearningResult | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = React.useState(0);
+  const [currentChunkIndex, setCurrentChunkIndex] = React.useState(0);
 
   const learningStateId = learningState?.learning_state_id ?? 0;
 
@@ -114,6 +124,25 @@ export function LessonProvider({ children }: LessonProviderProps) {
       (node) => node.id === learningState.current_node_id
     );
   }, [learningState]);
+
+  /**
+   * Get all chunks for the current node's active variant
+   */
+  const getCurrentChunks = useCallback((): LessonChunk[] => {
+    const currentNode = getCurrentNode();
+    if (!currentNode || !learningState) return [];
+
+    const variant = learningState.current_variant;
+    return currentNode.variants[variant]?.chunks ?? [];
+  }, [learningState, getCurrentNode]);
+
+  /**
+   * Get the chunk at the current chunk index, bounds-checked
+   */
+  const getCurrentChunk = useCallback((): LessonChunk | undefined => {
+    const chunks = getCurrentChunks();
+    return chunks[currentChunkIndex];
+  }, [getCurrentChunks, currentChunkIndex]);
 
   /**
    * Get all questions for the current bloom level in the current node
@@ -191,6 +220,12 @@ export function LessonProvider({ children }: LessonProviderProps) {
       if (response.node_changed) {
         setCurrentQuestionIndex(0);
       }
+
+      // Reset chunk index whenever the node OR the variant changes —
+      // otherwise you could land past the end of a shorter chunk list.
+      if (response.node_changed || response.next_variant !== learningState.current_variant) {
+        setCurrentChunkIndex(0);
+      }
     },
     [learningState]
   );
@@ -201,8 +236,12 @@ export function LessonProvider({ children }: LessonProviderProps) {
     learningStateId,
     currentQuestionIndex,
     setCurrentQuestionIndex,
+    currentChunkIndex,
+    setCurrentChunkIndex,
     updateFromSubmitResponse,
     getCurrentNode,
+    getCurrentChunks,
+    getCurrentChunk,
     getCurrentQuestions,
     getCurrentBloom,
     getCurrentVariant,
