@@ -1,9 +1,15 @@
 export type BloomType = "remember" | "understand" | "analyze";
-
 export type VariantType = "normal" | "elaborated" | "simplified";
 
+export interface LessonChunk {
+  id: number | null;
+  order: number;
+  title: string;
+  content: string;
+}
+
 export interface LessonVariantContent {
-  text: string;
+  chunks: LessonChunk[];
   audio_url?: string;
 }
 
