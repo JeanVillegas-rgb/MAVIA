@@ -105,6 +105,8 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
     learning_objects = LearningObjectSerializer(many=True, read_only=True)
     filename = serializers.SerializerMethodField()
     generated_json = serializers.SerializerMethodField()
+    outline_node_title = serializers.SerializerMethodField()
+    module_node_title = serializers.SerializerMethodField()
 
     class Meta:
         model = LearningMaterial
@@ -113,7 +115,9 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
             "title",
             "filename",
             "outline_node",
+            "outline_node_title",
             "module_node",
+            "module_node_title",
             "status",
             "error_message",
             "generated_json",
@@ -126,6 +130,12 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
 
     def get_generated_json(self, obj):
         return remove_missing_audio_urls(obj)
+
+    def get_outline_node_title(self, obj):
+        return obj.outline_node.title if obj.outline_node else None
+
+    def get_module_node_title(self, obj):
+        return obj.module_node.title if obj.module_node else None
 
 
 class CourseDetailSerializer(serializers.ModelSerializer):

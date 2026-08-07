@@ -1,14 +1,14 @@
 import React, { createContext, useState } from "react";
 
 import {
-  LessonPackage,
+  CourseModule,
   VariantType,
-  BloomType, 
+  BloomType,
 } from "../models/LessonPackage";
 
 interface LessonContextType {
-  lesson: LessonPackage | null;
-  setLesson: React.Dispatch<React.SetStateAction<LessonPackage | null>>;
+  module: CourseModule | null;
+  setModule: React.Dispatch<React.SetStateAction<CourseModule | null>>;
 
   mastery: number;
   setMastery: React.Dispatch<React.SetStateAction<number>>;
@@ -22,11 +22,17 @@ interface LessonContextType {
   learningStateId: number;
   setLearningStateId: React.Dispatch<React.SetStateAction<number>>;
 
+  // Current lesson inside module.lesson_nodes
+  currentLessonIndex: number;
+  setCurrentLessonIndex: React.Dispatch<React.SetStateAction<number>>;
+
+  // Current question inside the selected bloom level
   currentQuestionIndex: number;
   setCurrentQuestionIndex: React.Dispatch<React.SetStateAction<number>>;
 
-  currentNodeId: number;
-  setCurrentNodeId: React.Dispatch<React.SetStateAction<number>>;
+  // Backend LessonNode id (used when submitting answers)
+  currentLessonNodeId: number;
+  setCurrentLessonNodeId: React.Dispatch<React.SetStateAction<number>>;
 }
 
 export const LessonContext = createContext({} as LessonContextType);
@@ -36,33 +42,50 @@ export function LessonProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [lesson, setLesson] = useState<LessonPackage | null>(null);
+  const [module, setModule] = useState<CourseModule | null>(null);
+
   const [mastery, setMastery] = useState(0.3);
+
   const [currentVariant, setCurrentVariant] =
     useState<VariantType>("normal");
+
   const [currentBloom, setCurrentBloom] =
     useState<BloomType>("remember");
+
   const [learningStateId, setLearningStateId] = useState(0);
+
+  const [currentLessonIndex, setCurrentLessonIndex] = useState(0);
+
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [currentNodeId, setCurrentNodeId] = useState(0);
+
+  const [currentLessonNodeId, setCurrentLessonNodeId] = useState(0);
 
   return (
     <LessonContext.Provider
       value={{
-        lesson,
-        setLesson,
+        module,
+        setModule,
+
         mastery,
         setMastery,
+
         currentVariant,
         setCurrentVariant,
+
         currentBloom,
         setCurrentBloom,
+
         learningStateId,
         setLearningStateId,
+
+        currentLessonIndex,
+        setCurrentLessonIndex,
+
         currentQuestionIndex,
         setCurrentQuestionIndex,
-        currentNodeId,
-        setCurrentNodeId,
+
+        currentLessonNodeId,
+        setCurrentLessonNodeId,
       }}
     >
       {children}

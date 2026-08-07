@@ -9,6 +9,7 @@ import {
   fetchCourse,
   updateOutlineNode,
   uploadCourseOutline,
+  uploadLearningMaterial,
 } from "../api";
 
 export default function CourseDetailPage() {
@@ -18,6 +19,8 @@ export default function CourseDetailPage() {
   const [error, setError] = useState("");
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [hierarchyBusy, setHierarchyBusy] = useState(false);
+  const [materialBusy, setMaterialBusy] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState(null);
   const outlineInputRef = useRef(null);
@@ -101,6 +104,46 @@ export default function CourseDetailPage() {
       setError(err.message);
     } finally {
       setOutlineBusy(false);
+    }
+  }
+
+  async function handleAutoMaterialUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setMaterialBusy(true);
+    setError("");
+    setUploadMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("pdf_file", file);
+      formData.append("title", file.name.replace(/\.pdf$/i, ""));
+      const updatedCourse = await uploadLearningMaterial(id, formData);
+      setCourse(updatedCourse);
+
+      const matchingMaterials = (updatedCourse.materials || [])
+        .filter((material) => material.filename === file.name)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      const uploadedMaterial = matchingMaterials[0];
+      const topicLabel = uploadedMaterial?.outline_node_title
+        ? `topic '${uploadedMaterial.outline_node_title}'`
+        : uploadedMaterial?.module_node_title
+        ? `module '${uploadedMaterial.module_node_title}'`
+        : null;
+      const classifiedBy = uploadedMaterial?.outline_node_title || uploadedMaterial?.module_node_title
+        ? 'LLM classification'
+        : 'automatic classification';
+
+      setUploadMessage(
+        topicLabel
+          ? `Lesson PDF uploaded and classified by the LLM to ${topicLabel}.`
+          : `Lesson PDF uploaded and will be classified by the LLM to the best matching topic automatically.`
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMaterialBusy(false);
+      event.target.value = "";
     }
   }
 
@@ -214,6 +257,28 @@ export default function CourseDetailPage() {
               Current outline: {course.outline.filename} (pending teacher confirmation)
             </p>
           )}
+        </section>
+      )}
+
+      {course.outline?.is_approved && (
+        <section className="card" style={{ marginBottom: "1.25rem" }}>
+          <h3>Upload lesson PDF</h3>
+          <p className="muted-text">
+            Upload a lesson PDF and the LLM will classify it to the most suitable topic or subtopic automatically.
+          </p>
+          <div className="action-row">
+            <label className="btn btn-primary">
+              {materialBusy ? "Uploading..." : "Upload lesson PDF"}
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                hidden
+                disabled={materialBusy}
+                onChange={handleAutoMaterialUpload}
+              />
+            </label>
+          </div>
+          {uploadMessage && <div className="success-banner">{uploadMessage}</div>}
         </section>
       )}
 

@@ -4,6 +4,7 @@ import re
 import os
 import json
 import textwrap
+import logging
 
 import fitz
 from django.db import DatabaseError
@@ -16,6 +17,8 @@ from .instructional_content_classifier import (
     split_classified_blocks,
 )
 from .llm_client import extract_json_from_text, get_llm_client
+
+logger = logging.getLogger(__name__)
 
 
 class MaterialDeletedDuringGeneration(RuntimeError):
@@ -219,7 +222,7 @@ def build_fallback_learning_objects_from_text(cleaned_text: str) -> list[dict]:
         learning_objects.append(
             {
                 "order": len(learning_objects),
-                "title": _title_from_teacher_text(paragraph, f"Lesson Content {len(learning_objects) + 1}"),
+                "title": "",
                 "type": "lesson_content",
                 "content": paragraph,
                 "source": "pdf_exact_text",
@@ -295,13 +298,23 @@ def _tokenize(value: str) -> set[str]:
     }
 
 
+def _score_outline_node(node: OutlineNode, text_tokens: set[str], title: str, text: str) -> float:
+    path_tokens = _tokenize(" ".join(item.title for item in _outline_path(node)))
+    if not path_tokens:
+        return 0.0
+    overlap = len(path_tokens & text_tokens)
+    phrase_bonus = 2.0 if node.title.lower() in text.lower() or node.title.lower() in title.lower() else 0.0
+    depth_bonus = node.depth * 0.4
+    return overlap + phrase_bonus + depth_bonus
+
+
 def _choose_outline_node_with_llm(course: CourseGroup, title: str, text: str) -> OutlineNode | None:
     nodes = list(course.nodes.all().order_by("depth", "order", "id"))
     if not nodes:
         return None
 
     node_options = "\n".join(
-        f"- id={node.id}; title={node.title}; depth={node.depth}"
+        f"- id={node.id}; title={node.title}; depth={node.depth}; parent_title={node.parent.title if node.parent else 'ROOT'}"
         for node in nodes
     )
     prompt = textwrap.dedent(
@@ -325,6 +338,8 @@ def _choose_outline_node_with_llm(course: CourseGroup, title: str, text: str) ->
 
         RULES:
         - Choose the most specific matching topic or subtopic.
+        - If the material matches a subtopic, choose that subtopic even if the module also matches.
+        - Do not choose a sibling topic unless the PDF text clearly matches that sibling.
         - Return only an id that appears in COURSE TOPICS.
         - If multiple topics match, prefer the deeper/more specific topic.
         """
@@ -340,7 +355,43 @@ def _choose_outline_node_with_llm(course: CourseGroup, title: str, text: str) ->
     except (TypeError, ValueError):
         return None
 
-    return next((node for node in nodes if node.id == node_id), None)
+    chosen = next((node for node in nodes if node.id == node_id), None)
+
+    # Defensive check: ensure the LLM's chosen node shares tokens with the material
+    # If not, fall back to keyword-based matching. Also log choices for debugging.
+    try:
+        text_tokens = _tokenize(f"{title} {text}")
+        if chosen:
+            chosen_score = _score_outline_node(chosen, text_tokens, title, text)
+            best_node = None
+            best_score = 0.0
+            for node in nodes:
+                score = _score_outline_node(node, text_tokens, title, text)
+                if score > best_score or (score == best_score and best_node is not None and node.depth > best_node.depth):
+                    best_score = score
+                    best_node = node
+
+            if chosen_score <= 0 or (best_node is not None and best_score > chosen_score):
+                logger.warning(
+                    "LLM suggested node id=%s title='%s' score=%s but best keyword node id=%s title='%s' score=%s; falling back to keyword matcher.",
+                    chosen.id,
+                    chosen.title,
+                    chosen_score,
+                    best_node.id if best_node else None,
+                    best_node.title if best_node else None,
+                    best_score,
+                )
+                return _choose_outline_node_by_keywords(course, title, text)
+            logger.info(
+                "LLM suggested node id=%s title='%s' score=%s accepted",
+                chosen.id,
+                chosen.title,
+                chosen_score,
+            )
+    except Exception:
+        logger.exception("LLM classification validation error")
+
+    return chosen
 
 
 def _choose_outline_node_by_keywords(course: CourseGroup, title: str, text: str) -> OutlineNode | None:
@@ -349,16 +400,16 @@ def _choose_outline_node_by_keywords(course: CourseGroup, title: str, text: str)
     best_score = 0.0
 
     for node in course.nodes.all().order_by("depth", "order", "id"):
-        title_tokens = _tokenize(node.title)
-        if not title_tokens:
+        path_tokens = _tokenize(" ".join(item.title for item in _outline_path(node)))
+        if not path_tokens:
             continue
 
-        overlap = len(title_tokens & text_tokens)
+        overlap = len(path_tokens & text_tokens)
         phrase_bonus = 2.0 if node.title.lower() in text.lower() or node.title.lower() in title.lower() else 0.0
-        depth_bonus = node.depth * 0.2
+        depth_bonus = node.depth * 0.4
         score = overlap + phrase_bonus + depth_bonus
 
-        if score > best_score:
+        if score > best_score or (score == best_score and best_node is not None and node.depth > best_node.depth):
             best_score = score
             best_node = node
 
@@ -584,10 +635,7 @@ def describe_pdf_images(images: list[dict], lesson_title: str = "", nearby_text:
     for image in images:
         prompt = textwrap.dedent(
             f"""
-            Describe this lesson image for a blind or visually impaired elementary learner.
-
-            LESSON_TITLE:
-            {lesson_title}
+            Describe only the visible content in this image for a blind or visually impaired elementary learner.
 
             PAGE_NUMBER:
             {image["page_number"]}
@@ -595,30 +643,26 @@ def describe_pdf_images(images: list[dict], lesson_title: str = "", nearby_text:
             IMAGE_INDEX:
             {image["index"] + 1}
 
-            NEARBY_TEACHER_TEXT:
-            {nearby_text[:1200]}
-
             OUTPUT JSON ONLY:
             {{
-              "description": "Clear accessibility description",
-              "educational_purpose": "How this image supports the lesson",
+              "description": "One short sentence describing only what is visible in the image",
+              "educational_purpose": "One short phrase describing what this image shows",
               "contains_text": false,
               "visible_text": ""
             }}
 
             RULES:
-            - Use simple, age-appropriate language.
-            - Transcribe every readable word, label, caption, legend, axis label, table cell, and number inside the image into visible_text.
-            - Keep visible_text close to the image's original wording. Do not summarize visible text.
-            - If this is a chart, diagram, graph, or table image, describe the axes, labels, groups, trend, and key comparisons.
-            - Explain important objects, parts, positions, comparisons, sequence, and relationships.
-            - Explain why the image matters to the lesson.
-            - Avoid vague phrases like "as you can see".
-            - Do not rely only on colors.
-            - Do not invent details not visible in the image.
-            - If no readable text is visible, set contains_text to false and visible_text to an empty string.
+            - Use one short clear sentence (no more than ~20 words) for `description`.
+            - Describe only what is literally visible in the picture.
+            - Do not add lesson context, topic meaning, explanations, or background information.
+            - Do not mention the lesson title, module, topic, or learning objective unless those exact words appear in the image.
+            - Do not invent anything not visible in the image.
+            - Transcribe every readable word, label, caption, legend, axis label, table cell, and number inside the image into `visible_text`.
+            - Keep `visible_text` close to the image's original wording. Do not summarize visible text.
+            - If no readable text is visible, set `contains_text` to false and `visible_text` to an empty string.
             """
         ).strip()
+
         response = client.describe_image(image["image_bytes"], prompt, max_tokens=700, timeout=300)
         output = response.get("text") if isinstance(response, dict) else None
         data = extract_json_from_text(output) if output else None
@@ -632,6 +676,15 @@ def describe_pdf_images(images: list[dict], lesson_title: str = "", nearby_text:
 
         description = data.get("description", "")
         visible_text = data.get("visible_text", "")
+        # Post-process to keep descriptions concise and remove extraneous context.
+        if description:
+            sentences = re.split(r"(?<=[.!?])\s+", description.strip())
+            first = sentences[0].strip()
+            first = re.sub(r'^(?:The image shows|This image shows)\s*', "", first, flags=re.IGNORECASE)
+            words = first.split()
+            if len(words) > 30:
+                first = " ".join(words[:30]) + "..."
+            description = first
         descriptions.append(
             {
                 "page": image["page_number"],
@@ -742,7 +795,43 @@ def _normalized_heading_label(text: str) -> str:
 
 
 def _starts_excluded_section(text: str) -> bool:
-    return _is_admin_or_system_support_text(text) or _is_question_or_activity_text(text)
+    if _is_admin_or_system_support_text(text) or _is_question_or_activity_text(text):
+        return True
+
+    label = _normalized_heading_label(text)
+    excluded_section_labels = {
+        "learning objective",
+        "learning objectives",
+        "objective",
+        "objectives",
+        "essential question",
+        "essential questions",
+        "success criteria",
+        "learning goal",
+        "learning goals",
+        "lesson objective",
+        "lesson objectives",
+        "teacher notes",
+        "teacher note",
+    }
+    if label in excluded_section_labels or any(label.startswith(f"{section} ") for section in excluded_section_labels):
+        return True
+    if label.startswith("lesson ") and ":" in text:
+        return True
+    return False
+
+
+def _is_learning_objective_statement(text: str) -> bool:
+    normalized = _normalized_heading_label(text)
+    if not normalized:
+        return False
+    if re.match(r"^(describe|identify|classify|distinguish|explain|compare|contrast|summarize|outline|define|analyze|evaluate|list|illustrate|recognize|state|demonstrate|interpret|calculate|predict|observe|examine)\b", normalized):
+        return True
+    if re.match(r"^(students should|learners should|learners will|students will|learners can|students can)\b", normalized):
+        return True
+    if any(term in normalized for term in ("understand", "know", "recognize", "describe", "identify", "classify", "compare", "contrast", "define", "summarize", "outline")) and len(normalized.split()) <= 20:
+        return True
+    return False
 
 
 def _ends_excluded_section(text: str) -> bool:
@@ -751,7 +840,15 @@ def _ends_excluded_section(text: str) -> bool:
         return False
     if _is_question_or_activity_text(stripped):
         return False
-    return bool(_section_heading_title(stripped) or _looks_like_plain_subtopic_heading(stripped))
+    if _is_learning_objective_statement(stripped):
+        return False
+    if _section_heading_title(stripped) or _looks_like_plain_subtopic_heading(stripped):
+        return True
+    if len(stripped.split()) >= 8:
+        return True
+    if re.search(r"[.!?]$", stripped) and len(stripped.split()) >= 5:
+        return True
+    return False
 
 
 def _finalize_current_learning_object(current: dict | None, learning_objects: list[dict]) -> None:
@@ -781,6 +878,8 @@ def _block_is_excluded_from_learning_object(block: dict) -> bool:
     if _is_admin_or_system_support_text(text):
         return True
     if _is_question_or_activity_text(text):
+        return True
+    if _is_learning_objective_statement(text):
         return True
     return block.get("category") in {
         "learning_objective",
@@ -1089,11 +1188,11 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
         if inline_definition:
             _finalize_current_learning_object(current, learning_objects)
             current = None
-            title, content = inline_definition
+            _, content = inline_definition
             learning_objects.append(
                 {
                     "order": len(learning_objects),
-                    "title": title,
+                    "title": "",
                     "type": "lesson_content",
                     "content": content,
                     "source": "teacher_pdf",
@@ -1115,7 +1214,7 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
             _finalize_current_learning_object(current, learning_objects)
             current = {
                 "order": len(learning_objects),
-                "title": heading_title,
+                "title": "",
                 "type": "lesson_content",
                 "content": "",
                 "source": "teacher_pdf",
@@ -1142,7 +1241,7 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
             learning_objects.append(
                 {
                     "order": len(learning_objects),
-                    "title": _title_from_teacher_text(text, f"Lesson Content {len(learning_objects) + 1}"),
+                    "title": "",
                     "type": "lesson_content",
                     "content": text,
                     "source": "teacher_pdf",
@@ -1473,8 +1572,7 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
     _t0 = _time.monotonic()
 
     def _trace(step):
-        print(f"[TRACE material {material.id}] {step} (+{_time.monotonic() - _t0:.0f}s)",
-              flush=True)
+        logger.info("[TRACE material %s] %s (+%ss)", material.id, step, int(_time.monotonic() - _t0))
 
     try:
         _trace("start: extracting PDF text")
@@ -1522,7 +1620,7 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
         image_descriptions = describe_pdf_images(images, lesson_title, cleaned_preserved_text)
         _trace("building learning objects")
         sections = split_classified_blocks(classified_blocks)
-        learning_objects = build_learning_objects_from_pdf_blocks(extracted_blocks, image_descriptions)
+        learning_objects = build_section_learning_objects(classified_blocks, image_descriptions)
         fallback_used = False
         has_lesson_content = any(
             item.get("type") in {"teacher_text", "lesson_content"} and item.get("content", "").strip()

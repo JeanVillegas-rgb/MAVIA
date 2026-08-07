@@ -273,9 +273,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             module_node = outline_node
             while module_node.parent_id is not None:
                 module_node = module_node.parent
-        else:
+        elif not hasattr(course, "outline") or not course.outline.is_approved:
             return Response(
-                {"detail": "Select a module or topic before uploading lesson material."},
+                {
+                    "detail": "Select a module or topic before uploading lesson material, or confirm the course outline first for automatic classification."
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

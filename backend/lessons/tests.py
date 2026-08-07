@@ -10,12 +10,15 @@ from .services.content_generator import (
     _text_blocks_from_transcription,
     build_learning_objects_from_pdf_blocks,
     build_section_learning_objects,
+    choose_outline_node_for_material,
     refine_learning_object_titles_with_llm,
 )
 from .services.outline_parser import (
     ParsedOutlineNode,
+    _build_outline_candidates,
     _build_outline_llm_context,
     _clean_related_info,
+    _extract_pdf_table_outline_text,
     extract_outline_text,
     parse_outline_text,
 )
@@ -176,6 +179,92 @@ class OutlineParserTests(TestCase):
         self.assertEqual([child.title for child in nodes[0].children], ["Physical and Chemical Changes"])
         self.assertEqual(nodes[1].title, "Mixtures")
 
+    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
+    def test_pdf_extracted_wrapped_outline_titles_merge_correctly(self, _mock_llm):
+        text = """
+        Week 2
+        Module 1: Properties of Matter
+        * Lesson 1: Solid, Liquid and
+        Gas
+        * Lesson 2: Grouping Materials
+        Based on Properties
+        Week 3
+        Module 1: Properties of Matter
+        * Lesson 3: Physical and
+        Chemical Properties of
+        Matter: Useful and Harmful
+        Materials
+        * Lesson 4: Mixtures and
+        Their Characteristics
+        """
+
+        nodes = parse_outline_text(text)
+
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(nodes[0].title, "Properties of Matter")
+        self.assertEqual(
+            [child.title for child in nodes[0].children],
+            [
+                "Solid, Liquid and Gas",
+                "Grouping Materials Based on Properties",
+                "Physical and Chemical Properties of Matter: Useful and Harmful Materials",
+                "Mixtures and Their Characteristics",
+            ],
+        )
+
+    def test_learning_objectives_and_lesson_titles_are_excluded_from_learning_objects(self):
+        classified_blocks = [
+            {
+                "block_id": 1,
+                "page": 1,
+                "text": "Lesson 1: Solid, Liquid and Gas",
+                "line_count": 1,
+                "category": "document_metadata",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "Learning Objectives",
+                "line_count": 1,
+                "category": "document_metadata",
+                "include_in_narration": False,
+            },
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Describe how particles behave in solids, liquids, and gases.",
+                "line_count": 1,
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 4,
+                "page": 1,
+                "text": "Matter is anything that has mass and occupies space.",
+                "line_count": 2,
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 5,
+                "page": 1,
+                "text": "A solid has a definite shape, a liquid flows, and a gas expands to fill its container.",
+                "line_count": 2,
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+        ]
+
+        learning_objects = build_section_learning_objects(classified_blocks, [])
+        all_content = "\n".join(item["content"] for item in learning_objects)
+
+        self.assertNotIn("Lesson 1: Solid, Liquid and Gas", all_content)
+        self.assertNotIn("Learning Objectives", all_content)
+        self.assertNotIn("Describe how particles behave in solids, liquids, and gases.", all_content)
+        self.assertIn("Matter is anything that has mass and occupies space.", all_content)
+        self.assertIn("A solid has a definite shape, a liquid flows, and a gas expands to fill its container.", all_content)
+
     def test_llm_context_prefers_extracted_pdf_layout_block(self):
         text = """
         PDF LAYOUT TABLES
@@ -333,6 +422,118 @@ class OutlineParserTests(TestCase):
             [child.title for child in nodes[1].children[1].children],
             ["Heat", "Light"],
         )
+
+    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
+    def test_wrapped_lesson_title_merges_generic_continuations(self, _mock_llm):
+        text = """
+        Weekly Course Outline
+        Module 1: Inquiry Systems
+        Lesson 1:
+        Pattern Analysis
+        Across Environments:
+        Field Applications
+        Compare field observations with recorded data.
+        Lesson 2:
+        Evidence Mapping
+        and Interpretation
+        """
+
+        nodes = parse_outline_text(text)
+
+        self.assertEqual(nodes[0].title, "Inquiry Systems")
+        self.assertEqual(
+            [child.title for child in nodes[0].children],
+            [
+                "Pattern Analysis Across Environments: Field Applications",
+                "Evidence Mapping and Interpretation",
+            ],
+        )
+
+    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
+    def test_lesson_titles_under_same_module_remain_siblings(self, _mock_llm):
+        text = """
+        Module 1: Integrated Systems
+        Lesson 1: Structure Mapping
+        Lesson 2: Signal Pathways
+        Lesson 3: Feedback Processes
+        Lesson 4: System Maintenance
+        """
+
+        nodes = parse_outline_text(text)
+
+        self.assertEqual(nodes[0].title, "Integrated Systems")
+        self.assertEqual(
+            [child.title for child in nodes[0].children],
+            ["Structure Mapping", "Signal Pathways", "Feedback Processes", "System Maintenance"],
+        )
+        self.assertTrue(all(child.children == [] for child in nodes[0].children))
+
+    def test_llm_candidates_merge_wrapped_lesson_titles_before_prompting(self):
+        text = """
+        Module 1: Dynamic Processes
+        Lesson 1:
+        Energy Transfer
+        Across Systems:
+        Applied Investigation
+        Learning Focus
+        Analyze diagrams and observations.
+        """
+
+        candidates = _build_outline_candidates(text)
+        raw_lines = [candidate["raw"] for candidate in candidates]
+
+        self.assertIn(
+            "Lesson 1: Energy Transfer Across Systems: Applied Investigation",
+            raw_lines,
+        )
+        self.assertNotIn("Energy Transfer", raw_lines)
+        self.assertNotIn("Across Systems:", raw_lines)
+
+    def test_llm_candidates_repair_dangling_plain_titles_before_filtering(self):
+        text = """
+        Module 1: Life Processes
+        Reproduction Among
+        Living Systems
+        Reproduction in Non
+        Seed Organisms
+        Classroom Orientation (Setting of
+        Classroom Rules)
+        """
+
+        candidates = _build_outline_candidates(text)
+        raw_lines = [candidate["raw"] for candidate in candidates]
+        titles = [candidate["title"] for candidate in candidates]
+
+        self.assertIn("Reproduction Among Living Systems", raw_lines)
+        self.assertIn("Reproduction in Non Seed Organisms", raw_lines)
+        self.assertNotIn("Reproduction Among", raw_lines)
+        self.assertNotIn("Reproduction in Non", raw_lines)
+        self.assertNotIn("Classroom Orientation (Setting of Classroom Rules)", titles)
+
+    def test_table_outline_candidates_use_topic_column_when_header_exists(self):
+        class FakeTable:
+            def extract(self):
+                return [
+                    ["Week", "Topics / Content", "Learning Focus", "Activities / Output"],
+                    ["1", "Module 1: Dynamic Processes\nLesson 1:\nPattern Flow\nAnalysis", "Explain relationships.", "Concept map"],
+                    ["2", "Lesson 2:\nComparative Models", "Describe model limits.", "Small group report"],
+                ]
+
+        class FakeTables:
+            tables = [FakeTable()]
+
+        class FakePage:
+            number = 0
+
+            def find_tables(self):
+                return FakeTables()
+
+        text = _extract_pdf_table_outline_text([FakePage()])
+
+        self.assertIn("Lesson 1: Pattern Flow Analysis", text)
+        self.assertIn("Lesson 2: Comparative Models", text)
+        self.assertNotIn("\nExplain relationships.", text)
+        self.assertNotIn("\nConcept map", text)
 
     @patch("lessons.services.outline_parser._extract_teacher_module_outline")
     @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm")
@@ -585,3 +786,49 @@ class LearningObjectPreservationTests(TestCase):
         self.assertEqual(reviewed[0]["content"], learning_objects[0]["content"])
         prompt = mock_client.generate_text.call_args.args[0]
         self.assertIn("Make each learning object title understandable as a standalone card title", prompt)
+
+    @patch("lessons.services.content_generator.get_llm_client")
+    def test_choose_outline_node_for_material_prefers_deeper_topic(self, mock_get_client):
+        mock_client = mock_get_client.return_value
+        mock_client.generate_text.return_value = {"text": "invalid json"}
+
+        course = CourseGroup.objects.create(title="Science 7")
+        module = OutlineNode.objects.create(course=course, title="Matter", order=0, depth=0)
+        topic_states = OutlineNode.objects.create(course=course, parent=module, title="States of Matter", order=0, depth=1)
+        OutlineNode.objects.create(course=course, parent=module, title="Properties of Matter", order=1, depth=1)
+
+        matched = choose_outline_node_for_material(
+            course,
+            "States of Matter PDF",
+            "Solid, liquid, and gas are states of matter.",
+        )
+
+        self.assertEqual(matched, topic_states)
+
+    @patch("lessons.services.content_generator.get_llm_client")
+    def test_llm_suggests_unrelated_node_then_fallbacks_to_keyword(self, mock_get_client):
+        # Simulate LLM returning an unrelated node id (e.g., Ecosystem) even though the text
+        # clearly matches 'States of Matter'. Our classifier should validate overlap and
+        # fall back to keyword matching.
+        mock_client = mock_get_client.return_value
+        # LLM returns a JSON pointing to an unrelated node id (we'll fill id after creating nodes)
+        mock_client.generate_text.return_value = {"text": "{\"outline_node_id\": 999, \"reason\": \"spurious\"}"}
+
+        course = CourseGroup.objects.create(title="Science 7")
+        module_matter = OutlineNode.objects.create(course=course, title="Matter", order=0, depth=0)
+        topic_states = OutlineNode.objects.create(course=course, parent=module_matter, title="States of Matter", order=0, depth=1)
+        # Create an unrelated node under a different module
+        module_bio = OutlineNode.objects.create(course=course, title="Biology", order=1, depth=0)
+        ecosystem = OutlineNode.objects.create(course=course, parent=module_bio, title="Ecosystem", order=0, depth=1)
+
+        # Patch the mock to return the ecosystem id specifically
+        mock_client.generate_text.return_value = {"text": f"{{\"outline_node_id\": {ecosystem.id}, \"reason\": \"spurious\"}}"}
+
+        matched = choose_outline_node_for_material(
+            course,
+            "States of Matter PDF",
+            "Solid, liquid, and gas are states of matter.",
+        )
+
+        # Should match the 'States of Matter' topic, not the unrelated 'Ecosystem'
+        self.assertEqual(matched, topic_states)
