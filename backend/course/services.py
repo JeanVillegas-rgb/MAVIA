@@ -104,11 +104,10 @@ def _choice_texts(question):
         return ["True", "False"]
     return [str(choice) for choice in choices[:4]]
 
-
-def _material_text_for_source(source):
+def _chunks_for_source(source):
     """
-    Return concatenated text for a lesson source. Accepts either a LearningMaterial
-    instance or an OutlineNode (legacy fallback).
+    Return ordered TEXT LearningObject chunks for a lesson source. Accepts
+    either a LearningMaterial instance or an OutlineNode (legacy fallback).
     """
     if isinstance(source, LearningMaterial):
         objects = LearningObject.objects.filter(
@@ -116,18 +115,16 @@ def _material_text_for_source(source):
             kind=LearningObject.Kind.TEXT,
         ).order_by("material_id", "order", "id")
     else:
-        # source is an OutlineNode; find TEXT learning objects attached to materials
-        # that reference this outline node and are completed.
         objects = LearningObject.objects.filter(
             kind=LearningObject.Kind.TEXT,
             material__outline_node=source,
             material__status="completed",
         ).order_by("material_id", "order", "id")
 
-    lines = []
-    for obj in objects:
-        lines.append(f"{obj.title}\n{obj.content}".strip())
-    return "\n\n".join(line for line in lines if line)
+    return [
+        {"id": obj.id, "order": obj.order, "title": obj.title, "content": obj.content}
+        for obj in objects
+    ]
 
 
 def sync_course_outline(course_id):
@@ -215,16 +212,16 @@ def first_lesson_node(course_id=None):
 
     return sorted(lesson_nodes, key=ln_key)[0]
 
-
 class LessonPackageService:
     @staticmethod
     def build_package(node_id):
         node = LessonNode.objects.select_related("module", "source", "module__source", "source__outline_node").get(id=node_id)
         sync_module_questions(node)
 
-        normal_text = _material_text_for_source(node.source)
-        if not normal_text:
-            normal_text = getattr(node.source, "related_info", {}).get("description", "") or node.title
+        normal_chunks = _chunks_for_source(node.source)
+        if not normal_chunks:
+            fallback = getattr(node.source, "related_info", {}).get("description", "") or node.title
+            normal_chunks = [{"id": None, "order": 0, "title": node.title, "content": fallback}]
 
         variants = {}
         saved_variants = {
@@ -233,10 +230,16 @@ class LessonPackageService:
         }
         for key in VARIANT_KEYS:
             saved = saved_variants.get(key)
-            variants[key] = {
-                "text": saved.narration if saved else normal_text,
-                "audio_url": saved.audio_url if saved else "",
-            }
+            if saved:
+                variants[key] = {
+                    "chunks": [{"id": None, "order": 0, "title": node.title, "content": saved.narration}],
+                    "audio_url": saved.audio_url,
+                }
+            else:
+                variants[key] = {
+                    "chunks": normal_chunks,
+                    "audio_url": "",
+                }
 
         questions = {bucket: [] for bucket in BLOOM_BUCKETS}
         module_questions = node.module_questions.select_related("question").order_by("order", "id")
@@ -254,7 +257,6 @@ class LessonPackageService:
                 }
             )
 
-        # compute node_order defensively — source may not expose an 'order' attribute
         node_order = getattr(node.source, "order", None) or getattr(node, "id", None)
 
         return {
