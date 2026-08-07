@@ -7,7 +7,44 @@ import {
   VariantType,
   LessonNode,
   LessonQuestion,
+  LessonPackage,
+  CourseModuleSerialized,
 } from "../models/LessonPackage";
+import { fetchLesson } from "../services/lessonService";
+
+/**
+ * The backend only ever returns the single-node `LessonPackage` shape
+ * (see course/services.py build_package). The multi-node
+ * `CourseModuleSerialized` shape is kept for type compatibility but isn't
+ * produced by any current endpoint.
+ */
+function isLessonPackage(
+  lesson: CourseModuleSerialized | LessonPackage
+): lesson is LessonPackage {
+  return (lesson as LessonPackage).lesson_node !== undefined;
+}
+
+/**
+ * Adapts a single-node LessonPackage into the LessonNode shape the rest
+ * of the app expects (variants/questions live at the node level there).
+ */
+function normalizePackageNode(lesson: LessonPackage): LessonNode {
+  const questions: Partial<Record<BloomType, LessonQuestion[]>> = {};
+  (Object.keys(lesson.questions) as BloomType[]).forEach((bloom) => {
+    questions[bloom] = lesson.questions[bloom]?.map((q) => ({
+      id: q.id,
+      question: q.question,
+      choices: q.choices,
+    }));
+  });
+
+  return {
+    id: lesson.lesson_node.id,
+    title: lesson.lesson_node.title,
+    variants: lesson.variants,
+    questions,
+  };
+}
 
 interface LessonContextType {
   /**
@@ -33,7 +70,7 @@ interface LessonContextType {
    * Update learning state after backend submits an answer
    * Applies mastery, bloom, variant, and node changes from the response
    */
-  updateFromSubmitResponse: (response: SubmitResponseResult) => void;
+  updateFromSubmitResponse: (response: SubmitResponseResult) => Promise<void>;
 
   /**
    * Getters for current state (derived from learningState)
@@ -66,9 +103,14 @@ export function LessonProvider({ children }: LessonProviderProps) {
    */
   const getCurrentNode = useCallback((): LessonNode | undefined => {
     if (!learningState?.lesson) return undefined;
-    
-    // Find the node with matching ID in the lesson nodes array
-    return learningState.lesson.lesson_nodes.find(
+
+    const { lesson } = learningState;
+
+    if (isLessonPackage(lesson)) {
+      return normalizePackageNode(lesson);
+    }
+
+    return lesson.lesson_nodes.find(
       (node) => node.id === learningState.current_node_id
     );
   }, [learningState]);
@@ -123,8 +165,14 @@ export function LessonProvider({ children }: LessonProviderProps) {
    * This synchronizes the mobile client with the adaptive backend's state updates
    */
   const updateFromSubmitResponse = useCallback(
-    (response: SubmitResponseResult) => {
+    async (response: SubmitResponseResult) => {
       if (!learningState) return;
+
+      // The backend's lesson package only ever contains the current node's
+      // content, so advancing to a new node requires fetching its package.
+      const lesson = response.node_changed
+        ? await fetchLesson(response.next_node)
+        : learningState.lesson;
 
       // Create updated learning state with new adaptive parameters
       const updatedState: StartLearningResult = {
@@ -134,7 +182,7 @@ export function LessonProvider({ children }: LessonProviderProps) {
         mastery: response.mastery,
         current_bloom: response.next_bloom,
         current_variant: response.next_variant,
-        lesson: learningState.lesson, // Module stays the same unless we fetch new one
+        lesson,
       };
 
       setLearningState(updatedState);

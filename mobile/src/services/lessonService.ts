@@ -1,13 +1,13 @@
 import api from "./api";
 
 import {
-  CourseModule,
+  LessonPackage,
   StartLearningResult,
 } from "../models/LessonPackage";
 
 export async function fetchLesson(
   nodeId: number
-): Promise<CourseModule> {
+): Promise<LessonPackage> {
   const response = await api.get(
     `course/lesson-package/${nodeId}/`
   );

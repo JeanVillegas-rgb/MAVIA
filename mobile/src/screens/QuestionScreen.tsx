@@ -213,7 +213,7 @@ export default function QuestionScreen({ navigation }: any) {
       }
 
       // Update learning state with backend response
-      updateFromSubmitResponse(response.data);
+      await updateFromSubmitResponse(response.data);
 
       // 2. Node progression check
       if (response.data.node_changed) {
