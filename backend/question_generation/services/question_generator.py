@@ -185,6 +185,48 @@ def _validate_question(q, format_type):
     return False
 
 
+def _extract_question_objects(text):
+    """Recover individual question objects from text that isn't valid JSON
+    as a whole — e.g. the response got truncated by the token limit mid
+    object, or the model dropped a comma between two objects. Questions sit
+    nested inside {"questions": [...]}, so this records every balanced
+    {...} span at any depth (via a stack, honoring quoted strings) and
+    parses each independently — a truncated or comma-less object simply
+    fails to close or fails to parse, and is skipped without sinking the
+    objects around it."""
+    spans = []
+    stack = []
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            stack.append(i)
+        elif ch == "}":
+            if stack:
+                start = stack.pop()
+                spans.append(text[start:i + 1])
+
+    recovered = []
+    for candidate in spans:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "question" in parsed and "correct_answer" in parsed:
+            recovered.append(parsed)
+    return recovered
+
+
 def _parse_llm_response(response_text):
     """
     Extract JSON from LLM response.
@@ -202,7 +244,14 @@ def _parse_llm_response(response_text):
     if not match:
         raise ValueError(f"No JSON found in LLM response: {text[:200]}")
 
-    parsed = json.loads(match.group())
+    try:
+        parsed = json.loads(match.group())
+    except json.JSONDecodeError:
+        recovered = _extract_question_objects(match.group())
+        if not recovered:
+            raise
+        print(f"  Recovered {len(recovered)} question(s) from malformed JSON response")
+        return recovered
 
     if "questions" in parsed:
         return parsed["questions"]
@@ -223,7 +272,9 @@ def _ollama_generate(prompt):
             "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {
                 "temperature": 0.7,
-                "num_predict": 1024,
+                # generous ceiling — a batch of 5 MCQs (4 choices + explanation
+                # each) can run past 1000 tokens and get cut off mid-JSON
+                "num_predict": 2048,
             },
         },
         timeout=settings.OLLAMA_TIMEOUT,

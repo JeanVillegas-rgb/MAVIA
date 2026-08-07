@@ -94,7 +94,7 @@ class QuestionGenerationScopeTests(TestCase):
             [self.existing_second_question.id],
         )
 
-    def test_saved_question_uses_corrected_classifier_difficulty(self):
+    def test_saved_question_serves_on_classifier_difficulty_but_keeps_audit_fields(self):
         save_node_questions(
             self.first_node,
             [
@@ -114,9 +114,11 @@ class QuestionGenerationScopeTests(TestCase):
         )
 
         stored = self.first_node.generated_questions.get()
+        # serving label: always the classifier's difficulty
         self.assertEqual(stored.difficulty, "easy")
-        self.assertEqual(stored.intended_difficulty, "easy")
-        self.assertTrue(stored.difficulty_match)
+        # audit fields: untouched, so the thesis mismatch-rate data stays accurate
+        self.assertEqual(stored.intended_difficulty, "hard")
+        self.assertFalse(stored.difficulty_match)
 
     def test_saving_questions_marks_existing_audio_stale(self):
         save_node_questions(

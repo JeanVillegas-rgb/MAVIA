@@ -13,12 +13,12 @@ class LearningState(models.Model):
     tier_attempts = models.PositiveIntegerField(default=0)
     current_variant = models.CharField(
         max_length=20,
-        choices=LessonVariant.Variant.choices,
+        choices=LessonVariant.VARIANTS,
         default="NORMAL",
     )
     current_bloom = models.CharField(
         max_length=20,
-        choices=ModuleQuestion.BloomLevel.choices,
+        choices=ModuleQuestion.BLOOM_LEVELS,
         default="REMEMBER",
     )
     reward = models.FloatField(default=0.0)

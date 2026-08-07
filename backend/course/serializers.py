@@ -1,24 +1,13 @@
 from rest_framework import serializers
 
-from .models import CourseModule, LessonNode, LessonVariant, ModuleQuestion
-
-
-class LessonVariantSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LessonVariant
-        fields = "__all__"
-
-
-class ModuleQuestionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ModuleQuestion
-        fields = "__all__"
+from .models import CourseModule, LessonNode
+from .question_formatting import choice_texts
+from .services import VARIANT_KEYS, _material_text_for_source
 
 
 class LessonNodeSerializer(serializers.ModelSerializer):
-    variants = LessonVariantSerializer(many=True, read_only=True)
-    module_questions = ModuleQuestionSerializer(many=True, read_only=True)
-    title = serializers.CharField(read_only=True)
+    variants = serializers.SerializerMethodField()
+    questions = serializers.SerializerMethodField()
 
     class Meta:
         model = LessonNode
@@ -27,8 +16,7 @@ class LessonNodeSerializer(serializers.ModelSerializer):
 
 class CourseModuleSerializer(serializers.ModelSerializer):
     lesson_nodes = LessonNodeSerializer(many=True, read_only=True)
-    title = serializers.CharField(read_only=True)
 
     class Meta:
         model = CourseModule
-        fields = "__all__"
+        fields = ["id", "sequence_order", "title", "lesson_nodes"]

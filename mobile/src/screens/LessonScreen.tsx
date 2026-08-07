@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,32 +8,40 @@ import {
 } from "react-native";
 import * as Speech from "expo-speech";
 
-import { LessonContext } from "../context/LessonContext";
+import { useLessonContext } from "../context/LessonContext";
 import PrimaryButton from "../components/PrimaryButton";
 import BloomProgress from "../components/BloomProgress";
 import { colors, spacing, typography, radii } from "../theme/theme";
 
 export default function LessonScreen({ navigation }: any) {
-  const { lesson, mastery, currentVariant, currentBloom, currentNodeId } =
-    useContext(LessonContext);
+  const {
+    learningState,
+    getCurrentNode,
+    getCurrentBloom,
+    getCurrentVariant,
+    getCurrentMastery,
+  } = useLessonContext();
+
+  const currentNode = getCurrentNode();
+  const currentBloom = getCurrentBloom();
+  const currentVariant = getCurrentVariant();
+  const mastery = getCurrentMastery();
 
   const previousNodeId = useRef<number | null>(null);
   const [justAdvanced, setJustAdvanced] = useState(false);
 
-  const variant =
-    lesson?.variants?.[currentVariant] ?? lesson?.variants?.normal;
-
-  const nodeTitle = lesson?.lesson_node?.title ?? "";
+  const variant = currentNode?.variants?.[currentVariant] ?? currentNode?.variants?.normal;
+  const nodeTitle = currentNode?.title ?? "";
 
   useEffect(() => {
-    if (!lesson || !variant) return;
+    if (!currentNode || !variant) return;
 
     const advanced =
       previousNodeId.current !== null &&
-      previousNodeId.current !== currentNodeId;
+      previousNodeId.current !== currentNode.id;
 
     setJustAdvanced(advanced);
-    previousNodeId.current = currentNodeId;
+    previousNodeId.current = currentNode.id;
 
     let cancelled = false;
     Speech.stop();
@@ -62,9 +70,9 @@ export default function LessonScreen({ navigation }: any) {
       Speech.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVariant, currentBloom, currentNodeId, lesson, variant]);
+  }, [currentVariant, currentBloom, currentNode, variant]);
 
-  if (!lesson) {
+  if (!learningState || !currentNode) {
     return (
       <View style={styles.center}>
         <Text style={typography.body}>No lesson loaded.</Text>
