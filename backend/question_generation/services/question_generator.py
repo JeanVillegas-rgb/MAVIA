@@ -6,15 +6,26 @@ from django.conf import settings
 
 # ── Prompt templates ──
 # Intentionally SHORT to minimize token usage.
-# These nudge toward a cognitive level without teaching Bloom's taxonomy.
+# Keyed by thinking order, and deliberately phrased in terms of the cognitive
+# work each question demands rather than how "hard" it is. The LLM is never
+# told about Bloom's taxonomy — the classifier assigns the actual level after
+# generation, and these prompts only steer the model toward the right region.
+#
+#   LOT covers remember / understand / apply
+#   HOT covers analyze / evaluate
+#
+# There are no "strict" retry variants any more. LOT and HOT are wide enough
+# that ordinary prompt drift stays inside the intended bucket, so the pipeline
+# no longer regenerates to correct it.
 
 PROMPT_TEMPLATES = {
-    "easy": (
+    "LOT": (
         "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "The questions should be SIMPLE and DIRECT. Ask the learner to recall "
-        "a specific fact, name, or definition EXACTLY as stated in the content.\n"
-        "Do NOT create scenarios. Do NOT ask 'what would happen if'. "
-        "Just ask WHAT, WHO, WHEN, or HOW MANY.\n\n"
+        "Each question must be answerable DIRECTLY from the content. Ask the learner to "
+        "recall a stated fact, show they understand what a concept means, or use a stated "
+        "rule in a straightforward case.\n"
+        "Do NOT ask the learner to compare two things, weigh trade-offs, judge which "
+        "option is better, or justify a choice.\n\n"
         "{examples}\n\n"
         "Format: {format_type}\n\n"
         "Content:\n{content}\n\n"
@@ -22,72 +33,14 @@ PROMPT_TEMPLATES = {
         "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
         '{{"questions": [{question_schema}]}}'
     ),
-    "medium": (
+    "HOT": (
         "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "The questions should present a SCENARIO or ask the learner to COMPARE, "
-        "DIFFERENTIATE, or APPLY a concept from the content to a new situation.\n\n"
-        "{examples}\n\n"
-        "Format: {format_type}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
-    ),
-    "hard": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "The questions should ask the learner to EVALUATE, JUDGE, or JUSTIFY "
-        "which approach or concept is more appropriate and why, based on the content.\n\n"
-        "{examples}\n\n"
-        "Format: {format_type}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
-    ),
-}
-
-# ── Strict variants — used when rebalancing a short difficulty level ──
-# The normal prompts drift toward apply-level questions; these leave the
-# LLM less room to wander.
-
-STRICT_PROMPT_TEMPLATES = {
-    "easy": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "Ask ONLY for direct recall of facts stated word-for-word in the content.\n"
-        "Use question stems like \"What is...\", \"How many...\", \"Name the...\".\n"
-        "For True/False, state a single fact from the content as-is or slightly altered.\n"
-        "Do NOT create scenarios or hypotheticals. Do NOT ask \"what would happen if\". "
-        "Do NOT ask the learner to compare, apply, or judge anything.\n\n"
-        "{examples}\n\n"
-        "Format: {format_type}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
-    ),
-    "medium": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "Each question MUST present a short concrete scenario and ask the learner "
-        "to APPLY a concept from the content to predict what happens.\n"
-        "Use stems like \"What happens when...\" or \"A student does X. What will result?\".\n"
-        "Do NOT ask for simple recall of a stated fact. "
-        "Do NOT use stems like \"Which approach is more appropriate\", \"Which is best\", "
-        "or \"Which of the following would be most...\" — never ask the learner to "
-        "judge, rank, or justify.\n\n"
-        "{examples}\n\n"
-        "Format: {format_type}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
-    ),
-    "hard": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "Each question MUST ask the learner to EVALUATE, JUDGE, or JUSTIFY: "
-        "which approach or concept is more appropriate, most important, or best — and why.\n"
-        "Use stems like \"Which is more important...\", \"What is the best...\", "
-        "\"Why is X more appropriate than Y...\".\n"
-        "Do NOT ask for simple recall. Do NOT ask a plain application question.\n\n"
+        "Each question must require reasoning BEYOND recall or direct application. Ask the "
+        "learner to break an idea into parts, compare or differentiate two concepts, work "
+        "out a cause-and-effect relationship, or judge and justify which option is more "
+        "appropriate and why.\n"
+        "Do NOT ask for a fact that is stated word-for-word in the content.\n"
+        "The question must still have ONE defensible correct answer.\n\n"
         "{examples}\n\n"
         "Format: {format_type}\n\n"
         "Content:\n{content}\n\n"
@@ -100,19 +53,15 @@ STRICT_PROMPT_TEMPLATES = {
 # ── Few-shot style examples — small local models drift far less when shown
 # the target cognitive level instead of only being told about it ──
 FEW_SHOT_EXAMPLES = {
-    "easy": (
+    "LOT": (
         "Examples of the style (different topic — do NOT reuse these):\n"
         "- What is evaporation?\n"
-        "- How many planets orbit the Sun?\n"
-        "- Name the process plants use to make their own food."
+        "- Why does a puddle shrink on a sunny day?\n"
+        "- A pot of water is left boiling. Which process is turning the water into steam?"
     ),
-    "medium": (
+    "HOT": (
         "Examples of the style (different topic — do NOT reuse these):\n"
-        "- A puddle disappears after a sunny day. What process occurred?\n"
-        "- A student breathes on a cold window and it fogs up. What is forming on the glass?"
-    ),
-    "hard": (
-        "Examples of the style (different topic — do NOT reuse these):\n"
+        "- How does evaporation differ from condensation in the water cycle?\n"
         "- A farmer waters crops daily but they still die. Which explanation best "
         "justifies why too much water can harm plants?\n"
         "- Which process matters more for forming clouds: evaporation or condensation? Why?"
@@ -142,16 +91,14 @@ QUESTION_SCHEMA = {
 }
 
 
-def _build_prompt(content, difficulty, format_type, count=1, strict=False):
-    templates = STRICT_PROMPT_TEMPLATES if strict else PROMPT_TEMPLATES
-    template = templates[difficulty]
-    return template.format(
+def _build_prompt(content, thinking_order, format_type, count=1):
+    return PROMPT_TEMPLATES[thinking_order].format(
         count=count,
         content=content,
         format_type=format_type,
         format_instructions=FORMAT_INSTRUCTIONS[format_type],
         question_schema=QUESTION_SCHEMA[format_type],
-        examples=FEW_SHOT_EXAMPLES[difficulty],
+        examples=FEW_SHOT_EXAMPLES[thinking_order],
     )
 
 
@@ -283,23 +230,25 @@ def _ollama_generate(prompt):
     return response.json()["response"]
 
 
-def generate_questions(content, difficulty, format_type, count=1, max_retries=3,
-                       strict=False):
+def generate_questions(content, thinking_order, format_type, count=1, max_retries=3):
     """
     Generate questions using the local LLM.
 
+    The returned questions carry no classification — the prompt only steers
+    toward a thinking order, it does not decide one. The Bloom classifier
+    assigns the authoritative label later, in the post-generation pass.
+
     Args:
-        content:     text content to generate questions from
-        difficulty:  "easy", "medium", or "hard"
-        format_type: "MCQ" or "TF"
-        count:       number of questions to generate
-        max_retries: retry on JSON parse failures
-        strict:      use the stricter prompt variant (for rebalancing)
+        content:        text content to generate questions from
+        thinking_order: "LOT" or "HOT" — which prompt to steer with
+        format_type:    "MCQ" or "TF"
+        count:          number of questions to generate
+        max_retries:    retry on JSON parse failures
 
     Returns:
         list of question dicts
     """
-    prompt = _build_prompt(content, difficulty, format_type, count, strict=strict)
+    prompt = _build_prompt(content, thinking_order, format_type, count)
 
     for attempt in range(max_retries):
         try:
@@ -311,7 +260,6 @@ def generate_questions(content, difficulty, format_type, count=1, max_retries=3,
                 if not _validate_question(q, format_type):
                     continue
                 q["format"] = format_type
-                q["intended_difficulty"] = difficulty
                 validated.append(q)
 
             if validated:

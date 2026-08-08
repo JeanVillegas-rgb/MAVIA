@@ -1,5 +1,6 @@
 PIPELINE.md 
 CLASSIFIER_STUDY_GUIDE.md
+CLAUDE.md
 
 # Python
 *.py[cod]
@@ -12,6 +13,7 @@ __pycache__/
 staticfiles/
 media/
 db.sqlite3
+db.sqlite3.*
 
 # Bloom's classifier model weights (~500MB — shared out-of-band, not in git)
 backend/question_generation/classifier/trained_model/

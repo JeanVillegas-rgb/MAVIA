@@ -4,13 +4,26 @@ import os
 import re
 from pathlib import Path
 
-BLOOM_TO_DIFFICULTY = {
-    "remember":    "easy",
-    "understand":  "easy",
-    "apply":       "medium",
-    "analyze":     "medium",
-    "evaluate":    "hard",
-    "create":      "hard",
+# Bloom's taxonomy describes the KIND of thinking a question demands, not how
+# hard it is. Mapping it to easy/medium/hard conflated those two ideas, so the
+# system now derives the standard lower/higher-order split instead.
+#
+#   remember / understand / apply  -> LOT (lower order thinking)
+#   analyze / evaluate             -> HOT (higher order thinking)
+#   create                         -> excluded (None)
+#
+# `create` maps to None rather than being omitted: the trained model really can
+# predict it (it is one of its six classes), so it has to stay a recognised
+# level for _normalize_level. None marks it as having no assessable thinking
+# order, and the pipeline drops those questions — MAVIA only supports MCQ/TF,
+# which cannot assess a "produce something new" task.
+BLOOM_TO_THINKING_ORDER = {
+    "remember":    "LOT",
+    "understand":  "LOT",
+    "apply":       "LOT",
+    "analyze":     "HOT",
+    "evaluate":    "HOT",
+    "create":      None,
 }
 
 BLOOM_TO_CATEGORY = {
@@ -159,7 +172,7 @@ class BloomClassifier:
     def _normalize_level(self, raw_level: str) -> str:
         level = str(raw_level or "").strip().lower()
         level = BT_LABELS.get(level, level)
-        if level not in BLOOM_TO_DIFFICULTY:
+        if level not in BLOOM_TO_THINKING_ORDER:
             return "understand"
         return level
 
@@ -174,9 +187,11 @@ class BloomClassifier:
 
         bloom_level = self._normalize_level(bloom_level)
 
+        # thinking_order is None for "create" — callers must treat that as
+        # "exclude this question", not as a missing value to backfill.
         return {
             "bloom_level": bloom_level,
-            "difficulty": BLOOM_TO_DIFFICULTY[bloom_level],
+            "thinking_order": BLOOM_TO_THINKING_ORDER[bloom_level],
             "category": BLOOM_TO_CATEGORY[bloom_level],
         }
 

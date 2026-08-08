@@ -171,8 +171,11 @@ def sync_module_questions(lesson_node):
             kind=LearningObject.Kind.TEXT,
         )
 
+    # status="final" only — draft rows are mid-generation output that has not
+    # been classified or deduplicated yet, and must never reach a learner.
     questions = GeneratedQuestion.objects.filter(
         node__in=learning_objects,
+        status="final",
     ).order_by("node__order", "id")
 
     for index, question in enumerate(questions, start=1):

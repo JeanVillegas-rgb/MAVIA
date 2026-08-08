@@ -4,10 +4,20 @@ from lessons.models import LearningMaterial, LearningObject
 
 
 class GeneratedQuestion(models.Model):
-    DIFFICULTY_CHOICES = [
-        ("easy", "Easy"),
-        ("medium", "Medium"),
-        ("hard", "Hard"),
+    # Derived from the classifier's Bloom level. NOT a difficulty rating —
+    # it records whether a question demands lower- or higher-order thinking.
+    THINKING_ORDER_CHOICES = [
+        ("LOT", "Lower Order Thinking"),
+        ("HOT", "Higher Order Thinking"),
+    ]
+
+    # Questions are written straight to the DB as drafts the moment the LLM
+    # returns them, then classified, deduplicated and trimmed by a separate
+    # deterministic pass. Only "final" rows are ever served to learners or
+    # shown to teachers — every read path must filter on this.
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("final", "Final"),
     ]
 
     BLOOM_CHOICES = [
@@ -45,23 +55,27 @@ class GeneratedQuestion(models.Model):
     correct_answer = models.CharField(max_length=255)
     explanation = models.TextField(blank=True, default="")
 
-    # classification (from Bloom's classifier — the authoritative labels)
-    bloom_level = models.CharField(max_length=20, choices=BLOOM_CHOICES, db_index=True)
-    difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, db_index=True)
-    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES)
+    # Classification (from Bloom's classifier — the authoritative labels).
+    # Blank on a draft row; populated by the post-generation pass.
+    bloom_level = models.CharField(
+        max_length=20, choices=BLOOM_CHOICES, blank=True, default="", db_index=True)
+    thinking_order = models.CharField(
+        max_length=3, choices=THINKING_ORDER_CHOICES, blank=True, default="", db_index=True)
+    category = models.CharField(
+        max_length=30, choices=CATEGORY_CHOICES, blank=True, default="")
 
-    # metadata
-    intended_difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
-    difficulty_match = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=5, choices=STATUS_CHOICES, default="draft", db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
-            models.Index(fields=["node", "difficulty"]),
+            models.Index(fields=["node", "thinking_order"]),
+            models.Index(fields=["node", "status"]),
         ]
 
     def __str__(self):
-        return f"[{self.difficulty}] {self.question_text[:50]}"
+        return f"[{self.thinking_order or 'unclassified'}] {self.question_text[:50]}"
 
 
 class LearnerResponse(models.Model):

@@ -8,7 +8,32 @@ from lessons.models import CourseGroup, LearningMaterial, LearningObject
 from lessons.services.audio_generator import generate_material_audio_playlist
 
 from .models import GeneratedQuestion, GenerationRun
-from .services.pipeline import generate_questions_for_material, save_node_questions
+from .services.pipeline import (
+    finalize_node_questions,
+    generate_questions_for_material,
+)
+
+
+class _StubClassifier:
+    """Returns a canned classification per question text."""
+
+    def __init__(self, by_text, default=("understand", "LOT", "Meaning")):
+        self.by_text = by_text
+        self.default = default
+
+    def classify(self, question_text):
+        bloom, order, category = self.by_text.get(question_text, self.default)
+        return {"bloom_level": bloom, "thinking_order": order, "category": category}
+
+
+def _draft(node, question_text, question_format="TF", correct_answer="True"):
+    return GeneratedQuestion.objects.create(
+        node=node,
+        question_text=question_text,
+        question_format=question_format,
+        correct_answer=correct_answer,
+        status="draft",
+    )
 
 
 class QuestionGenerationScopeTests(TestCase):
@@ -49,27 +74,25 @@ class QuestionGenerationScopeTests(TestCase):
             question_format="TF",
             correct_answer="True",
             bloom_level="remember",
-            difficulty="easy",
+            thinking_order="LOT",
             category="Facts and Information",
-            intended_difficulty="easy",
-            difficulty_match=True,
+            status="final",
         )
 
     def test_node_scoped_generation_does_not_touch_other_nodes(self):
         generated = [
-            {
-                "node": self.first_node,
-                "question": "Generated first question?",
-                "format": "TF",
-                "correct_answer": "True",
-                "explanation": "",
-                "bloom_level": "remember",
-                "difficulty": "easy",
-                "category": "Facts and Information",
-                "intended_difficulty": "easy",
-                "difficulty_match": True,
-            }
+            GeneratedQuestion(
+                node=self.first_node,
+                question_text="Generated first question?",
+                question_format="TF",
+                correct_answer="True",
+                bloom_level="remember",
+                thinking_order="LOT",
+                category="Facts and Information",
+                status="final",
+            )
         ]
+        generated[0].save()
 
         with patch(
             "question_generation.services.pipeline._get_classifier",
@@ -94,50 +117,85 @@ class QuestionGenerationScopeTests(TestCase):
             [self.existing_second_question.id],
         )
 
-    def test_saved_question_serves_on_classifier_difficulty_but_keeps_audit_fields(self):
-        save_node_questions(
-            self.first_node,
-            [
-                {
-                    "node": self.first_node,
-                    "question": "What is matter?",
-                    "format": "TF",
-                    "correct_answer": "True",
-                    "explanation": "",
-                    "bloom_level": "remember",
-                    "difficulty": "easy",
-                    "category": "Facts and Information",
-                    "intended_difficulty": "hard",
-                    "difficulty_match": False,
-                }
-            ],
+    def test_finalize_labels_drafts_with_thinking_order_and_promotes_them(self):
+        _draft(self.first_node, "What is matter?")
+        _draft(self.first_node, "Why is ice less dense than water?")
+
+        classifier = _StubClassifier({
+            "What is matter?": ("remember", "LOT", "Facts and Information"),
+            "Why is ice less dense than water?": ("analyze", "HOT", "Skills"),
+        })
+        finalize_node_questions(self.first_node, classifier)
+
+        stored = {q.question_text: q for q in self.first_node.generated_questions.all()}
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(stored["What is matter?"].thinking_order, "LOT")
+        self.assertEqual(stored["What is matter?"].bloom_level, "remember")
+        self.assertEqual(stored["Why is ice less dense than water?"].thinking_order, "HOT")
+        self.assertEqual(stored["Why is ice less dense than water?"].bloom_level, "analyze")
+        self.assertTrue(all(q.status == "final" for q in stored.values()))
+
+    def test_finalize_excludes_create_level_drafts(self):
+        _draft(self.first_node, "Design an experiment about matter.")
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier({
+            "Design an experiment about matter.": ("create", None, "Outcome"),
+            "What is matter?": ("remember", "LOT", "Facts and Information"),
+        })
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertEqual(
+            list(self.first_node.generated_questions.values_list("question_text", flat=True)),
+            ["What is matter?"],
         )
 
-        stored = self.first_node.generated_questions.get()
-        # serving label: always the classifier's difficulty
-        self.assertEqual(stored.difficulty, "easy")
-        # audit fields: untouched, so the thesis mismatch-rate data stays accurate
-        self.assertEqual(stored.intended_difficulty, "hard")
-        self.assertFalse(stored.difficulty_match)
+    def test_finalize_removes_duplicate_drafts(self):
+        _draft(self.first_node, "What is matter?")
+        _draft(self.first_node, "what is  MATTER")
 
-    def test_saving_questions_marks_existing_audio_stale(self):
-        save_node_questions(
-            self.first_node,
-            [
-                {
-                    "node": self.first_node,
-                    "question": "What is matter?",
-                    "format": "TF",
-                    "correct_answer": "True",
-                    "explanation": "",
-                    "bloom_level": "remember",
-                    "difficulty": "easy",
-                    "category": "Facts and Information",
-                    "intended_difficulty": "easy",
-                    "difficulty_match": True,
-                }
-            ],
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertEqual(self.first_node.generated_questions.count(), 1)
+
+    def test_finalize_trims_surplus_beyond_the_target_count(self):
+        for index in range(8):
+            _draft(self.first_node, f"Recall question number {index}?")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        # QUESTION_DISTRIBUTION caps LOT at 5
+        self.assertEqual(self.first_node.generated_questions.count(), 5)
+
+    def test_finalize_replaces_the_previous_runs_questions(self):
+        old = GeneratedQuestion.objects.create(
+            node=self.first_node,
+            question_text="Question from an earlier run?",
+            question_format="TF",
+            correct_answer="True",
+            bloom_level="remember",
+            thinking_order="LOT",
+            category="Facts and Information",
+            status="final",
         )
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertFalse(GeneratedQuestion.objects.filter(id=old.id).exists())
+        self.assertEqual(
+            list(self.first_node.generated_questions.values_list("question_text", flat=True)),
+            ["What is matter?"],
+        )
+
+    def test_finalize_marks_existing_audio_stale(self):
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
 
         self.material.refresh_from_db()
         self.assertFalse(self.material.generated_json["audio_playlist_generated"])
@@ -220,10 +278,9 @@ class StartGenerationViewScopeTests(TestCase):
             question_format="TF",
             correct_answer="True",
             bloom_level="remember",
-            difficulty="easy",
+            thinking_order="LOT",
             category="Facts and Information",
-            intended_difficulty="easy",
-            difficulty_match=True,
+            status="final",
         )
 
         response = self.client.patch(
