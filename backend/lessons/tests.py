@@ -334,6 +334,52 @@ class OutlineParserTests(TestCase):
             ["Heat", "Light"],
         )
 
+    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
+    def test_module_lesson_outline_reads_bulleted_lesson_lines(self, _mock_llm):
+        text = """
+        SAMPLE COURSE OUTLINE
+        Weekly Course Outline
+        Module 1: Properties of Matter
+        • Lesson 1: Solid, Liquid and
+        Gas
+        • Lesson 2: Grouping Materials
+        Based on Properties
+        Module 2: Changes that Materials
+        Undergo
+        • Lesson 1: Changes that
+        Materials Undergo
+        • Lesson 2: Separating Mixture
+        Module 4: Ecosystem
+        Lesson 3: Interactions in estuaries
+        and Intertidal Zones
+        • Lesson 4: Interactions Among
+        living things in Coral Reefs and
+        Tropical Rainforest
+        """
+
+        nodes = parse_outline_text(text)
+
+        self.assertEqual(
+            [(node.title, [child.title for child in node.children]) for node in nodes],
+            [
+                (
+                    "Properties of Matter",
+                    ["Solid, Liquid and Gas", "Grouping Materials Based on Properties"],
+                ),
+                (
+                    "Changes that Materials Undergo",
+                    ["Changes that Materials Undergo", "Separating Mixture"],
+                ),
+                (
+                    "Ecosystem",
+                    [
+                        "Interactions in estuaries and Intertidal Zones",
+                        "Interactions Among living things in Coral Reefs and Tropical Rainforest",
+                    ],
+                ),
+            ],
+        )
+
     @patch("lessons.services.outline_parser._extract_teacher_module_outline")
     @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm")
     def test_text_outline_uses_llm_before_parser(self, mock_llm, mock_parser):

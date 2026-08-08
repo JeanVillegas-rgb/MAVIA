@@ -411,6 +411,35 @@ _OUTLINE_ITEM_START_RE = re.compile(
 
 _BULLET_LINE_RE = re.compile(r"^[•●\-\*]\s*(.+)$")
 
+# Words that only ever continue a wrapped title, never start a new one.
+_TITLE_CONTINUATION_STARTERS = {
+    "among",
+    "and",
+    "at",
+    "based",
+    "by",
+    "due",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "or",
+    "their",
+    "through",
+    "to",
+    "with",
+}
+
+# A title ending on one of these words is grammatically unfinished, so the next
+# line is a wrap of the same title rather than a new item.
+_DANGLING_TITLE_END_RE = re.compile(
+    r"\b(?:among|and|at|based|by|chemical|due|for|from|in|into|of|on|or|that|their|through|to|with)$",
+    re.IGNORECASE,
+)
+
+
 def _looks_like_title_continuation(current_title: str, candidate: str) -> bool:
     words = candidate.split()
     if not words or len(words) > 6:
@@ -422,9 +451,13 @@ def _looks_like_title_continuation(current_title: str, candidate: str) -> bool:
         return True
     if len(words) == 1 and not current_title.rstrip().endswith((".", ";", ":")):
         return True
-    return len(words) <= 3 and current_title.lower().rstrip().endswith(
-        (" and", " or", " of", " in", " to", " for", " with", " based", " due", " chemical")
-    )
+    if first_word in _TITLE_CONTINUATION_STARTERS:
+        return True
+    if len(words) <= 4 and _DANGLING_TITLE_END_RE.search(current_title.rstrip()):
+        return True
+    # Table cells wrap long lesson titles across lines, so a title that is still
+    # only a few words is almost certainly cut off mid-phrase.
+    return len(current_title.split()) <= 3 and not candidate.rstrip().endswith((".", ";"))
 
 
 def _collect_wrapped_outline_item(
@@ -676,9 +709,15 @@ def _extract_module_lesson_bullet_outline(text: str) -> list[ParsedOutlineNode]:
             index = next_index
             continue
 
-        lesson_match = re.search(r"^lesson\s+(?P<number>\d+)\s*:\s*(?P<title>.+)$", line, flags=re.IGNORECASE)
+        lesson_match = re.search(
+            r"^(?:[•●\-\*]\s*)?lesson\s+(?P<number>\d+)\s*:\s*(?P<title>.+)$",
+            line,
+            flags=re.IGNORECASE,
+        )
         if lesson_match and current_module is not None and current_module_key is not None:
-            title, next_index = _collect_module_lesson_title(lines, index, r"^lesson\s+\d+\s*:\s*")
+            title, next_index = _collect_module_lesson_title(
+                lines, index, r"^(?:[•●\-\*]\s*)?lesson\s+\d+\s*:\s*"
+            )
             if title and _is_valid_llm_topic_title(title):
                 lesson_key = title.casefold()
                 if lesson_key in lesson_keys_by_module[current_module_key]:
