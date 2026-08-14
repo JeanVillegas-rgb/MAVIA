@@ -22,6 +22,7 @@ class ParsedOutlineNode:
 
 def _normalize_line(line: str) -> str:
     line = line.strip()
+    line = re.sub(r"^(?:â€¢|â—|[•●\-\*\+])\s+", "", line)
     line = re.sub(r"^[\-\*\+•●]\s+", "", line)
     line = re.sub(r"^\d+[\.\)]\s+", "", line)
     line = re.sub(r"^#+\s*", "", line)
@@ -192,7 +193,7 @@ def _looks_like_real_outline_item(title: str, raw_line: str) -> bool:
     return has_outline_markers
 
 
-def _is_valid_llm_topic_title(title: str) -> bool:
+def _is_valid_outline_topic_title(title: str) -> bool:
     if not title:
         return False
     if _looks_like_fragment_or_non_topic(title):
@@ -225,11 +226,11 @@ def _looks_like_fragment_or_non_topic(title: str) -> bool:
     words = re.findall(r"[A-Za-z0-9]+", title)
     letters = re.findall(r"[A-Za-z]", title)
 
-    if len(title.strip()) < 4:
+    if len(title.strip()) < 3:
         return True
-    if len(letters) < 3:
+    if len(letters) < 2:
         return True
-    if len(words) == 1 and len(words[0]) <= 3:
+    if len(words) == 1 and len(words[0]) <= 2:
         return True
     if re.fullmatch(r"[A-Z]{1,4}", title.strip()):
         return True
@@ -419,7 +420,8 @@ _OUTLINE_ITEM_START_RE = re.compile(
     re.IGNORECASE,
 )
 
-_BULLET_LINE_RE = re.compile(r"^[•●\-\*]\s*(.+)$")
+_BULLET_LINE_RE = re.compile(r"^(?:â€¢|â— |\?{1,4}|[^\x00-\x7F]{1,4}|[•●\-\*\+])\s*(.+)$")
+
 
 def _title_has_dangling_end(title: str) -> bool:
     stripped = title.strip()
@@ -429,11 +431,13 @@ def _title_has_dangling_end(title: str) -> bool:
     words = re.findall(r"[A-Za-z0-9]+", stripped)
     if stripped.count("(") > stripped.count(")"):
         return True
-    if stripped.endswith(":"):
+    if stripped.endswith((":", "-", "–", ",")):
         return True
     if not words:
         return False
-    return words[-1].casefold() in {
+    if " that " in f" {lowered} " and not any(v in lowered for v in [" undergo", " cause", " work", " affect", " occur"]):
+        return True
+    connectors = {
         "and",
         "or",
         "of",
@@ -447,7 +451,33 @@ def _title_has_dangling_end(title: str) -> bool:
         "through",
         "using",
         "non",
-    } or lowered.endswith((" non-", " non"))
+        "that",
+        "due",
+        "based",
+        "the",
+        "a",
+        "an",
+        "by",
+        "from",
+        "about",
+        "into",
+        "on",
+        "at",
+        "as",
+        "their",
+        "its",
+        "which",
+        "vs",
+        "versus",
+    }
+    if words[-1].casefold() in connectors or lowered.endswith((" non-", " non")):
+        return True
+    if len(words) >= 2 and words[-2].casefold() in {"and", "or", "of", "in", "to", "for", "with", "between", "among", "vs", "versus"}:
+        return True
+    last_word = words[-1].casefold()
+    if len(last_word) >= 4 and last_word.endswith(("ive", "al", "ic", "ful", "ous", "less", "able", "ible", "ary")):
+        return True
+    return False
 
 
 def _looks_like_plain_outline_title_start(line: str) -> bool:
@@ -458,8 +488,15 @@ def _looks_like_plain_outline_title_start(line: str) -> bool:
         return False
     lowered = title.lower()
     if any(re.search(pattern, lowered) for pattern in _NOISE_PATTERNS):
-        return _title_has_dangling_end(title)
+        return False
+    structural_line = bool(_STRUCTURAL_TITLE_RE.match(line.strip()))
+    if structural_line:
+        return True
+    if _title_has_dangling_end(title):
+        return False
     words = re.findall(r"[A-Za-z0-9]+", title)
+    if len(words) == 1:
+        return False
     return bool(
         1 <= len(words) <= 8
         and title[:1].isupper()
@@ -471,10 +508,14 @@ def _looks_like_plain_outline_title_start(line: str) -> bool:
 
 def _looks_like_title_continuation(current_title: str, candidate: str) -> bool:
     words = candidate.split()
-    if not words or len(words) > 6:
+    if not words or len(words) > 10:
+        return False
+    if _is_outline_boundary_line(candidate):
+        return False
+    if _STRUCTURAL_TITLE_RE.search(candidate) or _BULLET_LINE_RE.search(candidate) or re.match(r"^(?:[•●\-\*\+]|\d+[\.)])\s*", candidate):
         return False
     first_word = words[0].strip(",:;()").casefold()
-    if first_word in _NON_TITLE_VERBS:
+    if first_word in _NON_TITLE_VERBS and not _title_has_dangling_end(current_title):
         return False
     if candidate[:1].islower():
         return True
@@ -484,19 +525,14 @@ def _looks_like_title_continuation(current_title: str, candidate: str) -> bool:
     if (
         current_title
         and not current_title.rstrip().endswith((".", ";", ":", "?", "!", "-", "–"))
-        and len(current_title.split()) <= 10
-        and 2 <= len(words) <= 6
+        and len(current_title.split()) <= 12
+        and 1 <= len(words) <= 10
         and candidate[0].isupper()
-        and not _is_outline_boundary_line(candidate)
         and not _NON_TOPIC_START_RE.search(candidate.lower())
-        and not _STRUCTURAL_TITLE_RE.search(candidate)
-        and not _BULLET_LINE_RE.search(candidate)
     ):
         return True
 
-    return len(words) <= 3 and current_title.lower().rstrip().endswith(
-        (" and", " or", " of", " in", " to", " for", " with", " based", " due")
-    )
+    return True
 
 
 def _looks_like_wrapped_title_continuation(current_title: str, candidate: str) -> bool:
@@ -511,34 +547,46 @@ def _looks_like_wrapped_title_continuation(current_title: str, candidate: str) -
         return False
     if any(re.search(pattern, lowered) for pattern in _NOISE_PATTERNS):
         return False
-    if _STRUCTURAL_TITLE_RE.search(candidate) or _BULLET_LINE_RE.search(candidate):
+    if _STRUCTURAL_TITLE_RE.search(candidate) or _BULLET_LINE_RE.search(candidate) or re.match(r"^(?:[•●\-\*\+]|\d+[\.)])\s*", candidate):
         return False
     if lowered.startswith(("learning focus", "activities", "activity", "output", "remarks", "assessment")):
         return False
-    first_word = words[0].casefold()
-    if first_word in _NON_TITLE_VERBS:
-        return False
     if _NON_TOPIC_START_RE.search(lowered):
         return False
-    if candidate.endswith((".", ";", "?")):
+    if candidate.endswith((".", ";", "?")) and not _title_has_dangling_end(current_title):
         return False
+    if _looks_like_schedule_or_admin_label(candidate):
+        return False
+
+    first_word = words[0].casefold()
+    if first_word in _NON_TITLE_VERBS and not _title_has_dangling_end(current_title):
+        return False
+
     if not current_title:
         return True
-    if current_title.rstrip().endswith(":"):
+    if current_title.rstrip().endswith((".", ";", "?", "!")):
+        return False
+
+    if candidate[:1].islower():
         return True
-    if candidate.endswith(":"):
-        return True
-    if _looks_like_title_continuation(current_title, candidate):
-        return True
+
     if _title_has_dangling_end(current_title):
-        return bool(
-            1 <= len(words) <= 10
-            and not _looks_like_schedule_or_admin_label(candidate)
-            and not _NON_TOPIC_START_RE.search(lowered)
-        )
-    if len(words) == 1:
         return True
-    return False
+
+    is_module_title = bool(re.search(r"^(?:module|unit|chapter)\b", current_title, flags=re.IGNORECASE))
+    if is_module_title:
+        title_part = re.sub(r"^(?:module|unit|chapter)\s*\d*(?:\.\d+)*\s*[:\-–]?\s*", "", current_title, flags=re.IGNORECASE).strip()
+        title_words = re.findall(r"[A-Za-z0-9]+", title_part)
+        return len(title_words) <= 1
+
+    is_lesson_title = bool(re.search(r"^(?:lesson|section|topic)\b", current_title, flags=re.IGNORECASE))
+    if is_lesson_title:
+        title_part = re.sub(r"^(?:lesson|section|topic)\s*\d*(?:\.\d+)*\s*[:\-–]?\s*", "", current_title, flags=re.IGNORECASE).strip()
+        title_words = re.findall(r"[A-Za-z0-9]+", title_part)
+        return len(title_words) <= 2
+
+    current_words = re.findall(r"[A-Za-z0-9]+", current_title)
+    return len(current_words) <= 2
 
 
 def _merge_wrapped_outline_candidate_lines(lines: list[str]) -> list[str]:
@@ -553,7 +601,8 @@ def _merge_wrapped_outline_candidate_lines(lines: list[str]) -> list[str]:
         structural = _STRUCTURAL_TITLE_RE.match(line)
         bullet = _BULLET_LINE_RE.match(line)
         plain_start = _looks_like_plain_outline_title_start(line)
-        if not structural and not bullet and not plain_start:
+        dangling_start = _title_has_dangling_end(line)
+        if not structural and not bullet and not plain_start and not dangling_start:
             merged.append(line)
             index += 1
             continue
@@ -576,7 +625,15 @@ def _merge_wrapped_outline_candidate_lines(lines: list[str]) -> list[str]:
         next_index = index + 1
         while next_index < len(lines):
             candidate = re.sub(r"\s+", " ", lines[next_index]).strip()
-            current_title = " ".join(parts).strip()
+            current_title = f"{prefix}: {' '.join(parts)}".strip() if structural else " ".join(parts).strip()
+
+            if (
+                not structural
+                and _looks_like_plain_outline_title_start(candidate)
+                and not _title_has_dangling_end(current_title)
+            ):
+                break
+
             if not _looks_like_wrapped_title_continuation(current_title, candidate):
                 break
             parts.append(_normalize_line(candidate).strip())
@@ -727,7 +784,7 @@ def _extract_teacher_module_outline(text: str) -> list[ParsedOutlineNode]:
 
         if next_line_is_week_topic and not _BULLET_LINE_RE.search(line):
             title = _strip_grade_suffix(_clean_topic_title(line))
-            if _is_valid_llm_topic_title(title):
+            if _is_valid_outline_topic_title(title):
                 key = f"title:{title.casefold()}"
                 current_module = module_by_key.get(key)
                 if current_module is None:
@@ -752,7 +809,7 @@ def _extract_teacher_module_outline(text: str) -> list[ParsedOutlineNode]:
                 r"^(?:[•●\-\*]\s*)?(?:lesson\s+\d+\s*[:\-–]\s*)?",
             )
             title = _strip_grade_suffix(_clean_topic_title(collected))
-            if title and _is_valid_llm_topic_title(title):
+            if title and _is_valid_outline_topic_title(title):
                 topic_key = title.casefold()
                 if topic_key not in topic_keys_by_module[current_module_key]:
                     current_module.children.append(
@@ -811,7 +868,7 @@ def _extract_module_lesson_bullet_outline(text: str) -> list[ParsedOutlineNode]:
     if not re.search(r"\blesson\s+\d+\s*:", text, flags=re.IGNORECASE):
         return []
 
-    raw_context = _build_outline_llm_context(text, limit=12000) if "PDF LAYOUT TABLES" in text else text
+    raw_context = _build_outline_context(text, limit=12000) if "PDF LAYOUT TABLES" in text else text
     # Preprocess to split combined "Module ... • Lesson ..." lines so module and lesson
     # parts are parsed independently. This helps when PDF extraction places module and
     # lesson text on the same physical line separated by a bullet.
@@ -837,7 +894,7 @@ def _extract_module_lesson_bullet_outline(text: str) -> list[ParsedOutlineNode]:
         module_match = re.search(r"^(?:[•●\-\*]\s*)?module\s+(?P<number>\d+)\s*:\s*(?P<title>.+)$", line, flags=re.IGNORECASE)
         if module_match:
             title, next_index = _collect_module_lesson_title(lines, index, r"^(?:[•●\-\*]\s*)?module\s+\d+\s*:\s*")
-            if title and _is_valid_llm_topic_title(title):
+            if title and _is_valid_outline_topic_title(title):
                 current_module_key = f"{module_match.group('number')}:{title.casefold()}"
                 current_module = module_by_key.get(current_module_key)
                 if current_module is None:
@@ -852,7 +909,7 @@ def _extract_module_lesson_bullet_outline(text: str) -> list[ParsedOutlineNode]:
         lesson_match = re.search(r"^(?:[•●\-\*]\s*)?lesson\s+(?P<number>\d+)\s*:\s*(?P<title>.+)$", line, flags=re.IGNORECASE)
         if lesson_match and current_module is not None and current_module_key is not None:
             title, next_index = _collect_module_lesson_title(lines, index, r"^(?:[•●\-\*]\s*)?lesson\s+\d+\s*:\s*")
-            if title and _is_valid_llm_topic_title(title):
+            if title and _is_valid_outline_topic_title(title):
                 lesson_key = title.casefold()
                 if lesson_key in lesson_keys_by_module[current_module_key]:
                     current_lesson = next(
@@ -871,10 +928,15 @@ def _extract_module_lesson_bullet_outline(text: str) -> list[ParsedOutlineNode]:
             index = next_index
             continue
 
+        numbered_match = re.search(
+            r"^(?:[•●\-\*]\s*)?(?P<number>\d+(?:\.\d+)*)[\.)]?\s+(?P<title>.+)$",
+            line,
+        )
         bullet_match = _BULLET_LINE_RE.search(line)
+
         if bullet_match and current_lesson is not None:
             title = _clean_topic_title(bullet_match.group(1))
-            if title and _is_valid_llm_topic_title(title):
+            if title and _is_valid_outline_topic_title(title):
                 bullet_key = title.casefold()
                 seen_bullets = bullet_keys_by_lesson.setdefault(id(current_lesson), set())
                 if bullet_key not in seen_bullets:
@@ -889,10 +951,141 @@ def _extract_module_lesson_bullet_outline(text: str) -> list[ParsedOutlineNode]:
             index += 1
             continue
 
+        if current_module is not None and current_module_key is not None and (numbered_match or bullet_match):
+            title_text = None
+            if numbered_match:
+                title_text = numbered_match.group("title")
+            elif bullet_match:
+                title_text = bullet_match.group(1)
+            if title_text:
+                title = _clean_topic_title(title_text)
+                if title and _is_valid_outline_topic_title(title):
+                    topic_key = title.casefold()
+                    if topic_key not in lesson_keys_by_module.get(current_module_key, set()):
+                        current_lesson = None
+                        if current_lesson is None and not any(child.title.casefold() == topic_key for child in current_module.children):
+                            current_module.children.append(
+                                ParsedOutlineNode(
+                                    title=title,
+                                    depth=1,
+                                    order=len(current_module.children),
+                                )
+                            )
+                            lesson_keys_by_module[current_module_key].add(topic_key)
+                index += 1
+                continue
+
         index += 1
 
     modules_with_lessons = [module for module in modules if module.children]
     return _normalize_outline_tree(modules_with_lessons) if modules_with_lessons else []
+
+
+def _extract_generic_module_topic_outline(text: str) -> list[ParsedOutlineNode]:
+    if not re.search(r"\bmodule\s+\d+\s*[:\-–]", text, flags=re.IGNORECASE):
+        return []
+
+    raw_context = _build_outline_context(text, limit=12000) if "PDF LAYOUT TABLES" in text else text
+    lines = _merge_wrapped_outline_candidate_lines(
+        [re.sub(r"\s+", " ", line).strip() for line in raw_context.splitlines()]
+    )
+
+    modules: list[ParsedOutlineNode] = []
+    module_by_key: dict[str, ParsedOutlineNode] = {}
+    topic_keys_by_module: dict[str, set[str]] = {}
+    current_module: ParsedOutlineNode | None = None
+    current_module_key: str | None = None
+    index = 0
+
+    while index < len(lines):
+        line = lines[index].strip()
+        if not line or _is_table_chrome_line(line):
+            index += 1
+            continue
+
+        module_match = re.search(
+            r"^(?:[•●\-\*]\s*)?module\s+(?P<number>\d+(?:\.\d+)*)\s*[:\-–]?\s*(?P<title>.+)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if module_match:
+            title, next_index = _collect_wrapped_title(lines, index)
+            title = _strip_grade_suffix(_clean_topic_title(title))
+            if title and _is_valid_outline_topic_title(title):
+                number = module_match.group("number")
+                current_module_key = f"module:{number or title.casefold()}"
+                current_module = module_by_key.get(current_module_key)
+                if current_module is None:
+                    current_module = ParsedOutlineNode(title=title, depth=0, order=len(modules))
+                    modules.append(current_module)
+                    module_by_key[current_module_key] = current_module
+                    topic_keys_by_module[current_module_key] = set()
+                elif title.casefold() != current_module.title.casefold():
+                    topic_key = title.casefold()
+                    if topic_key not in topic_keys_by_module[current_module_key]:
+                        current_module.children.append(
+                            ParsedOutlineNode(
+                                title=title,
+                                depth=1,
+                                order=len(current_module.children),
+                            )
+                        )
+                        topic_keys_by_module[current_module_key].add(topic_key)
+            index = next_index
+            continue
+
+        if current_module is not None and current_module_key is not None:
+            numbered_match = re.search(
+                r"^(?:[•●\-\*]\s*)?(?P<number>\d+(?:\.\d+)*)[\.)]?\s+(?P<title>.+)$",
+                line,
+            )
+            if numbered_match:
+                title, next_index = _collect_wrapped_outline_item(
+                    lines,
+                    index,
+                    r"^(?:[•●\-\*]\s*)?(?:\d+(?:\.\d+)*)[\.)]?\s*",
+                )
+                title = _strip_grade_suffix(_clean_topic_title(title))
+                if title and _is_valid_outline_topic_title(title):
+                    topic_key = title.casefold()
+                    if topic_key not in topic_keys_by_module[current_module_key]:
+                        current_module.children.append(
+                            ParsedOutlineNode(
+                                title=title,
+                                depth=1,
+                                order=len(current_module.children),
+                            )
+                        )
+                        topic_keys_by_module[current_module_key].add(topic_key)
+                index = next_index
+                continue
+
+            bullet_match = _BULLET_LINE_RE.search(line)
+            if bullet_match:
+                title, next_index = _collect_wrapped_outline_item(
+                    lines,
+                    index,
+                    r"^(?:[•●\-\*]\s*)",
+                )
+                title = _strip_grade_suffix(_clean_topic_title(title))
+                if title and _is_valid_outline_topic_title(title):
+                    topic_key = title.casefold()
+                    if topic_key not in topic_keys_by_module[current_module_key]:
+                        current_module.children.append(
+                            ParsedOutlineNode(
+                                title=title,
+                                depth=1,
+                                order=len(current_module.children),
+                            )
+                        )
+                        topic_keys_by_module[current_module_key].add(topic_key)
+                index = next_index
+                continue
+
+        index += 1
+
+    modules_with_children = [module for module in modules if module.children]
+    return _normalize_outline_tree(modules_with_children) if modules_with_children else []
 
 
 _NUMBERED_CONTENT_RE = re.compile(r"^(?P<number>\d+(?:\.\d+)*)\.?\s+(?P<title>.+)$")
@@ -930,7 +1123,7 @@ def _extract_numbered_content_column_outline(text: str) -> list[ParsedOutlineNod
 
         if pending_number:
             title = _clean_topic_title(line)
-            if not _is_valid_llm_topic_title(title):
+            if not _is_valid_outline_topic_title(title):
                 pending_number = None
                 current_number = None
                 continue
@@ -950,7 +1143,7 @@ def _extract_numbered_content_column_outline(text: str) -> list[ParsedOutlineNod
         if match:
             number = match.group("number")
             title = _clean_topic_title(match.group("title"))
-            if not _is_valid_llm_topic_title(title):
+            if not _is_valid_outline_topic_title(title):
                 current_number = None
                 pending_number = None
                 continue
@@ -976,7 +1169,7 @@ def _extract_numbered_content_column_outline(text: str) -> list[ParsedOutlineNod
             continue
 
         title = _clean_topic_title(line)
-        if not title or not _is_valid_llm_topic_title(title):
+        if not title or not _is_valid_outline_topic_title(title):
             current_number = None
             pending_number = None
             continue
@@ -1018,93 +1211,6 @@ def _add_numbered_content_node(
         node.order = len(roots)
         roots.append(node)
     return node
-
-
-def _filter_outline_nodes_with_llm(
-    nodes: list[ParsedOutlineNode],
-    source_text: str,
-) -> list[ParsedOutlineNode]:
-    if not nodes:
-        return nodes
-
-    try:
-        from .llm_client import extract_json_from_text, get_llm_client
-        import textwrap
-    except Exception:
-        return nodes
-
-    candidates = _flatten_outline_nodes(nodes)
-    if not candidates:
-        return nodes
-
-    candidate_lines = "\n".join(
-        f"{index}. {node.title}"
-        for index, node in enumerate(candidates, start=1)
-    )
-    excerpt = _build_outline_llm_context(source_text, limit=6000)
-
-    prompt = textwrap.dedent(
-        f"""
-        You are validating extracted course outline nodes.
-
-        Decide whether each candidate is a real subject-matter lesson topic/subtopic or not.
-
-        A REAL TOPIC teaches academic content, concepts, skills, or lesson sections.
-        NOT A TOPIC includes schedules, weeks, dates, classroom routines, introductions,
-        announcements, assessments, quizzes, assignments, grading notes, teacher/admin notes,
-        page labels, or other syllabus metadata.
-
-        Return JSON only:
-        {{
-          "items": [
-            {{"title": "Candidate title", "is_topic": true, "reason": "short reason"}}
-          ]
-        }}
-
-        CANDIDATES:
-        {candidate_lines}
-
-        OUTLINE_CONTEXT:
-        {excerpt}
-        """
-    )
-
-    response = get_llm_client().generate_text(prompt, max_tokens=1200, timeout=240)
-    if not response:
-        return nodes
-
-    output = response.get("text") if isinstance(response, dict) else None
-    data = extract_json_from_text(output) if output else response
-    items = data.get("items") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        return nodes
-
-    accepted_titles = set()
-    classified_any = False
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        title = _clean_topic_title(str(item.get("title") or ""))
-        if not title:
-            continue
-        classified_any = True
-        if item.get("is_topic") is True:
-            accepted_titles.add(title.casefold())
-
-    if not classified_any:
-        return nodes
-
-    def prune(items_to_prune: list[ParsedOutlineNode]) -> list[ParsedOutlineNode]:
-        kept = []
-        for node in items_to_prune:
-            node.children = prune(node.children)
-            if node.title.casefold() in accepted_titles:
-                kept.append(node)
-            else:
-                kept.extend(node.children)
-        return kept
-
-    return _normalize_outline_tree(prune(nodes))
 
 
 def _clean_table_cell(value) -> str:
@@ -1274,35 +1380,12 @@ def _render_pdf_pages_as_images(document: fitz.Document, max_pages: int | None =
 
 
 def _transcribe_image_only_outline_pdf(document: fitz.Document) -> str:
-    from .llm_client import extract_json_from_text, get_llm_client
-
-    client = get_llm_client()
+    """Deterministic fallback: use embedded PDF text only. There is no LLM OCR step."""
     pages = []
-    for page in _render_pdf_pages_as_images(document):
-        prompt = f"""
-        Transcribe this teacher-provided course outline PDF page.
-
-        PAGE:
-        {page["page_number"]}
-
-        OUTPUT JSON ONLY:
-        {{
-          "page": {page["page_number"]},
-          "text": "All visible outline text from the page"
-        }}
-
-        RULES:
-        - Copy all visible teacher text as accurately as possible.
-        - Preserve headings, bullets, numbering, indentation, table cells, row labels, and reading order.
-        - Do not summarize, simplify, classify, or add new topics.
-        - If the page has no readable text, return an empty text string.
-        """.strip()
-        response = client.describe_image(page["image_bytes"], prompt, max_tokens=1800, timeout=300)
-        output = response.get("text") if isinstance(response, dict) else None
-        data = extract_json_from_text(output) if output else None
-        text = data.get("text") if isinstance(data, dict) else output
-        if text and str(text).strip():
-            pages.append(f"Page {page['page_number']}\n{str(text).strip()}")
+    for page_index, page in enumerate(document, start=1):
+        text = page.get_text("text").strip()
+        if text:
+            pages.append(f"Page {page_index}\n{text.strip()}")
     return "\n\n".join(pages).strip()
 
 
@@ -1331,7 +1414,7 @@ def extract_outline_text(file_path: str, extension: str) -> str:
         document.close()
 
 
-def _build_outline_llm_context(text: str, limit: int = 8000) -> str:
+def _build_outline_context(text: str, limit: int = 8000) -> str:
     table_match = re.search(
         r"(?:TEACHER OUTLINE TOPICS COLUMN|PDF LAYOUT TABLES)\s*(.*?)(?:\n\s*RAW PDF TEXT\s*\n|\Z)",
         text,
@@ -1396,7 +1479,7 @@ def _looks_like_outline_candidate_line(line: str) -> bool:
 
 
 def _build_outline_candidates(text: str, limit: int = 120) -> list[dict]:
-    context = _build_outline_llm_context(text, limit=12000)
+    context = _build_outline_context(text, limit=12000)
     candidates = []
     seen = set()
     for raw_line in _merge_wrapped_outline_candidate_lines(context.splitlines()):
@@ -1404,7 +1487,7 @@ def _build_outline_candidates(text: str, limit: int = 120) -> list[dict]:
         if not _looks_like_outline_candidate_line(line):
             continue
         title = _clean_topic_title(_normalize_line(line))
-        if not _is_valid_llm_topic_title(title):
+        if not _is_valid_outline_topic_title(title):
             continue
         key = title.casefold()
         if key in seen:
@@ -1422,248 +1505,18 @@ def _build_outline_candidates(text: str, limit: int = 120) -> list[dict]:
     return candidates
 
 
-def _extract_outline_nodes_with_llm(text: str) -> list[ParsedOutlineNode] | None:
-    try:
-        from .llm_client import extract_json_from_text, get_llm_client
-        import textwrap
-    except Exception:
-        return None
-
-    # First, try LLM-first extraction over the full PDF context (table blocks + raw text).
-    # The LLM should return a strict JSON hierarchy with titles and a short source_snippet.
-    raw_context = _build_outline_llm_context(text, limit=14000)
-    llm_prompt = textwrap.dedent(
-        f"""
-        Extract the explicit lesson/module hierarchy from the provided document context.
-
-        REQUIREMENTS:
-        - Return strictly valid JSON using the schema below.
-        - For each node include: `title` (exact title), `level` (0=module/top,1=topic,2=subtopic), `order` (integer), and `source_snippet` (short verbatim substring from the document that supports the title).
-        - Do NOT invent titles. If a title cannot be supported by a source_snippet, omit it.
-        - Do not include schedules, weeks, learning focus, activities, assessments, or classroom/admin chrome.
-        - Keep titles as they appear in the source (do not paraphrase).
-
-        OUTPUT_SCHEMA (JSON ONLY):
-        {{
-          "nodes": [
-            {{"title": "Module 1: Properties of Matter", "level": 0, "order": 1, "source_snippet": "Module 1: Properties of Matter"}}
-          ]
-        }}
-
-        DOCUMENT_CONTEXT:
-        {raw_context}
-        """
-    )
-
-    outline_timeout = int(os.getenv("OLLAMA_OUTLINE_TIMEOUT", "180"))
-    try:
-        resp = get_llm_client().generate_text(llm_prompt, max_tokens=1200, timeout=outline_timeout)
-    except Exception:
-        resp = None
-
-    data = None
-    text_out = None
-    if isinstance(resp, dict):
-        text_out = resp.get("text") or resp.get("output")
-        data = extract_json_from_text(text_out) if isinstance(text_out, str) else None
-
-    nodes: list[ParsedOutlineNode] = []
-    seen_titles = set()
-
-    if data and isinstance(data, dict) and isinstance(data.get("nodes"), list):
-        for idx, item in enumerate(data.get("nodes", []), start=1):
-            title = (item.get("title") or "").strip()
-            if not title:
-                continue
-            # verify source snippet or raw evidence
-            snippet = (item.get("source_snippet") or "").strip()
-            has_evidence = False
-            if snippet and snippet and re.search(re.escape(snippet), text, flags=re.IGNORECASE):
-                has_evidence = True
-            elif _has_source_evidence(title, text):
-                has_evidence = True
-
-            if not has_evidence:
-                # skip hallucinated or unverifiable titles
-                continue
-            if title.lower() in {"table of contents", "contents", "outline"}:
-                continue
-            if not _is_valid_llm_topic_title(title):
-                continue
-            dedupe_key = title.casefold()
-            if dedupe_key in seen_titles:
-                continue
-            seen_titles.add(dedupe_key)
-            level = int(item.get("level") or 0)
-            order = int(item.get("order") or idx)
-            nodes.append(ParsedOutlineNode(title=title, depth=max(level, 0), order=order))
-
-    # If LLM-first returned verifiable nodes, use them. Otherwise fall back to candidate-based approach.
-    # Optional debug logging: save prompts/responses for inspection when OUTLINE_DEBUG is enabled.
-    try:
-        if os.getenv("OUTLINE_DEBUG", "False").lower() in ("1", "true", "yes"):
-            import json, datetime
-
-            dbg_dir = Path(__file__).resolve().parent.parent / "outline_debugs"
-            dbg_dir.mkdir(exist_ok=True)
-            ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-            dbg_file = dbg_dir / f"outline_debug_{ts}.json"
-            dbg = {
-                "prompt": llm_prompt,
-                "response_text": text_out,
-                "parsed_json": data,
-                "verifiable_nodes_count": len(nodes),
-            }
-            try:
-                dbg_file.write_text(json.dumps(dbg, ensure_ascii=False, indent=2))
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    if nodes:
-        return nodes
-
-    # FALLBACK: previous candidate-based flow (preserve existing behavior)
-    candidates = _build_outline_candidates(text)
-    if not candidates:
-        return None
-
-    candidate_lines = "\n".join(f'{item["id"]}. {item["raw"]}' for item in candidates)
-    candidate_by_id = {item["id"]: item for item in candidates}
-
-    prompt = textwrap.dedent(
-        f"""
-        You are identifying the explicit topic/subtopic hierarchy from a PDF course outline or syllabus.
-
-        IMPORTANT RULES:
-        - You are given CANDIDATE_LINES copied from the PDF.
-        - You may choose only from those candidate line IDs.
-        - Do not write, invent, summarize, translate, or paraphrase topic titles.
-        - The backend will use the exact candidate title for each selected id.
-        - Extract ONLY topics, subtopics, modules, units, chapters, lesson titles, or lesson section headings.
-        - Do not extract learning objectives, competencies, learning focus, activities, outputs, assessments, dates, schedules, classroom tasks, directions, descriptions, examples, references, page labels, row labels, notes, or admin text as nodes.
-        - Do not add related_info. Leave related_info as an empty object.
-        - The teacher's written outline structure is authoritative.
-        - Preserve parent-child relationships only when the PDF explicitly shows them through module/lesson labels, numbering, indentation, bullets, or table grouping.
-        - Do not create a parent-child relationship just because two topics are semantically related.
-        - If two lesson topics appear under the same module/section, return them as siblings with the same level.
-        - If hierarchy is uncertain, keep the item at the same level as nearby lesson topics instead of nesting it under another topic.
-        - Ignore repeated headers, footers, page numbers, author names, school names, and titles that are not lesson items.
-        - Return only actual subject-matter topics, subtopics, modules, or lesson section headings.
-        - Do not return schedule labels such as Week 1, Week 2, Day 1, meeting numbers, or date ranges.
-        - Do not return classroom/admin activities such as self-introduction, course syllabus, expectations, class discussion, group discussion, quizzes, assignments, assessments, or performance tasks.
-        - Reject titles that primarily describe classroom management, setup, tests, tasks, outputs, grading, or orientation rather than subject content.
-        - When the source document is a table, extract topic titles only from topic/content/subtopic/lesson columns. Ignore week, schedule, learning focus, objectives, competencies, activities, outputs, assessment, remarks, and materials columns.
-        - If a line says "Module 1: Topic Title", return "Topic Title" as the title.
-        - If the same topic appears across multiple weeks, return it only once.
-        - Reject random OCR fragments, isolated letters, single-character bullets, table artifacts, and broken words.
-        - Use the whole document context to decide what is a real topic or subtopic.
-        - Lesson titles are siblings unless indentation, numbering, bullets, or table grouping explicitly show that one lesson is under another lesson.
-        - Preserve hierarchy using the level field. Level 0 is top-level module/section, level 1 is a direct child lesson/topic of the previous level 0 item, level 2 is used only when the PDF explicitly shows a subtopic under that level 1 item.
-        - If the outline is flat, use level 0 for all real lesson items.
-
-        OUTPUT SCHEMA (JSON ONLY):
-        {{
-          "nodes": [
-            {{
-              "source_id": 1,
-              "level": 0,
-              "order": 1,
-              "related_info": {{}}
-            }}
-          ]
-        }}
-
-        CANDIDATE_LINES:
-        {candidate_lines}
-        """
-    )
-
-    outline_timeout = int(os.getenv("OLLAMA_OUTLINE_TIMEOUT", "180"))
-    resp = get_llm_client().generate_text(prompt, max_tokens=900, timeout=outline_timeout)
-    if not resp:
-        return None
-
-    text_out = None
-    if isinstance(resp, dict):
-        text_out = resp.get("text") or resp.get("output")
-
-    data = extract_json_from_text(text_out) if isinstance(text_out, str) else None
-    if data is None and isinstance(resp, dict):
-        data = resp if isinstance(resp, dict) else None
-
-    if not data:
-        return None
-
-    nodes = []
-    seen_titles = set()
-    for index, item in enumerate(data.get("nodes", []), start=1):
-        source_id = item.get("source_id")
-        try:
-            source_id = int(source_id)
-        except (TypeError, ValueError):
-            source_id = None
-        candidate = candidate_by_id.get(source_id)
-        if not candidate:
-            continue
-
-        title = candidate["title"]
-        if not _is_valid_llm_topic_title(title):
-            continue
-        if title.lower() in {"table of contents", "contents", "outline"}:
-            continue
-        dedupe_key = title.casefold()
-        if dedupe_key in seen_titles:
-            continue
-        seen_titles.add(dedupe_key)
-        level = int(item.get("level") or 0)
-        order = int(item.get("order") or index)
-        nodes.append(
-            ParsedOutlineNode(
-                title=title,
-                depth=max(level, 0),
-                order=order,
-                related_info={},
-            )
-        )
-
-    return nodes or None
-
-
-def _hierarchy_from_flat_nodes(nodes: list[ParsedOutlineNode]) -> list[ParsedOutlineNode]:
-    roots: list[ParsedOutlineNode] = []
-    stack: list[ParsedOutlineNode] = []
-
-    for node in nodes:
-        while stack and stack[-1].depth >= node.depth:
-            stack.pop()
-        if stack:
-            stack[-1].children.append(node)
-        else:
-            roots.append(node)
-        stack.append(node)
-
-    return roots
-
-
 def parse_outline_text(text: str) -> list[ParsedOutlineNode]:
-    validate_with_llm = os.getenv("OLLAMA_VALIDATE_OUTLINE", "False").lower() in ("1", "true", "yes")
     module_lesson_nodes = _extract_module_lesson_bullet_outline(text)
     if module_lesson_nodes:
         return module_lesson_nodes
 
+    generic_module_nodes = _extract_generic_module_topic_outline(text)
+    if generic_module_nodes:
+        return generic_module_nodes
+
     numbered_content_nodes = _extract_numbered_content_column_outline(text)
     if numbered_content_nodes:
         return numbered_content_nodes
-
-    try:
-        llm_nodes = _extract_outline_nodes_with_llm(text)
-    except Exception:
-        llm_nodes = None
-    if llm_nodes:
-        roots = _hierarchy_from_flat_nodes(llm_nodes)
-        return _normalize_outline_tree(_dedupe_outline_nodes(roots))
 
     structured_nodes = _extract_teacher_module_outline(text) or _extract_module_lesson_outline(text)
     if structured_nodes:
@@ -1680,11 +1533,9 @@ def parse_outline_text(text: str) -> list[ParsedOutlineNode]:
                 continue
             if _looks_like_real_outline_item(title, line):
                 fallback.append(ParsedOutlineNode(title=title, depth=0, order=index))
-        filtered = _filter_outline_nodes_with_llm(fallback, text) if validate_with_llm else fallback
-        return _flatten_accidental_chain(_normalize_outline_tree(_dedupe_outline_nodes(filtered)))[:50]
+        return _flatten_accidental_chain(_normalize_outline_tree(_dedupe_outline_nodes(fallback)))[:50]
 
-    filtered = _filter_outline_nodes_with_llm(nodes, text) if validate_with_llm else nodes
-    return _flatten_accidental_chain(_normalize_outline_tree(_dedupe_outline_nodes(filtered)))
+    return _flatten_accidental_chain(_normalize_outline_tree(_dedupe_outline_nodes(nodes)))
 
 
 def _persist_nodes(

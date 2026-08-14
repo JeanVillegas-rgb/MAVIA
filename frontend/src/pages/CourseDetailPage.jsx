@@ -12,6 +12,26 @@ import {
   uploadLearningMaterial,
 } from "../api";
 
+function formatMatchedMaterialLocation(material) {
+  const path = material?.outline_node_path || [];
+  if (path.length > 1) {
+    return `Lesson PDF uploaded and classified to \nTopic: ${path[0].title}. \nSubtopic: ${path
+      .slice(1)
+      .map((node) => node.title)
+      .join(" > ")}.`;
+  }
+
+  if (path.length === 1) {
+    return `Lesson PDF uploaded and classified to \nTopic: ${path[0].title}.`;
+  }
+
+  if (material?.module_node_title) {
+    return `Lesson PDF uploaded. Topic: ${material.module_node_title}. \nNo matching subtopic was found.`;
+  }
+
+  return "Lesson PDF uploaded, but its topic placement could not be determined.";
+}
+
 export default function CourseDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -115,30 +135,17 @@ export default function CourseDetailPage() {
     setError("");
     setUploadMessage("");
     try {
+      const existingMaterialIds = new Set((course?.materials || []).map((material) => material.id));
       const formData = new FormData();
       formData.append("pdf_file", file);
       formData.append("title", file.name.replace(/\.pdf$/i, ""));
       const updatedCourse = await uploadLearningMaterial(id, formData);
       setCourse(updatedCourse);
 
-      const matchingMaterials = (updatedCourse.materials || [])
-        .filter((material) => material.filename === file.name)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      const uploadedMaterial = matchingMaterials[0];
-      const topicLabel = uploadedMaterial?.outline_node_title
-        ? `topic '${uploadedMaterial.outline_node_title}'`
-        : uploadedMaterial?.module_node_title
-        ? `module '${uploadedMaterial.module_node_title}'`
-        : null;
-      const classifiedBy = uploadedMaterial?.outline_node_title || uploadedMaterial?.module_node_title
-        ? 'LLM classification'
-        : 'automatic classification';
-
-      setUploadMessage(
-        topicLabel
-          ? `Lesson PDF uploaded and classified by the LLM to ${topicLabel}.`
-          : `Lesson PDF uploaded and will be classified by the LLM to the best matching topic automatically.`
+      const uploadedMaterial = (updatedCourse.materials || []).find(
+        (material) => !existingMaterialIds.has(material.id)
       );
+      setUploadMessage(formatMatchedMaterialLocation(uploadedMaterial));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -228,8 +235,8 @@ export default function CourseDetailPage() {
         <section className="card" style={{ marginBottom: "1.25rem" }}>
           <h3>Course outline extraction</h3>
           <p className="muted-text">
-            Upload a PDF course outline. The LLM extracts a draft hierarchy. Review it, then
-            confirm it before it appears as ready in Your courses.
+            Upload a PDF course outline. Mavia extracts a draft hierarchy. Review it, then
+            confirm it before lesson PDFs are mapped to the approved topics.
           </p>
           <div className="action-row">
             <label className="btn btn-primary">
@@ -264,7 +271,7 @@ export default function CourseDetailPage() {
         <section className="card" style={{ marginBottom: "1.25rem" }}>
           <h3>Upload lesson PDF</h3>
           <p className="muted-text">
-            Upload a lesson PDF and the LLM will classify it to the most suitable topic or subtopic automatically.
+            Upload a lesson PDF and TF-IDF cosine similarity will match it to the most suitable topic or subtopic.
           </p>
           <div className="action-row">
             <label className="btn btn-primary">
@@ -278,7 +285,7 @@ export default function CourseDetailPage() {
               />
             </label>
           </div>
-          {uploadMessage && <div className="success-banner">{uploadMessage}</div>}
+          {uploadMessage && <div className="success-banner lesson-placement-banner">{uploadMessage}</div>}
         </section>
       )}
 

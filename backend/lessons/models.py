@@ -120,9 +120,11 @@ class LearningObject(models.Model):
         related_name="learning_objects",
         on_delete=models.CASCADE,
     )
-    kind = models.CharField(max_length=20, choices=Kind.choices)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.TEXT)
+    section_title = models.CharField(max_length=255, blank=True)
     title = models.CharField(max_length=255)
     content = models.TextField()
+    image_url = models.CharField(max_length=500, blank=True)
     image_prompt = models.TextField(blank=True)
     order = models.PositiveIntegerField(default=0)
 
@@ -131,25 +133,4 @@ class LearningObject(models.Model):
 
     def __str__(self):
         return self.title
-
-
-class Question(models.Model):
-    material = models.ForeignKey(
-        LearningMaterial,
-        related_name="questions",
-        on_delete=models.CASCADE,
-    )
-    question_type = models.CharField(max_length=50, default="multiple_choice")
-    prompt = models.TextField()
-    choices = models.JSONField(default=list, blank=True)
-    answer = models.TextField()
-    explanation = models.TextField(blank=True)
-    difficulty = models.CharField(max_length=50, blank=True)
-    order = models.PositiveIntegerField(default=0)
-
-    class Meta:
-        ordering = ["order", "id"]
-
-    def __str__(self):
-        return self.prompt[:80]
 

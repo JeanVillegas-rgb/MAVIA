@@ -18,8 +18,8 @@ export default function HomePage() {
         <div className="hero-copy card">
           <h2>Course outline to lesson hierarchy</h2>
           <p>
-            Teachers create a course, upload a course outline, and Mavia uses the LLM to extract
-            the topic hierarchy automatically.
+            Teachers create a course, upload a course outline, and Mavia extracts the topic
+            hierarchy for review before lesson PDFs are mapped to the right topics.
           </p>
         </div>
         <div className="card">

@@ -5,11 +5,4 @@ PyMuPDF>=1.24
 python-dotenv>=1.0
 requests>=2.31
 edge-tts>=7.0
-sentence-transformers>=3.0
-
-# question_generation: Bloom's classifier
-# (RoBERTa runs on torch+transformers, already pulled in by sentence-transformers;
-#  the rest is the SVM fallback used when the RoBERTa weights are missing)
-joblib>=1.3
 scikit-learn>=1.4
-nltk>=3.8

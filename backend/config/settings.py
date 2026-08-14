@@ -30,9 +30,6 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "lessons",
-    "question_generation",
-    "course",
-    "adaptive",
 ]
 
 MIDDLEWARE = [
@@ -69,8 +66,6 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
-        # question generation writes trace events from a background thread
-        # while the frontend polls — wait out transient SQLite locks
         "OPTIONS": {"timeout": 20},
     }
 }
@@ -116,17 +111,6 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.FormParser",
     ],
 }
-
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
-OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", OLLAMA_MODEL)
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
-OLLAMA_VISION_TIMEOUT = int(os.getenv("OLLAMA_VISION_TIMEOUT", str(OLLAMA_TIMEOUT)))
-OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
-
-# Model for question generation (separate from the content generation model)
-QUESTION_LLM_MODEL = os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
 
 # Quiet the dev server's per-request access log (e.g. the frontend's
 # generation-trace polling floods it at 200 OK / INFO). 4xx/5xx still show
