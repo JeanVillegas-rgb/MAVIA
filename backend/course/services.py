@@ -3,19 +3,18 @@ from django.db import transaction
 from lessons.models import CourseGroup, LearningObject, OutlineNode, LearningMaterial
 from question_generation.models import GeneratedQuestion
 
-from .models import CourseModule, LessonNode, ModuleQuestion
-from .question_formatting import answer_label, choice_texts
+from .models import CourseModule, LessonNode, LessonVariant, ModuleQuestion, normal_variant_for
 
 
-BLOOM_BUCKETS = ("remember", "understand", "analyze")
 VARIANT_KEYS = ("normal", "elaborated", "simplified")
 
 
+def _material_outline_order(material):
+    outline_node = getattr(material, "outline_node", None)
+    return outline_node.order if outline_node is not None else None
+
+
 def _module_descendants(module_node):
-    """
-    Return the CourseModule instance for the given top-level OutlineNode (module_node),
-    or None if it doesn't exist.
-    """
     try:
         return CourseModule.objects.get(source=module_node)
     except CourseModule.DoesNotExist:
@@ -27,7 +26,6 @@ def _lesson_sources_for_module(module_node):
     if not module:
         return []
 
-    # Prefer LearningMaterial objects that reference this module via module_node
     materials = list(
         LearningMaterial.objects.filter(module_node=module_node, status="completed").order_by("created_at", "id")
     )
@@ -35,9 +33,6 @@ def _lesson_sources_for_module(module_node):
     if materials:
         return materials
 
-    # Fallback: if no materials directly reference the module, try to find materials
-    # attached to outline nodes under the module's outline node, or use the outline node
-    # itself as the single lesson source.
     descendants = list(module_node.children.order_by("order", "id"))
     nodes = []
     while descendants:
@@ -45,7 +40,6 @@ def _lesson_sources_for_module(module_node):
         nodes.append(node)
         descendants[0:0] = list(node.children.order_by("order", "id"))
 
-    # Find materials attached to those outline nodes (completed only) and return them
     if nodes:
         materials = list(
             LearningMaterial.objects.filter(module_node__isnull=True, outline_node__in=nodes, status="completed").order_by("created_at", "id")
@@ -53,62 +47,14 @@ def _lesson_sources_for_module(module_node):
         if materials:
             return materials
 
-    # As a final fallback return the module's outline node so the old behaviour still works
     return [module_node]
-
-
-def _bloom_bucket(level):
-    """Collapse GeneratedQuestion's six Bloom levels into three UI buckets.
-
-    remember -> remember, understand -> understand, everything else
-    (apply/analyze/evaluate/create) -> analyze. This is a deliberate
-    many-to-one simplification for the three-tier UI, not a bug.
-    """
-    level = (level or "").lower()
-    if level == "remember":
-        return "remember"
-    if level == "understand":
-        return "understand"
-    return "analyze"
-
-
-def _answer_label(question):
-    answer = (question.correct_answer or "").strip()
-    if answer.upper() in {"A", "B", "C", "D"}:
-        return answer.upper()
-
-    choices = question.choices or []
-    if question.question_format == "TF":
-        if answer.lower() == "true":
-            return "A"
-        if answer.lower() == "false":
-            return "B"
-
-    if isinstance(choices, dict):
-        for label in ("A", "B", "C", "D"):
-            if str(choices.get(label, "")).strip().lower() == answer.lower():
-                return label
-        return answer
-
-    for index, choice in enumerate(choices[:4]):
-        if str(choice).strip().lower() == answer.lower():
-            return "ABCD"[index]
-    return answer
-
-
-def _choice_texts(question):
-    choices = question.choices or []
-    if isinstance(choices, dict):
-        return [str(choices.get(label, "")) for label in ("A", "B", "C", "D") if choices.get(label)]
-    if question.question_format == "TF" and not choices:
-        return ["True", "False"]
-    return [str(choice) for choice in choices[:4]]
 
 
 def _material_text_for_source(source):
     """
-    Return concatenated text for a lesson source. Accepts either a LearningMaterial
-    instance or an OutlineNode (legacy fallback).
+    Fallback concatenated text for a lesson source, used only when a chunk
+    has no NORMAL narration yet (her audio/narration pipeline hasn't run).
+    Accepts either a LearningMaterial instance or an OutlineNode (legacy).
     """
     if isinstance(source, LearningMaterial):
         objects = LearningObject.objects.filter(
@@ -116,8 +62,6 @@ def _material_text_for_source(source):
             kind=LearningObject.Kind.TEXT,
         ).order_by("material_id", "order", "id")
     else:
-        # source is an OutlineNode; find TEXT learning objects attached to materials
-        # that reference this outline node and are completed.
         objects = LearningObject.objects.filter(
             kind=LearningObject.Kind.TEXT,
             material__outline_node=source,
@@ -140,29 +84,20 @@ def sync_course_outline(course_id):
             module.is_active = True
             module.save(update_fields=["is_active"])
 
-            # Discover lesson sources for this module and ensure LessonNode exists for each
             for source in _lesson_sources_for_module(root):
-                # If the source is a LearningMaterial, create/get LessonNode using that material
                 if isinstance(source, LearningMaterial):
                     LessonNode.objects.get_or_create(module=module, source=source)
                 else:
-                    # source is likely an OutlineNode; try to find a completed LearningMaterial
-                    # attached to this outline node and use that as the LessonNode.source.
                     material = LearningMaterial.objects.filter(outline_node=source, status="completed").order_by("created_at", "id").first()
                     if material:
                         LessonNode.objects.get_or_create(module=module, source=material)
                     else:
-                        # No suitable LearningMaterial found — skip creating a LessonNode for this outline node
                         continue
 
     return CourseModule.objects.filter(source__course=course, is_active=True)
 
 
 def sync_module_questions(lesson_node):
-    """
-    Sync ModuleQuestion entries for a LessonNode. Handles the case where lesson_node.source
-    is either a LearningMaterial or an OutlineNode (legacy).
-    """
     if isinstance(lesson_node.source, LearningMaterial):
         learning_objects = LearningObject.objects.filter(
             material=lesson_node.source,
@@ -182,80 +117,176 @@ def sync_module_questions(lesson_node):
         ModuleQuestion.objects.update_or_create(
             lesson_node=lesson_node,
             question=question,
-            defaults={
-                "bloom_level": _bloom_bucket(question.bloom_level).upper(),
-                "order": index,
-            },
+            defaults={"order": index},
         )
 
 
-def first_lesson_node(course_id=None):
-    if course_id is None:
-        course = CourseGroup.objects.filter(outline__is_approved=True).order_by("id").first()
-        if course is None:
-            return None
-        course_id = course.id
+def _resolve_course_id(course_id):
+    if course_id is not None:
+        return course_id
+    course = CourseGroup.objects.filter(outline__is_approved=True).order_by("id").first()
+    return course.id if course is not None else None
 
-    # Ensure CourseModule/LessonNode records reflect the latest outline/materials
+
+def _node_order_value(lesson_node):
+    order = _material_outline_order(lesson_node.source)
+    return order if order is not None else lesson_node.id
+
+
+def _node_order_key(lesson_node):
+    order = _material_outline_order(lesson_node.source)
+    if order is None:
+        return (1, 0, lesson_node.pk)
+    return (0, order, lesson_node.pk)
+
+
+def _sorted_lesson_nodes(lesson_nodes):
+    return sorted(lesson_nodes, key=_node_order_key)
+
+
+def first_lesson_node(course_id=None):
+    course_id = _resolve_course_id(course_id)
+    if course_id is None:
+        return None
+
     sync_course_outline(course_id)
 
-    # Pick the first active module for the course ordered by its outline order
     module = CourseModule.objects.filter(source__course_id=course_id, is_active=True).select_related("source").order_by("source__order", "source__id").first()
     if not module:
         return None
 
-    # Find the first lesson node for this module, preferring a source.order if present
     lesson_nodes = list(LessonNode.objects.filter(module=module).select_related("source"))
     if not lesson_nodes:
         return None
 
-    def ln_key(ln):
-        src = getattr(ln, "source", None)
-        return (getattr(src, "order", None) if src is not None else None, ln.pk)
+    return _sorted_lesson_nodes(lesson_nodes)[0]
 
-    return sorted(lesson_nodes, key=ln_key)[0]
+
+def list_modules_with_lessons(course_id=None):
+    course_id = _resolve_course_id(course_id)
+    if course_id is None:
+        return []
+
+    sync_course_outline(course_id)
+
+    modules = (
+        CourseModule.objects.filter(source__course_id=course_id, is_active=True)
+        .select_related("source")
+        .order_by("source__order", "source__id")
+    )
+
+    result = []
+    for module in modules:
+        lesson_nodes = list(
+            LessonNode.objects.filter(module=module).select_related("source", "source__outline_node")
+        )
+        result.append({
+            "id": module.id,
+            "title": module.title,
+            "sequence_order": module.sequence_order,
+            "lesson_nodes": [
+                {"id": ln.id, "title": ln.title, "node_order": _node_order_value(ln)}
+                for ln in _sorted_lesson_nodes(lesson_nodes)
+            ],
+        })
+    return result
+
+
+def _choice_objects(question):
+    """MCQ -> [{"key": "a", "label": "..."}, ...] keyed a/b/c/d to match the
+    mobile app's QuestionChoice type. TF -> None (mobile renders True/False
+    itself)."""
+    if question.question_format == "TF":
+        return None
+
+    choices = question.choices or []
+    if isinstance(choices, dict):
+        texts = [str(choices.get(label, "")) for label in ("A", "B", "C", "D") if choices.get(label)]
+    else:
+        texts = [str(c) for c in choices[:4]]
+
+    keys = ["a", "b", "c", "d"]
+    return [{"key": keys[i], "label": text} for i, text in enumerate(texts) if text]
+
+
+def _correct_answer_key(question):
+    answer = (question.correct_answer or "").strip()
+
+    if question.question_format == "TF":
+        if answer.lower() in {"true", "false"}:
+            return answer.lower()
+        if answer.upper() == "A":
+            return "true"
+        if answer.upper() == "B":
+            return "false"
+        return answer.lower()
+
+    if answer.upper() in {"A", "B", "C", "D"}:
+        return answer.lower()
+
+    choices = question.choices or []
+    if isinstance(choices, dict):
+        for label in ("A", "B", "C", "D"):
+            if str(choices.get(label, "")).strip().lower() == answer.lower():
+                return label.lower()
+        return answer
+
+    for index, choice in enumerate(choices[:4]):
+        if str(choice).strip().lower() == answer.lower():
+            return "abcd"[index]
+    return answer
+
+
+def _build_chunk(learning_object):
+    variants = {}
+
+    normal = normal_variant_for(learning_object)
+    if normal:
+        variants["normal"] = {"text": normal["narration"], "audio_url": normal["audio_url"]}
+    else:
+        variants["normal"] = {"text": learning_object.content, "audio_url": ""}
+
+    for row in learning_object.variants.all(): 
+        variants[row.variant.lower()] = {"text": row.narration, "audio_url": row.audio_url}
+
+    return {
+        "id": learning_object.id,
+        "order": learning_object.order,
+        "title": learning_object.title,
+        "variants": variants,
+    }
+
+
+def _build_question(module_question):
+    question = module_question.question
+    return {
+        "id": question.id,
+        "chunk_id": question.node_id,
+        "order": module_question.order,
+        "format": question.question_format,
+        "bloom_level": question.bloom_level,
+        "difficulty": question.difficulty,
+        "question_text": question.question_text,
+        "choices": _choice_objects(question),
+        "correct_answer": _correct_answer_key(question),
+        "explanation": question.explanation,
+    }
 
 
 class LessonPackageService:
     @staticmethod
     def build_package(node_id):
-        node = LessonNode.objects.select_related("module", "source", "module__source", "source__outline_node").get(id=node_id)
+        node = LessonNode.objects.select_related(
+            "module", "source", "module__source", "source__outline_node"
+        ).prefetch_related("source__learning_objects__variants").get(id=node_id)
+
         sync_module_questions(node)
 
-        normal_text = _material_text_for_source(node.source)
-        if not normal_text:
-            normal_text = getattr(node.source, "related_info", {}).get("description", "") or node.title
+        learning_objects = list(node.learning_objects.order_by("order", "id"))
+        chunks = [_build_chunk(lo) for lo in learning_objects]
 
-        variants = {}
-        saved_variants = {
-            item.variant.lower(): item
-            for item in node.variants.all()
-        }
-        for key in VARIANT_KEYS:
-            saved = saved_variants.get(key)
-            variants[key] = {
-                "text": saved.narration if saved else normal_text,
-                "audio_url": saved.audio_url if saved else "",
-            }
-
-        questions = {bucket: [] for bucket in BLOOM_BUCKETS}
         module_questions = node.module_questions.select_related("question").order_by("order", "id")
-        for module_question in module_questions:
-            question = module_question.question
-            bucket = module_question.bloom_level.lower()
-            questions.setdefault(bucket, []).append(
-                {
-                    "id": question.id,
-                    "order": module_question.order,
-                    "bloom_level": bucket,
-                    "question": question.question_text,
-                    "choices": choice_texts(question),
-                    "correct_answer": answer_label(question),
-                }
-            )
-
-        # compute node_order defensively — source may not expose an 'order' attribute
-        node_order = getattr(node.source, "order", None) or getattr(node, "id", None)
+        questions = [_build_question(mq) for mq in module_questions]
 
         return {
             "module": {
@@ -266,8 +297,8 @@ class LessonPackageService:
             "lesson_node": {
                 "id": node.id,
                 "title": node.title,
-                "node_order": node_order,
+                "node_order": _node_order_value(node),
             },
-            "variants": variants,
+            "chunks": chunks,
             "questions": questions,
         }

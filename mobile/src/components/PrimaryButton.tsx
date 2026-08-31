@@ -1,69 +1,50 @@
 import React from "react";
-import {
-  Pressable,
-  Text,
-  StyleSheet,
-  ActivityIndicator,
-  View,
-  GestureResponderEvent,
-} from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { colors, fonts, radii, spacing } from "@/theme";
 
-import { colors, radii, spacing, typography, MIN_TOUCH_TARGET } from "../theme/theme";
-
-type Variant = "primary" | "secondary" | "outline";
-
-interface PrimaryButtonProps {
+type Props = {
   label: string;
-  onPress: (e: GestureResponderEvent) => void;
-  variant?: Variant;
+  onPress: () => void;
   disabled?: boolean;
   loading?: boolean;
-  accessibilityHint?: string;
-  selected?: boolean; // for use as a radio-style choice button
-}
+  icon?: keyof typeof Ionicons.glyphMap;
+  variant?: "solid" | "outline";
+};
 
 export default function PrimaryButton({
   label,
   onPress,
-  variant = "primary",
-  disabled = false,
-  loading = false,
-  accessibilityHint,
-  selected,
-}: PrimaryButtonProps) {
-  const isChoice = selected !== undefined;
-
+  disabled,
+  loading,
+  icon,
+  variant = "solid",
+}: Props) {
+  const isOutline = variant === "outline";
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      accessibilityRole={isChoice ? "radio" : "button"}
-      accessibilityState={{ disabled: disabled || loading, selected }}
-      accessibilityHint={accessibilityHint}
-      hitSlop={8}
       style={({ pressed }) => [
         styles.base,
-        variant === "primary" && styles.primary,
-        variant === "secondary" && styles.secondary,
-        variant === "outline" && styles.outline,
-        selected && styles.selected,
-        pressed && styles.pressed,
+        isOutline ? styles.outline : styles.solid,
         (disabled || loading) && styles.disabled,
+        pressed && !disabled && styles.pressed,
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === "outline" ? colors.primary : "#fff"} />
+        <ActivityIndicator color={isOutline ? colors.maroon900 : colors.white} />
       ) : (
         <View style={styles.row}>
-          {selected && <View style={styles.selectedDot} />}
-          <Text
-            style={[
-              typography.button,
-              variant === "outline" ? styles.textOutline : styles.textOnFill,
-            ]}
-          >
-            {label}
-          </Text>
+          <Text style={[styles.label, isOutline && styles.labelOutline]}>{label}</Text>
+          {icon && (
+            <Ionicons
+              name={icon}
+              size={18}
+              color={isOutline ? colors.maroon900 : colors.white}
+              style={{ marginLeft: spacing.sm }}
+            />
+          )}
         </View>
       )}
     </Pressable>
@@ -72,50 +53,36 @@ export default function PrimaryButton({
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: MIN_TOUCH_TARGET,
-    borderRadius: radii.md,
+    paddingVertical: 14,
     paddingHorizontal: spacing.lg,
-    justifyContent: "center",
+    borderRadius: radii.pill,
     alignItems: "center",
-    marginBottom: spacing.sm,
+    justifyContent: "center",
+  },
+  solid: {
+    backgroundColor: colors.maroon900,
+  },
+  outline: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: colors.maroon900,
+  },
+  disabled: {
+    opacity: 0.45,
+  },
+  pressed: {
+    opacity: 0.85,
   },
   row: {
     flexDirection: "row",
     alignItems: "center",
   },
-  primary: {
-    backgroundColor: colors.primary,
+  label: {
+    color: colors.white,
+    fontFamily: fonts.bodyBold,
+    fontSize: 15,
   },
-  secondary: {
-    backgroundColor: colors.accent,
-  },
-  outline: {
-    backgroundColor: colors.surface,
-    borderWidth: 2,
-    borderColor: colors.border,
-  },
-  selected: {
-    borderWidth: 2,
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryMuted,
-  },
-  pressed: {
-    opacity: 0.85,
-  },
-  disabled: {
-    opacity: 0.5,
-  },
-  textOnFill: {
-    color: "#FFFFFF",
-  },
-  textOutline: {
-    color: colors.primary,
-  },
-  selectedDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.primary,
-    marginRight: spacing.sm,
+  labelOutline: {
+    color: colors.maroon900,
   },
 });

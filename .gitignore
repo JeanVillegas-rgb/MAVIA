@@ -19,6 +19,7 @@ backend/question_generation/classifier/trained_model/
 # Virtual environment
 .venv/
 venv/
+mavia/
 
 # Node
 node_modules/

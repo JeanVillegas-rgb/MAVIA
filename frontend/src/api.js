@@ -1,9 +1,15 @@
 const API_BASE = "/api";
 
 async function request(path, options = {}) {
+  const token = localStorage.getItem("authToken");
+  const headers = new Headers(options.headers || {});
+  if (token) {
+    headers.set("Authorization", `Token ${token}`);
+  }
+
   let response;
   try {
-    response = await fetch(`${API_BASE}${path}`, options);
+    response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   } catch (error) {
     throw new Error(
       "API server unreachable. Start the Django backend at http://127.0.0.1:8000, then refresh this page."
@@ -32,6 +38,30 @@ async function request(path, options = {}) {
     return null;
   }
   return response.json();
+}
+
+export function login(username, password) {
+  return request("/auth/login/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function register(data) {
+  return request("/auth/register/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export function logout() {
+  return request("/auth/logout/", { method: "POST" });
+}
+
+export function fetchMe() {
+  return request("/auth/me/");
 }
 
 export function fetchCourses() {

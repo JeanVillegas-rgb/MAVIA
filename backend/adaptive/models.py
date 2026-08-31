@@ -1,10 +1,17 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from course.models import CourseModule, LessonNode, LessonVariant, ModuleQuestion
+from course.models import CourseModule, LessonNode
+from question_generation.models import GeneratedQuestion
 
 
 class LearningState(models.Model):
+    VARIANT_LEVELS = [
+        ("NORMAL", "Normal"),
+        ("ELABORATED", "Elaborated"),
+        ("SIMPLIFIED", "Simplified"),
+    ]
+
     learner_id = models.CharField(max_length=80, default="default", db_index=True)
     current_module = models.ForeignKey(CourseModule, on_delete=models.CASCADE)
     current_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE)
@@ -13,13 +20,24 @@ class LearningState(models.Model):
     tier_attempts = models.PositiveIntegerField(default=0)
     current_variant = models.CharField(
         max_length=20,
-        choices=LessonVariant.VARIANTS,
+        choices=VARIANT_LEVELS,
         default="NORMAL",
     )
     current_bloom = models.CharField(
         max_length=20,
-        choices=ModuleQuestion.BLOOM_LEVELS,
-        default="REMEMBER",
+        choices=GeneratedQuestion.BLOOM_CHOICES,
+        default="remember",
+    )
+    # Authoritative pointer to the exact question the learner should answer
+    # next. current_bloom mirrors current_question.bloom_level for quick
+    # reads/back-compat; current_question is what serving and validation
+    # actually key off of.
+    current_question = models.ForeignKey(
+        GeneratedQuestion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
     )
     reward = models.FloatField(default=0.0)
     completed = models.BooleanField(default=False)

@@ -1,7 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from lessons.models import LearningMaterial, OutlineNode
+from lessons.models import LearningMaterial, LearningObject, OutlineNode
 from question_generation.models import GeneratedQuestion
 
 
@@ -9,7 +9,7 @@ class CourseModule(models.Model):
     source = models.OneToOneField(
         OutlineNode,
         on_delete=models.CASCADE,
-        related_name="adaptive_module",
+        related_name="course_package_module",
         limit_choices_to={"parent__isnull": True},
         null=True,
         blank=True,
@@ -32,6 +32,9 @@ class CourseModule(models.Model):
 
 
 class LessonNode(models.Model):
+    """Wraps a LearningMaterial (a full lesson). Teaching + questioning both
+    step through this lesson's LearningObjects (chunks) in order."""
+
     module = models.ForeignKey(
         CourseModule,
         on_delete=models.CASCADE,
@@ -40,7 +43,7 @@ class LessonNode(models.Model):
     source = models.OneToOneField(
         LearningMaterial,
         on_delete=models.CASCADE,
-        related_name="adaptive_lesson_node",
+        related_name="course_package_lesson_node",
     )
 
     class Meta:
@@ -59,29 +62,71 @@ class LessonNode(models.Model):
 
 
 class LessonVariant(models.Model):
-    VARIANTS = [("NORMAL", "Normal"), ("ELABORATED", "Elaborated"), ("SIMPLIFIED", "Simplified")]
+    VARIANTS = [("ELABORATED", "Elaborated"), ("SIMPLIFIED", "Simplified")]
 
-    lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="variants")
+    learning_object = models.ForeignKey(
+        LearningObject,
+        on_delete=models.CASCADE,
+        related_name="variants",
+    )
     variant = models.CharField(max_length=20, choices=VARIANTS)
     narration = models.TextField()
     audio_url = models.CharField(max_length=255, blank=True)
 
     class Meta:
-        unique_together = ("lesson_node", "variant")
-        ordering = ["lesson_node_id", "variant"]
+        unique_together = ("learning_object", "variant")
+        ordering = ["learning_object_id", "variant"]
+
+    @property
+    def lesson_node(self):
+        return self.learning_object.material.course_package_lesson_node
+
+    def clean(self):
+        if not hasattr(self.learning_object.material, "course_package_lesson_node"):
+            raise ValidationError({
+                "learning_object": "This Learning material has no "
+                                    "content yet — create that first."
+            })
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"[{self.variant}] {self.learning_object.title}"
+
+
+def normal_variant_for(learning_object):
+    generated_json = learning_object.material.generated_json or {}
+    if not generated_json.get("lesson_audio_generated"):
+        return None
+
+    for entry in generated_json.get("lesson_playlist", []):
+        if entry.get("learning_object_id") == learning_object.id:
+            return {
+                "variant": "NORMAL",
+                "narration": entry.get("narration") or entry.get("text", ""),
+                "audio_url": entry.get("audio_url") or entry.get("audio", ""),
+            }
+    return None
 
 
 class ModuleQuestion(models.Model):
-    BLOOM_LEVELS = [("REMEMBER", "Remember"), ("UNDERSTAND", "Understand"), ("ANALYZE", "Analyze")]
-
     lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="module_questions")
     question = models.ForeignKey(GeneratedQuestion, on_delete=models.CASCADE)
-    bloom_level = models.CharField(max_length=20, choices=BLOOM_LEVELS)
     order = models.PositiveIntegerField(default=1)
 
     class Meta:
         unique_together = ("lesson_node", "question")
-        ordering = ["lesson_node_id", "bloom_level", "order", "id"]
+        ordering = ["lesson_node_id", "order", "id"]
+
+    @property
+    def bloom_level(self):
+        return self.question.bloom_level
+
+    @property
+    def difficulty(self):
+        return self.question.difficulty
 
     def clean(self):
         if not self.lesson_node.source.learning_objects.filter(
@@ -89,30 +134,12 @@ class ModuleQuestion(models.Model):
         ).exists():
             raise ValidationError({
                 "question": "Question's learning object must belong to this "
-                             "lesson node's LearningMaterial."
+                             "lesson node's Learning Material."
             })
 
     def save(self, *args, **kwargs):
-        # clean() previously wasn't reachable: sync_module_questions() uses
-        # update_or_create(), which never calls full_clean(). Enforce the
-        # invariant here so it's actually checked on every save, including
-        # from admin, shell, or future call sites that skip services.py.
         self.full_clean()
         super().save(*args, **kwargs)
 
-    def clean(self):
-        if not self.lesson_node.source.learning_objects.filter(
-            pk=self.question.node_id
-        ).exists():
-            raise ValidationError({
-                "question": "Question's learning object must belong to this "
-                             "lesson node's LearningMaterial."
-            })
-
-    def save(self, *args, **kwargs):
-        # clean() previously wasn't reachable: sync_module_questions() uses
-        # update_or_create(), which never calls full_clean(). Enforce the
-        # invariant here so it's actually checked on every save, including
-        # from admin, shell, or future call sites that skip services.py.
-        self.full_clean()
-        super().save(*args, **kwargs)
+    def __str__(self):
+        return f"{self.lesson_node.title} · Q{self.order} ({self.question.bloom_level})"

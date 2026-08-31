@@ -19,6 +19,16 @@ class GeneratedQuestion(models.Model):
         ("create", "Create"),
     ]
 
+    # The adaptive quiz walks a chunk through exactly these three tiers, in
+    # order — one correct answer per tier advances to the next. "apply" and
+    # "analyze" are treated as interchangeable for the third tier since a
+    # chunk's generated pool won't reliably contain both.
+    TIER_BUCKETS = [
+        ("remember",),
+        ("understand",),
+        ("apply", "analyze"),
+    ]
+
     FORMAT_CHOICES = [
         ("MCQ", "Multiple Choice"),
         ("TF", "True/False"),

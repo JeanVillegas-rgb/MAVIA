@@ -9,6 +9,8 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from user.permissions import IsTeacherOrAdmin
+
 from .models import CourseGroup, CourseOutline, LearningMaterial, LearningObject, OutlineNode
 from .serializers import (
     CourseCreateSerializer,
@@ -35,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 class CourseGroupViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsTeacherOrAdmin]
     queryset = CourseGroup.objects.prefetch_related(
         "nodes",
         "outline",

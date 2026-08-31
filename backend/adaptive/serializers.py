@@ -23,7 +23,7 @@ class StudentResponseSerializer(serializers.Serializer):
 
     def validate(self, data):
         try:
-            learning_state = LearningState.objects.select_related("current_node").get(
+            learning_state = LearningState.objects.select_related("current_node", "current_question").get(
                 pk=data["learning_state_id"]
             )
         except LearningState.DoesNotExist:
@@ -40,41 +40,9 @@ class StudentResponseSerializer(serializers.Serializer):
                 "question_id": "No such question."
             })
 
-        if not learning_state.current_node.source.learning_objects.filter(
-            pk=question.node_id
-        ).exists():
+        if learning_state.current_question_id != question.id:
             raise serializers.ValidationError({
-                "question_id": "Question does not belong to the learner's current lesson node."
-            })
-
-        data["learning_state"] = learning_state
-        data["question"] = question
-        return data
-
-    def validate(self, data):
-        try:
-            learning_state = LearningState.objects.select_related("current_node").get(
-                pk=data["learning_state_id"]
-            )
-        except LearningState.DoesNotExist:
-            raise serializers.ValidationError({
-                "learning_state_id": "No such learning state."
-            })
-
-        try:
-            question = GeneratedQuestion.objects.select_related("node").get(
-                pk=data["question_id"]
-            )
-        except GeneratedQuestion.DoesNotExist:
-            raise serializers.ValidationError({
-                "question_id": "No such question."
-            })
-
-        if not learning_state.current_node.source.learning_objects.filter(
-            pk=question.node_id
-        ).exists():
-            raise serializers.ValidationError({
-                "question_id": "Question does not belong to the learner's current lesson node."
+                "question_id": "This isn't the question the learner is currently on."
             })
 
         data["learning_state"] = learning_state
