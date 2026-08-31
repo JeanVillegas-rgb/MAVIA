@@ -116,7 +116,7 @@ def synthesize_text_to_wav(text: str, output_path: Path, timeout: int = 120) -> 
     _synthesize_text_to_wav_with_windows(text, output_path, timeout=timeout)
 
 
-_DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
+_THINKING_ORDER_RANK = {"LOT": 0, "HOT": 1}
 
 
 def _audio_file_exists(relative_path: str) -> bool:
@@ -228,8 +228,8 @@ def generate_material_audio_playlist(material: LearningMaterial) -> dict:
         if node is None:
             continue
         questions = sorted(
-            node.generated_questions.all(),
-            key=lambda q: (_DIFFICULTY_ORDER.get(q.difficulty, 3), q.id),
+            node.generated_questions.filter(status="final"),
+            key=lambda q: (_THINKING_ORDER_RANK.get(q.thinking_order, 2), q.id),
         )
         for question_index, question in enumerate(questions, start=1):
             question_path = synthesize_text_to_audio(
@@ -240,7 +240,7 @@ def generate_material_audio_playlist(material: LearningMaterial) -> dict:
             updated_playlist.append(
                 {
                     "order": len(updated_playlist),
-                    "title": f"Question {question_index} ({question.difficulty}) — {node.title}",
+                    "title": f"Question {question_index} ({question.thinking_order}) — {node.title}",
                     "type": "practice_question",
                     "node_id": node.id,
                     "question_id": question.id,
@@ -263,7 +263,10 @@ def generate_material_audio_playlist(material: LearningMaterial) -> dict:
 
 
 def _has_questions(material: LearningMaterial) -> bool:
-    return any(node.generated_questions.exists() for node in material.learning_objects.all())
+    return any(
+        node.generated_questions.filter(status="final").exists()
+        for node in material.learning_objects.all()
+    )
 
 
 def _sync_audio_flags(generated_json: dict, material: LearningMaterial) -> None:
@@ -300,16 +303,19 @@ def generate_material_audio_playlist(material: LearningMaterial, scope: str = "a
 
     for item in lesson_playlist:
         updated_item = dict(item)
-        position = len(updated_playlist)
         if scope in {"all", "lessons"}:
             narration_order = updated_item.get("narration_item_order")
             text = narration_by_order.get(int(narration_order)) if narration_order is not None else ""
+            if not text:
+                continue
+            position = len(updated_playlist)
             audio_path = synthesize_text_to_audio(text, audio_dir / f"playlist_item_{position + 1}")
             relative_path = audio_path.relative_to(settings.MEDIA_ROOT).as_posix()
             updated_item["audio_status"] = "generated"
             updated_item["audio_url"] = f"{settings.MEDIA_URL}{relative_path}"
             updated_item["audio_file"] = relative_path
             generated_count += 1
+        position = len(updated_playlist)
         updated_item["order"] = position
         updated_playlist.append(updated_item)
 
@@ -321,8 +327,8 @@ def generate_material_audio_playlist(material: LearningMaterial, scope: str = "a
     else:
         for node in nodes:
             questions = sorted(
-                node.generated_questions.all(),
-                key=lambda q: (_DIFFICULTY_ORDER.get(q.difficulty, 3), q.id),
+                node.generated_questions.filter(status="final"),
+                key=lambda q: (_THINKING_ORDER_RANK.get(q.thinking_order, 2), q.id),
             )
             for question_index, question in enumerate(questions, start=1):
                 question_path = synthesize_text_to_audio(
@@ -333,7 +339,7 @@ def generate_material_audio_playlist(material: LearningMaterial, scope: str = "a
                 updated_playlist.append(
                     {
                         "order": len(updated_playlist),
-                        "title": f"Question {question_index} ({question.difficulty}) - {node.title}",
+                        "title": f"Question {question_index} ({question.thinking_order}) - {node.title}",
                         "type": "practice_question",
                         "node_id": node.id,
                         "question_id": question.id,

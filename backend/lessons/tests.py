@@ -4,27 +4,94 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
+from user.models import User
+
 from .models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 from .serializers import LearningMaterialSerializer
 from .services.content_generator import (
     _text_blocks_from_transcription,
     build_learning_objects_from_pdf_blocks,
+    build_narration_script_from_learning_objects,
     build_section_learning_objects,
     choose_outline_node_for_material,
-    refine_learning_object_titles_with_llm,
 )
+from .services.audio_generator import generate_material_audio_playlist
+from .services.instructional_content_classifier import classify_instructional_blocks, extract_pdf_text_blocks
 from .services.outline_parser import (
     ParsedOutlineNode,
     _build_outline_candidates,
-    _build_outline_llm_context,
     _clean_related_info,
     _extract_pdf_table_outline_text,
+    _looks_like_plain_outline_title_start,
     extract_outline_text,
     parse_outline_text,
 )
 
 
+def _teacher_client():
+    """CourseGroupViewSet is teacher/admin-gated; tests need an authenticated
+    client to reach it, not just a course/material fixture."""
+    client = APIClient()
+    teacher = User.objects.create_user(
+        username=f"teacher{User.objects.count()}",
+        password="pass1234",
+        role=User.Role.TEACHER,
+    )
+    client.force_authenticate(user=teacher)
+    return client
+
+
 class MilestoneModelSmokeTests(TestCase):
+    def test_blank_image_description_is_excluded_from_narration(self):
+        narration = build_narration_script_from_learning_objects(
+            [
+                {
+                    "type": "image_description",
+                    "title": "Grouping diagram",
+                    "content": "",
+                },
+                {
+                    "type": "lesson_content",
+                    "title": "Properties",
+                    "content": "Materials have observable properties.",
+                },
+            ]
+        )
+
+        self.assertEqual(len(narration), 1)
+        self.assertEqual(narration[0]["title"], "Properties")
+
+    @patch("lessons.services.audio_generator.synthesize_text_to_audio")
+    def test_existing_playlist_skips_item_with_blank_narration(self, synthesize_audio):
+        from django.conf import settings
+        from pathlib import Path
+
+        course = CourseGroup.objects.create(title="Science 7")
+        material = LearningMaterial.objects.create(
+            course=course,
+            title="Properties",
+            pdf_file="learning_materials/properties.pdf",
+            generated_json={
+                "narration_script": [
+                    {"order": 1, "type": "image_description", "content": ""},
+                    {"order": 2, "type": "lesson_content", "content": "Materials have properties."},
+                ],
+                "lesson_playlist": [
+                    {"order": 0, "title": "Diagram", "narration_item_order": 1},
+                    {"order": 1, "title": "Properties", "narration_item_order": 2},
+                ],
+            },
+        )
+        synthesize_audio.return_value = Path(settings.MEDIA_ROOT) / "audio_lessons" / "properties.mp3"
+
+        result = generate_material_audio_playlist(material)
+
+        material.refresh_from_db()
+        self.assertEqual(result["generated_count"], 1)
+        self.assertEqual(len(material.generated_json["lesson_playlist"]), 1)
+        self.assertEqual(material.generated_json["lesson_playlist"][0]["title"], "Properties")
+        synthesize_audio.assert_called_once()
+
     def test_course_outline_material_and_learning_object_scope(self):
         course = CourseGroup.objects.create(title="Science 7", description="Matter lessons")
         module = OutlineNode.objects.create(course=course, title="Matter", order=0, depth=0)
@@ -85,8 +152,35 @@ class MilestoneModelSmokeTests(TestCase):
         self.assertEqual(item["audio_status"], "missing")
         self.assertFalse(data["generated_json"]["audio_playlist_generated"])
 
+    def test_material_serializer_hides_structural_metadata_learning_objects(self):
+        course = CourseGroup.objects.create(title="Science 7")
+        material = LearningMaterial.objects.create(
+            course=course,
+            title="Properties PDF",
+            pdf_file="learning_materials/properties.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.TEXT,
+            title="Module 1",
+            content="Properties of Matter",
+            order=0,
+        )
+        LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.TEXT,
+            title="Matter",
+            content="Matter is anything that has mass and occupies space.",
+            order=1,
+        )
+
+        data = LearningMaterialSerializer(material).data
+
+        self.assertEqual([item["title"] for item in data["learning_objects"]], ["Matter"])
+
     def test_course_outline_upload_rejects_non_pdf(self):
-        client = APIClient()
+        client = _teacher_client()
         course = CourseGroup.objects.create(title="Science 7")
         response = client.post(
             f"/api/courses/{course.id}/upload-outline/",
@@ -98,12 +192,177 @@ class MilestoneModelSmokeTests(TestCase):
         self.assertEqual(response.data["detail"], "Only PDF course outlines are supported.")
 
 
+class ConfirmLearningObjectsTests(TestCase):
+    def test_learning_object_edit_updates_database_and_material_snapshot(self):
+        client = _teacher_client()
+        course = CourseGroup.objects.create(title="Science 7")
+        material = LearningMaterial.objects.create(
+            course=course,
+            title="Matter PDF",
+            pdf_file=SimpleUploadedFile("matter.pdf", b"%PDF-1.4"),
+            generated_json={
+                "learning_objects": [],
+                "lesson_playlist": [
+                    {
+                        "order": 0,
+                        "title": "Old title",
+                        "text": "Old content",
+                        "audio_url": "/media/audio/old.wav",
+                    }
+                ],
+                "audio_playlist_generated": True,
+                "lesson_audio_generated": True,
+                "learning_objects_confirmed": True,
+            },
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        learning_object = LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.TEXT,
+            title="Old title",
+            content="Old content",
+            order=0,
+        )
+
+        response = client.patch(
+            f"/api/courses/{course.id}/materials/{material.id}/learning-objects/{learning_object.id}/",
+            {"title": "Updated title", "content": "Updated content"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        learning_object.refresh_from_db()
+        material.refresh_from_db()
+        self.assertEqual(learning_object.title, "Updated title")
+        self.assertEqual(learning_object.content, "Updated content")
+        self.assertEqual(material.generated_json["learning_objects"][0]["title"], "Updated title")
+        self.assertEqual(material.generated_json["learning_objects"][0]["content"], "Updated content")
+        self.assertEqual(
+            material.generated_json["learning_objects"][0]["learning_object_id"],
+            learning_object.id,
+        )
+        self.assertFalse(material.generated_json["learning_objects_confirmed"])
+        self.assertFalse(material.generated_json["audio_playlist_generated"])
+        self.assertNotIn("audio_url", material.generated_json["lesson_playlist"][0])
+
+    def test_learning_object_delete_updates_database_and_material_snapshot(self):
+        client = _teacher_client()
+        course = CourseGroup.objects.create(title="Science 7")
+        material = LearningMaterial.objects.create(
+            course=course,
+            title="Matter PDF",
+            pdf_file=SimpleUploadedFile("matter.pdf", b"%PDF-1.4"),
+            generated_json={"learning_objects": [], "learning_objects_confirmed": True},
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        first = LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.TEXT,
+            title="Keep me",
+            content="This row stays.",
+            order=0,
+        )
+        removed = LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.TEXT,
+            title="Delete me",
+            content="This row is removed.",
+            order=1,
+        )
+
+        response = client.delete(
+            f"/api/courses/{course.id}/materials/{material.id}/learning-objects/{removed.id}/",
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        material.refresh_from_db()
+        self.assertFalse(LearningObject.objects.filter(id=removed.id).exists())
+        self.assertEqual(list(material.learning_objects.values_list("id", flat=True)), [first.id])
+        self.assertEqual(len(material.generated_json["learning_objects"]), 1)
+        self.assertEqual(material.generated_json["learning_objects"][0]["learning_object_id"], first.id)
+        self.assertEqual(material.generated_json["learning_objects"][0]["title"], "Keep me")
+        self.assertFalse(material.generated_json["learning_objects_confirmed"])
+
+    def test_image_learning_object_keeps_type_and_image_url_after_edit_and_confirm(self):
+        client = _teacher_client()
+        course = CourseGroup.objects.create(title="Science 7")
+        material = LearningMaterial.objects.create(
+            course=course,
+            title="Water Cycle PDF",
+            pdf_file=SimpleUploadedFile("water-cycle.pdf", b"%PDF-1.4"),
+            generated_json={},
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        learning_object = LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.IMAGE,
+            title="Water cycle diagram",
+            content="Image content",
+            image_url="/media/extracted_images/water-cycle.png",
+            order=0,
+        )
+
+        response = client.patch(
+            f"/api/courses/{course.id}/materials/{material.id}/learning-objects/{learning_object.id}/",
+            {"content": "Teacher description of evaporation, condensation, and precipitation."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        learning_object.refresh_from_db()
+        self.assertEqual(learning_object.kind, LearningObject.Kind.IMAGE)
+        self.assertEqual(learning_object.image_url, "/media/extracted_images/water-cycle.png")
+
+        response = client.post(
+            f"/api/courses/{course.id}/materials/{material.id}/confirm-learning-objects/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        material.refresh_from_db()
+        snapshot = material.generated_json["learning_objects"][0]
+        self.assertEqual(snapshot["type"], "image_description")
+        self.assertEqual(snapshot["kind"], LearningObject.Kind.IMAGE)
+        self.assertEqual(snapshot["image_url"], "/media/extracted_images/water-cycle.png")
+
+    def test_confirm_learning_objects_saves_reviewed_content_only(self):
+        client = _teacher_client()
+        course = CourseGroup.objects.create(title="Science 7")
+        material = LearningMaterial.objects.create(
+            course=course,
+            title="States of Matter PDF",
+            pdf_file=SimpleUploadedFile("states.pdf", b"%PDF-1.4"),
+            generated_json={},
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.TEXT,
+            title="Matter",
+            content="Matter is anything that has mass and occupies space.",
+            order=0,
+        )
+
+        response = client.post(
+            f"/api/courses/{course.id}/materials/{material.id}/confirm-learning-objects/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        material.refresh_from_db()
+        self.assertTrue(material.generated_json.get("learning_objects_confirmed"))
+        self.assertNotIn("questions_generated", material.generated_json)
+
+
 class OutlineParserTests(TestCase):
     def _titles(self, nodes):
         return [(node.title, [child.title for child in node.children]) for node in nodes]
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_teacher_module_bullets_stay_under_declared_module(self, _mock_llm):
+    def test_teacher_module_bullets_stay_under_declared_module(self):
         text = """
         Weekly Course Outline
         Week 2
@@ -159,8 +418,7 @@ class OutlineParserTests(TestCase):
             ],
         )
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_wrapped_bullet_title_does_not_absorb_learning_focus(self, _mock_llm):
+    def test_wrapped_bullet_title_does_not_absorb_learning_focus(self):
         text = """
         Week 3
         Module 1: Matter
@@ -179,8 +437,7 @@ class OutlineParserTests(TestCase):
         self.assertEqual([child.title for child in nodes[0].children], ["Physical and Chemical Changes"])
         self.assertEqual(nodes[1].title, "Mixtures")
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_pdf_extracted_wrapped_outline_titles_merge_correctly(self, _mock_llm):
+    def test_pdf_extracted_wrapped_outline_titles_merge_correctly(self):
         text = """
         Week 2
         Module 1: Properties of Matter
@@ -241,13 +498,21 @@ class OutlineParserTests(TestCase):
             {
                 "block_id": 4,
                 "page": 1,
+                "text": "Practice appropriate ways of protecting important body parts.",
+                "line_count": 1,
+                "category": "lesson_content",
+                "include_in_narration": True,
+            },
+            {
+                "block_id": 5,
+                "page": 1,
                 "text": "Matter is anything that has mass and occupies space.",
                 "line_count": 2,
                 "category": "lesson_content",
                 "include_in_narration": True,
             },
             {
-                "block_id": 5,
+                "block_id": 6,
                 "page": 1,
                 "text": "A solid has a definite shape, a liquid flows, and a gas expands to fill its container.",
                 "line_count": 2,
@@ -262,31 +527,9 @@ class OutlineParserTests(TestCase):
         self.assertNotIn("Lesson 1: Solid, Liquid and Gas", all_content)
         self.assertNotIn("Learning Objectives", all_content)
         self.assertNotIn("Describe how particles behave in solids, liquids, and gases.", all_content)
+        self.assertNotIn("Practice appropriate ways of protecting important body parts.", all_content)
         self.assertIn("Matter is anything that has mass and occupies space.", all_content)
         self.assertIn("A solid has a definite shape, a liquid flows, and a gas expands to fill its container.", all_content)
-
-    def test_llm_context_prefers_extracted_pdf_layout_block(self):
-        text = """
-        PDF LAYOUT TABLES
-        TABLE page=1
-        ROW 1:
-          CELL 1: Session
-          CELL 2: Teacher Outline
-          CELL 3: Classroom Task
-        ROW 2:
-          CELL 1: Session 2
-          CELL 2: Unit 1: Matter<br>- States of Matter
-          CELL 3: Lab
-
-        RAW PDF TEXT
-        This raw fallback should not be preferred.
-        """
-
-        context = _build_outline_llm_context(text)
-
-        self.assertIn("PDF LAYOUT TABLES", context)
-        self.assertIn("Teacher Outline", context)
-        self.assertNotIn("raw fallback", context.lower())
 
     def test_related_info_cleanup_preserves_teacher_context(self):
         related_info = _clean_related_info(
@@ -305,8 +548,7 @@ class OutlineParserTests(TestCase):
             },
         )
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_deped_content_column_extracts_only_numbered_topics(self, _mock_llm):
+    def test_deped_content_column_extracts_only_numbered_topics(self):
         text = """
         PDF CONTENT COLUMN
         PAGE 1
@@ -374,8 +616,7 @@ class OutlineParserTests(TestCase):
             ],
         )
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_module_lesson_outline_ignores_course_info_and_nests_bullets(self, _mock_llm):
+    def test_module_lesson_outline_ignores_course_info_and_nests_bullets(self):
         text = """
         SAMPLE COURSE OUTLINE
         Course Information
@@ -423,8 +664,62 @@ class OutlineParserTests(TestCase):
             ["Heat", "Light"],
         )
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_wrapped_lesson_title_merges_generic_continuations(self, _mock_llm):
+    def test_flat_module_with_numbered_topics_is_nested_without_hardcoded_lesson_labels(self):
+        text = """
+        Module 1: Matter and Materials
+        1. Solid, Liquid and Gas
+        2. Grouping Materials Based on Properties
+        Module 2: Living Things
+        1. Plants
+        2. Animals
+        """
+
+        nodes = parse_outline_text(text)
+
+        self.assertEqual(
+            [(node.title, [child.title for child in node.children]) for node in nodes],
+            [
+                ("Matter and Materials", ["Solid, Liquid and Gas", "Grouping Materials Based on Properties"]),
+                ("Living Things", ["Plants", "Animals"]),
+            ],
+        )
+
+    def test_mixed_module_formats_are_kept_together(self):
+        text = """
+        GRADE 9- LIFE SCIENCE
+        Module 1: Properties of Matter
+        -Solid
+        -Liquid
+        -gas
+        Module 2: Changes that undergo
+        Lesson 1: Changes that undergo 1
+        Lesson 2: Changes that undergo 2
+        Module 3: Earth
+        1. Crust
+        2. Skin
+        3. Air
+        Module 4: Heaven
+        • Angel
+        • The zombie Apocalypse
+        """
+
+        nodes = parse_outline_text(text)
+
+        self.assertEqual(
+            [node.title for node in nodes],
+            [
+                "Properties of Matter",
+                "Changes that undergo",
+                "Earth",
+                "Heaven",
+            ],
+        )
+        self.assertEqual([child.title for child in nodes[0].children], ["Solid", "Liquid", "gas"])
+        self.assertEqual([child.title for child in nodes[1].children], ["Changes that undergo 1", "Changes that undergo 2"])
+        self.assertEqual([child.title for child in nodes[2].children], ["Crust", "Skin", "Air"])
+        self.assertEqual([child.title for child in nodes[3].children], ["Angel", "The zombie Apocalypse"])
+
+    def test_wrapped_lesson_title_merges_generic_continuations(self):
         text = """
         Weekly Course Outline
         Module 1: Inquiry Systems
@@ -449,8 +744,7 @@ class OutlineParserTests(TestCase):
             ],
         )
 
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm", return_value=None)
-    def test_lesson_titles_under_same_module_remain_siblings(self, _mock_llm):
+    def test_lesson_titles_under_same_module_remain_siblings(self):
         text = """
         Module 1: Integrated Systems
         Lesson 1: Structure Mapping
@@ -468,7 +762,7 @@ class OutlineParserTests(TestCase):
         )
         self.assertTrue(all(child.children == [] for child in nodes[0].children))
 
-    def test_llm_candidates_merge_wrapped_lesson_titles_before_prompting(self):
+    def test_outline_candidates_merge_wrapped_lesson_titles_before_filtering(self):
         text = """
         Module 1: Dynamic Processes
         Lesson 1:
@@ -489,7 +783,7 @@ class OutlineParserTests(TestCase):
         self.assertNotIn("Energy Transfer", raw_lines)
         self.assertNotIn("Across Systems:", raw_lines)
 
-    def test_llm_candidates_repair_dangling_plain_titles_before_filtering(self):
+    def test_outline_candidates_repair_dangling_plain_titles_before_filtering(self):
         text = """
         Module 1: Life Processes
         Reproduction Among
@@ -535,57 +829,6 @@ class OutlineParserTests(TestCase):
         self.assertNotIn("\nExplain relationships.", text)
         self.assertNotIn("\nConcept map", text)
 
-    @patch("lessons.services.outline_parser._extract_teacher_module_outline")
-    @patch("lessons.services.outline_parser._extract_outline_nodes_with_llm")
-    def test_text_outline_uses_llm_before_parser(self, mock_llm, mock_parser):
-        mock_llm.return_value = [
-            ParsedOutlineNode(
-                title="Matter",
-                depth=0,
-                order=0,
-                related_info={"notes": ["Teacher context"]},
-            )
-        ]
-
-        nodes = parse_outline_text("Module 1: Matter")
-
-        self.assertEqual(nodes[0].title, "Matter")
-        self.assertEqual(nodes[0].related_info, {"notes": ["Teacher context"]})
-        mock_parser.assert_not_called()
-
-    @patch("lessons.services.llm_client.get_llm_client")
-    def test_llm_outline_extraction_rejects_fragments_and_non_topics(self, mock_get_client):
-        mock_client = mock_get_client.return_value
-        mock_client.generate_text.return_value = {
-            "text": """
-            {
-              "nodes": [
-                {"source_id": 1, "title": "Invented Matter Title", "level": 0, "order": 1, "related_info": {"notes": ["ignored"]}},
-                {"source_id": 999, "title": "Invented Topic", "level": 1, "order": 2},
-                {"source_id": 2, "title": "Paraphrased Properties", "level": 1, "order": 3}
-              ]
-            }
-            """
-        }
-
-        text = """
-        Course Outline
-        Module 1: Matter
-        - Properties
-        Learning focus: Describe physical and chemical properties.
-        Quiz
-        """
-
-        nodes = parse_outline_text(text)
-
-        self.assertEqual([(node.title, [child.title for child in node.children]) for node in nodes], [
-            ("Matter", ["Properties"])
-        ])
-        self.assertEqual(nodes[0].related_info, {})
-        prompt = mock_client.generate_text.call_args.args[0]
-        self.assertIn("You may choose only from those candidate line IDs.", prompt)
-        self.assertIn("Module 1: Matter", prompt)
-
     @patch("lessons.services.outline_parser._transcribe_image_only_outline_pdf", return_value="Module 1: Matter")
     @patch("lessons.services.outline_parser._extract_pdf_table_outline_text", return_value="")
     def test_image_only_outline_pdf_uses_vision_transcription(self, _mock_table, mock_transcribe):
@@ -610,16 +853,77 @@ class OutlineParserTests(TestCase):
             os.unlink(path)
 
 
+class OutlineTitleFragmentTests(TestCase):
+    def test_single_word_outline_fragment_is_not_a_final_title(self):
+        self.assertFalse(_looks_like_plain_outline_title_start("Common"))
+        self.assertFalse(_looks_like_plain_outline_title_start("Reproductive"))
+        self.assertFalse(_looks_like_plain_outline_title_start("Biodiversity"))
+
+    def test_structural_single_word_title_after_lesson_prefix_is_allowed(self):
+        self.assertTrue(_looks_like_plain_outline_title_start("Lesson 1: Reproductive"))
+
+    def test_two_word_dangling_fragment_is_not_a_final_title(self):
+        self.assertFalse(_looks_like_plain_outline_title_start("Changes that"))
+
+
 class LearningObjectPreservationTests(TestCase):
+    def test_extract_pdf_text_blocks_accepts_integer_span_colors(self):
+        class FakeSpan:
+            def __init__(self, text, flags, font, size, color):
+                self._payload = {
+                    "text": text,
+                    "flags": flags,
+                    "font": font,
+                    "size": size,
+                    "color": color,
+                }
+
+            def get(self, key, default=None):
+                return self._payload.get(key, default)
+
+        class FakeLine:
+            def __init__(self):
+                self._payload = {
+                    "spans": [FakeSpan("The Sun", 0, "Arial", 12.0, 16711680)],
+                }
+
+            def get(self, key, default=None):
+                return self._payload.get(key, default)
+
+        class FakePage:
+            def get_text(self, _format):
+                return {
+                    "blocks": [
+                        {
+                            "type": 0,
+                            "lines": [FakeLine()],
+                        }
+                    ]
+                }
+
+        class FakeDocument:
+            def __iter__(self):
+                return iter([FakePage()])
+
+            def close(self):
+                pass
+
+        with patch("lessons.services.instructional_content_classifier.fitz.open", return_value=FakeDocument()):
+            blocks = extract_pdf_text_blocks("unused.pdf")
+
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["text"], "The Sun")
+        self.assertEqual(blocks[0]["text_color"], 16711680)
+
     def test_transcribed_page_text_becomes_learning_blocks(self):
         blocks = _text_blocks_from_transcription(
             "Page 1\nWhat is Matter?\nMatter has mass and occupies space."
         )
 
         self.assertEqual([block["text"] for block in blocks], ["What is Matter?", "Matter has mass and occupies space."])
-        self.assertEqual(blocks[0]["source"], "vision_page_transcription")
+        self.assertEqual(blocks[0]["source"], "deterministic_page_text_fallback")
 
-    def test_image_learning_object_includes_visible_text(self):
+    def test_image_learning_object_uses_pdf_caption_and_waits_for_teacher_description(self):
         learning_objects = build_section_learning_objects(
             [],
             [
@@ -628,12 +932,343 @@ class LearningObjectPreservationTests(TestCase):
                     "page_number": 1,
                     "description": "Diagram showing the water cycle.",
                     "visible_text": "Evaporation, Condensation, Precipitation",
+                    "caption": "Figure 2. The water cycle.",
                 }
             ],
         )
 
-        self.assertIn("Diagram showing the water cycle.", learning_objects[0]["content"])
-        self.assertIn("Visible text: Evaporation, Condensation, Precipitation", learning_objects[0]["content"])
+        self.assertEqual(learning_objects[0]["title"], "Diagram showing the water cycle")
+        self.assertEqual(learning_objects[0]["content"], "Diagram showing the water cycle.")
+
+        pending = build_section_learning_objects(
+            [],
+            [
+                {
+                    "index": 0,
+                    "page_number": 1,
+                    "description": "",
+                    "visible_text": "Evaporation, Condensation, Precipitation",
+                    "caption": "Figure 2. The water cycle.",
+                }
+            ],
+        )[0]
+        self.assertEqual(pending["title"], "The water cycle")
+        self.assertEqual(pending["content"], "")
+        self.assertEqual(pending["source_excerpt"], "Figure 2. The water cycle.")
+
+    def test_unheaded_body_block_uses_content_as_title(self):
+        blocks = [
+            {
+                "block_id": 1,
+                "page": 1,
+                "text": "Matter is anything that has mass and occupies space.",
+                "line_count": 1,
+            }
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+
+        self.assertEqual(learning_objects[0]["title"], "Matter is anything that has mass and occupies space")
+        self.assertNotIn("Learning Object", learning_objects[0]["title"])
+
+    def test_standalone_module_label_is_not_learning_object(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Module 1", "line_count": 1},
+            {"block_id": 2, "page": 1, "text": "Properties of Matter", "line_count": 1},
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Matter is anything that has mass and occupies space.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+
+        by_title = {item["title"]: item["content"] for item in learning_objects}
+        self.assertNotIn("Module 1", by_title)
+        self.assertEqual(
+            by_title["Properties of Matter"],
+            "Matter is anything that has mass and occupies space.",
+        )
+
+    def test_objective_is_excluded_and_pdf_fragments_remain_under_concept(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Module 1", "line_count": 1},
+            {"block_id": 2, "page": 1, "text": "Properties of Matter", "line_count": 1},
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Relate observable properties to the state of a material.",
+                "line_count": 1,
+            },
+            {"block_id": 4, "page": 1, "text": "Solid", "line_count": 1},
+            {
+                "block_id": 5,
+                "page": 1,
+                "text": "A solid has a definite shape. Its particles are packed",
+                "line_count": 1,
+            },
+            {
+                "block_id": 6,
+                "page": 1,
+                "text": "closely together and mainly vibrate in fixed positions.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 7,
+                "page": 1,
+                "text": "Examples include a stone, pencil, wooden block, and ice cube.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+        by_title = {item["title"]: item["content"] for item in learning_objects}
+        all_text = "\n".join([*by_title, *by_title.values()])
+
+        self.assertEqual(list(by_title), ["Solid"])
+        self.assertNotIn("Module 1", all_text)
+        self.assertNotIn("Relate observable properties", all_text)
+        self.assertEqual(
+            by_title["Solid"],
+            "A solid has a definite shape. Its particles are packed\n"
+            "closely together and mainly vibrate in fixed positions.\n"
+            "Examples include a stone, pencil, wooden block, and ice cube.",
+        )
+
+    def test_existing_heading_keeps_inline_pdf_text_verbatim(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Examples", "line_count": 1},
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "Solid: book, chair, and stone.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+
+        self.assertEqual(learning_objects[0]["title"], "Examples")
+        self.assertEqual(learning_objects[0]["content"], "Solid: book, chair, and stone.")
+
+    def test_empty_heading_is_container_for_multiple_labeled_definitions(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Caring for the Sense Organs", "line_count": 1},
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "• Eyes: read in a well-lighted place and rest after long screen use.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "• Ears: avoid very loud sounds and clean only the outer part.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 4,
+                "page": 1,
+                "text": "• Nose: avoid dusty places and never put small objects inside the nostrils.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 5,
+                "page": 1,
+                "text": "• Tongue: brush the teeth and tongue daily and avoid food that is too hot.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 6,
+                "page": 1,
+                "text": "• Skin: bathe regularly and protect the skin from too much sun.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+        by_title = {item["title"]: item["content"] for item in learning_objects}
+
+        self.assertNotIn("Caring for the Sense Organs", by_title)
+        self.assertEqual(list(by_title), ["Eyes", "Ears", "Nose", "Tongue", "Skin"])
+        self.assertEqual(
+            {item["section_title"] for item in learning_objects},
+            {"Caring for the Sense Organs"},
+        )
+        self.assertEqual(
+            by_title["Eyes"],
+            "read in a well-lighted place and rest after long screen use.",
+        )
+        self.assertEqual(
+            by_title["Skin"],
+            "bathe regularly and protect the skin from too much sun.",
+        )
+
+        narration = build_narration_script_from_learning_objects(learning_objects)
+        self.assertEqual(
+            narration[0]["content"],
+            "In Caring for the Sense Organs. Eyes: "
+            "read in a well-lighted place and rest after long screen use.",
+        )
+        self.assertEqual(
+            narration[1]["content"],
+            "Ears: avoid very loud sounds and clean only the outer part.",
+        )
+
+    def test_explained_parent_and_labeled_children_share_section_context(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Sense Organs", "line_count": 1},
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "Sense organs collect information from the surroundings.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Eyes: The eyes detect light and allow us to see.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 4,
+                "page": 1,
+                "text": "Ears: The ears detect sound and help maintain balance.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+
+        self.assertEqual([item["title"] for item in learning_objects], ["Sense Organs", "Eyes", "Ears"])
+        self.assertEqual(
+            [item["section_title"] for item in learning_objects],
+            ["Sense Organs", "Sense Organs", "Sense Organs"],
+        )
+        narration = build_narration_script_from_learning_objects(learning_objects)
+        self.assertEqual(
+            narration[0]["content"],
+            "Sense Organs. Sense organs collect information from the surroundings.",
+        )
+        self.assertEqual(
+            narration[1]["content"],
+            "Eyes: The eyes detect light and allow us to see.",
+        )
+
+    def test_captioned_vector_figure_is_an_image_not_text_learning_objects(self):
+        import os
+        import tempfile
+        import fitz
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            path = handle.name
+        try:
+            document = fitz.open()
+            page = document.new_page(width=612, height=792)
+            page.insert_text((180, 120), "Ways to Compare the Same Objects", fontsize=12)
+            page.insert_text((130, 155), "PROPERTY A", fontsize=10)
+            page.insert_text((360, 155), "PROPERTY B", fontsize=10)
+            page.draw_rect(fitz.Rect(90, 170, 280, 300))
+            page.draw_rect(fitz.Rect(330, 170, 520, 300))
+            page.insert_text((115, 235), "diagram label one", fontsize=8)
+            page.insert_text((355, 235), "diagram label two", fontsize=8)
+            page.insert_text((180, 330), "Figure 1. Objects grouped in two ways.", fontsize=9)
+            page.insert_text((72, 390), "Properties of Objects", fontsize=14)
+            page.insert_text((72, 420), "Objects can be compared using observable properties.", fontsize=10)
+            document.save(path)
+            document.close()
+
+            blocks = extract_pdf_text_blocks(path)
+            classified = classify_instructional_blocks(blocks)
+            learning_objects = build_section_learning_objects(classified, [])
+            all_text = "\n".join(
+                item["title"] + "\n" + item["content"]
+                for item in learning_objects
+            )
+
+            self.assertTrue(any(block.get("is_figure_text") for block in classified))
+            self.assertNotIn("PROPERTY A", all_text)
+            self.assertNotIn("diagram label one", all_text)
+            self.assertIn("Properties of Objects", all_text)
+            self.assertIn("Objects can be compared using observable properties.", all_text)
+        finally:
+            os.unlink(path)
+
+    def test_explanatory_pdf_sentences_are_not_mistaken_for_objectives(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Material Classification", "line_count": 1},
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "Materials placed together with similar objects form a useful classification.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Learning to notice properties helps us understand why objects are made differently.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+
+        self.assertEqual(
+            learning_objects[0]["content"],
+            "Materials placed together with similar objects form a useful classification.\n"
+            "Learning to notice properties helps us understand why objects are made differently.",
+        )
+
+    def test_bold_pdf_title_line_is_not_downgraded_to_document_metadata(self):
+        blocks = [
+            {
+                "block_id": 1,
+                "page": 1,
+                "text": "How Flowering Plants Reproduce",
+                "line_count": 1,
+                "is_bold": True,
+                "font_size": 14.0,
+            }
+        ]
+
+        classified = classify_instructional_blocks(blocks)
+        self.assertEqual(classified[0]["category"], "lesson_content")
+        self.assertTrue(classified[0]["include_in_narration"])
+
+    def test_empty_process_heading_yields_labeled_child_learning_objects(self):
+        blocks = [
+            {
+                "block_id": 1,
+                "page": 1,
+                "text": "How Flowering Plants Reproduce",
+                "line_count": 1,
+            },
+            {
+                "block_id": 2,
+                "page": 1,
+                "text": "Pollination: Pollen is carried from the anther to the stigma.",
+                "line_count": 1,
+            },
+            {
+                "block_id": 3,
+                "page": 1,
+                "text": "Fertilization: After landing on the stigma, a pollen grain grows a tube down the style into the ovary.",
+                "line_count": 1,
+            },
+        ]
+
+        learning_objects = build_learning_objects_from_pdf_blocks(blocks, [])
+        by_title = {item["title"]: item["content"] for item in learning_objects}
+
+        self.assertNotIn("How Flowering Plants Reproduce", by_title)
+        self.assertEqual(list(by_title), ["Pollination", "Fertilization"])
+        self.assertEqual(by_title["Pollination"], "Pollen is carried from the anther to the stigma.")
+        self.assertEqual(
+            by_title["Fertilization"],
+            "After landing on the stigma, a pollen grain grows a tube down the style into the ovary.",
+        )
 
     def test_plain_heading_with_bullets_is_preserved_as_learning_object(self):
         blocks = [
@@ -759,39 +1394,7 @@ class LearningObjectPreservationTests(TestCase):
         self.assertNotIn("Write your answers", all_content)
         self.assertNotIn("What happened", all_content)
 
-    @patch("lessons.services.content_generator.get_llm_client")
-    def test_llm_makes_vague_learning_object_titles_standalone(self, mock_get_client):
-        mock_client = mock_get_client.return_value
-        mock_client.generate_text.return_value = {
-            "text": """
-            {
-              "items": [
-                {"index": 0, "title": "Examples of solids, liquids, and gases"}
-              ]
-            }
-            """
-        }
-        learning_objects = [
-            {
-                "order": 0,
-                "title": "Examples",
-                "type": "lesson_content",
-                "content": "Solid: book, chair, stone Liquid: water, milk Gas: oxygen",
-            }
-        ]
-
-        reviewed = refine_learning_object_titles_with_llm(learning_objects, lesson_title="States of Matter")
-
-        self.assertEqual(reviewed[0]["title"], "Examples of solids, liquids, and gases")
-        self.assertEqual(reviewed[0]["content"], learning_objects[0]["content"])
-        prompt = mock_client.generate_text.call_args.args[0]
-        self.assertIn("Make each learning object title understandable as a standalone card title", prompt)
-
-    @patch("lessons.services.content_generator.get_llm_client")
-    def test_choose_outline_node_for_material_prefers_deeper_topic(self, mock_get_client):
-        mock_client = mock_get_client.return_value
-        mock_client.generate_text.return_value = {"text": "invalid json"}
-
+    def test_choose_outline_node_for_material_prefers_deeper_topic(self):
         course = CourseGroup.objects.create(title="Science 7")
         module = OutlineNode.objects.create(course=course, title="Matter", order=0, depth=0)
         topic_states = OutlineNode.objects.create(course=course, parent=module, title="States of Matter", order=0, depth=1)
@@ -805,30 +1408,29 @@ class LearningObjectPreservationTests(TestCase):
 
         self.assertEqual(matched, topic_states)
 
-    @patch("lessons.services.content_generator.get_llm_client")
-    def test_llm_suggests_unrelated_node_then_fallbacks_to_keyword(self, mock_get_client):
-        # Simulate LLM returning an unrelated node id (e.g., Ecosystem) even though the text
-        # clearly matches 'States of Matter'. Our classifier should validate overlap and
-        # fall back to keyword matching.
-        mock_client = mock_get_client.return_value
-        # LLM returns a JSON pointing to an unrelated node id (we'll fill id after creating nodes)
-        mock_client.generate_text.return_value = {"text": "{\"outline_node_id\": 999, \"reason\": \"spurious\"}"}
-
-        course = CourseGroup.objects.create(title="Science 7")
-        module_matter = OutlineNode.objects.create(course=course, title="Matter", order=0, depth=0)
-        topic_states = OutlineNode.objects.create(course=course, parent=module_matter, title="States of Matter", order=0, depth=1)
-        # Create an unrelated node under a different module
-        module_bio = OutlineNode.objects.create(course=course, title="Biology", order=1, depth=0)
-        ecosystem = OutlineNode.objects.create(course=course, parent=module_bio, title="Ecosystem", order=0, depth=1)
-
-        # Patch the mock to return the ecosystem id specifically
-        mock_client.generate_text.return_value = {"text": f"{{\"outline_node_id\": {ecosystem.id}, \"reason\": \"spurious\"}}"}
+    def test_choose_outline_node_for_material_uses_tfidf_cosine_for_specific_subtopic(self):
+        course = CourseGroup.objects.create(title="Science 9")
+        module = OutlineNode.objects.create(course=course, title="Materials", order=0, depth=0)
+        grouping = OutlineNode.objects.create(
+            course=course,
+            parent=module,
+            title="Grouping Materials Based on Properties",
+            order=0,
+            depth=1,
+        )
+        mixtures = OutlineNode.objects.create(
+            course=course,
+            parent=module,
+            title="Mixtures and Their Characteristics",
+            order=1,
+            depth=1,
+        )
 
         matched = choose_outline_node_for_material(
             course,
-            "States of Matter PDF",
-            "Solid, liquid, and gas are states of matter.",
+            "Sorting by observable properties",
+            "Learners group materials by color, texture, hardness, flexibility, and ability to absorb water.",
         )
 
-        # Should match the 'States of Matter' topic, not the unrelated 'Ecosystem'
-        self.assertEqual(matched, topic_states)
+        self.assertEqual(matched, grouping)
+        self.assertNotEqual(matched, mixtures)

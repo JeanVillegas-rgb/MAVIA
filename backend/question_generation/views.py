@@ -14,13 +14,14 @@ from .serializers import QuestionSerializer
 
 class GetQuestionView(APIView):
     """
-    GET /api/questions/?node_id=<learning_object_id>&difficulty=easy&learner_id=learner_123
+    GET /api/questions/?node_id=<learning_object_id>&thinking_order=LOT&learner_id=learner_123
 
-    Returns an unanswered question for this learner at the requested difficulty.
+    Returns an unanswered question for this learner at the requested
+    thinking order (LOT or HOT).
     """
     def get(self, request):
         node_id = request.query_params.get("node_id")
-        difficulty = request.query_params.get("difficulty", "easy")
+        thinking_order = request.query_params.get("thinking_order", "LOT")
         learner_id = request.query_params.get("learner_id")
 
         if not node_id or not learner_id:
@@ -36,7 +37,7 @@ class GetQuestionView(APIView):
 
         question = (
             GeneratedQuestion.objects
-            .filter(node_id=node_id, difficulty=difficulty)
+            .filter(node_id=node_id, thinking_order=thinking_order, status="final")
             .exclude(id__in=answered_ids)
             .order_by("?")
             .first()
@@ -44,7 +45,7 @@ class GetQuestionView(APIView):
 
         if not question:
             return Response(
-                {"message": "No more questions at this difficulty"},
+                {"message": "No more questions at this thinking order"},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -95,7 +96,7 @@ class QuestionStatsView(APIView):
     """
     GET /api/questions/stats/?node_id=<learning_object_id>&learner_id=learner_123
 
-    Per-node progress stats for a learner, broken down by difficulty.
+    Per-node progress stats for a learner, broken down by thinking order.
     """
     def get(self, request):
         node_id = request.query_params.get("node_id")
@@ -107,27 +108,27 @@ class QuestionStatsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        questions = GeneratedQuestion.objects.filter(node_id=node_id)
+        questions = GeneratedQuestion.objects.filter(node_id=node_id, status="final")
         responses = LearnerResponse.objects.filter(
             learner_id=learner_id,
             question__node_id=node_id,
         )
 
-        by_difficulty = {}
-        for diff in ("easy", "medium", "hard"):
-            diff_responses = responses.filter(question__difficulty=diff)
-            by_difficulty[diff] = {
-                "total": questions.filter(difficulty=diff).count(),
-                "answered": diff_responses.values("question_id").distinct().count(),
-                "correct": diff_responses.filter(is_correct=True)
+        by_thinking_order = {}
+        for order in ("LOT", "HOT"):
+            order_responses = responses.filter(question__thinking_order=order)
+            by_thinking_order[order] = {
+                "total": questions.filter(thinking_order=order).count(),
+                "answered": order_responses.values("question_id").distinct().count(),
+                "correct": order_responses.filter(is_correct=True)
                     .values("question_id").distinct().count(),
             }
 
         return Response({
-            "total": sum(d["total"] for d in by_difficulty.values()),
-            "answered": sum(d["answered"] for d in by_difficulty.values()),
-            "correct": sum(d["correct"] for d in by_difficulty.values()),
-            "by_difficulty": by_difficulty,
+            "total": sum(d["total"] for d in by_thinking_order.values()),
+            "answered": sum(d["answered"] for d in by_thinking_order.values()),
+            "correct": sum(d["correct"] for d in by_thinking_order.values()),
+            "by_thinking_order": by_thinking_order,
         })
 
 
@@ -242,7 +243,7 @@ class MaterialQuestionsView(APIView):
     Teacher-facing review of the stored question bank, grouped per learning
     object. Includes correct answers — never expose this to learners.
     """
-    DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
+    THINKING_ORDER_RANK = {"LOT": 0, "HOT": 1}
 
     def get(self, request, material_id):
         try:
@@ -255,8 +256,8 @@ class MaterialQuestionsView(APIView):
         payload = []
         for node in nodes:
             questions = sorted(
-                node.generated_questions.all(),
-                key=lambda q: (self.DIFFICULTY_ORDER.get(q.difficulty, 3), q.id),
+                node.generated_questions.filter(status="final"),
+                key=lambda q: (self.THINKING_ORDER_RANK.get(q.thinking_order, 2), q.id),
             )
             payload.append({
                 "node_id": node.id,
@@ -269,10 +270,10 @@ class MaterialQuestionsView(APIView):
                         "choices": q.choices,
                         "correct_answer": q.correct_answer,
                         "explanation": q.explanation,
+                        "thinking_order": q.thinking_order,
                         "difficulty": q.difficulty,
                         "bloom_level": q.bloom_level,
                         "category": q.category,
-                        "difficulty_match": q.difficulty_match,
                     }
                     for q in questions
                 ],
@@ -343,10 +344,10 @@ class QuestionDetailView(APIView):
             "choices": question.choices,
             "correct_answer": question.correct_answer,
             "explanation": question.explanation,
+            "thinking_order": question.thinking_order,
             "difficulty": question.difficulty,
             "bloom_level": question.bloom_level,
             "category": question.category,
-            "difficulty_match": question.difficulty_match,
         })
 
     def delete(self, request, question_id):

@@ -13,6 +13,29 @@ BLOOM_TO_DIFFICULTY = {
     "create":      "hard",
 }
 
+# Bloom's taxonomy describes the KIND of thinking a question demands, not how
+# hard it is — a different axis from BLOOM_TO_DIFFICULTY above. The question
+# generation pipeline targets this one directly; BLOOM_TO_DIFFICULTY stays in
+# use for the adaptive engine's difficulty-based remediation.
+#
+#   remember / understand / apply  -> LOT (lower order thinking)
+#   analyze / evaluate             -> HOT (higher order thinking)
+#   create                         -> excluded (None)
+#
+# `create` maps to None rather than being omitted: the trained model really can
+# predict it (it is one of its six classes), so it has to stay a recognised
+# level for _normalize_level. None marks it as having no assessable thinking
+# order, and the pipeline drops those questions — MAVIA only supports MCQ/TF,
+# which cannot assess a "produce something new" task.
+BLOOM_TO_THINKING_ORDER = {
+    "remember":    "LOT",
+    "understand":  "LOT",
+    "apply":       "LOT",
+    "analyze":     "HOT",
+    "evaluate":    "HOT",
+    "create":      None,
+}
+
 BLOOM_TO_CATEGORY = {
     "remember":    "Facts and Information",
     "understand":  "Meaning",
@@ -174,9 +197,12 @@ class BloomClassifier:
 
         bloom_level = self._normalize_level(bloom_level)
 
+        # thinking_order is None for "create" — callers must treat that as
+        # "exclude this question", not as a missing value to backfill.
         return {
             "bloom_level": bloom_level,
             "difficulty": BLOOM_TO_DIFFICULTY[bloom_level],
+            "thinking_order": BLOOM_TO_THINKING_ORDER[bloom_level],
             "category": BLOOM_TO_CATEGORY[bloom_level],
         }
 

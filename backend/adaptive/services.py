@@ -106,7 +106,10 @@ def _attempted_question_ids(learning_state, chunk, bucket_levels):
 def _pick_question(chunk, bucket_levels, difficulty, exclude_ids):
     """Pick a question for (chunk, bloom bucket), preferring `difficulty` and
     one not already attempted — the remediation pool for a wrong answer."""
-    pool = GeneratedQuestion.objects.filter(node=chunk, bloom_level__in=bucket_levels)
+    # "final" excludes drafts still awaiting classification — a draft has no
+    # bloom_level/difficulty yet, so it wouldn't match a bucket anyway, but
+    # excluding it here is what makes that guarantee explicit.
+    pool = GeneratedQuestion.objects.filter(node=chunk, bloom_level__in=bucket_levels, status="final")
 
     question = pool.filter(difficulty=difficulty).exclude(id__in=exclude_ids).order_by("id").first()
     if question:

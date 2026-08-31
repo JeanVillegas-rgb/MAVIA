@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 
-from django.core.exceptions import ValidationError
 from django.db.models import Max
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -27,9 +26,9 @@ from .services.content_generator import (
     build_lesson_playlist,
     build_narration_script_from_learning_objects,
     generate_material_outputs,
+    is_structural_metadata_label,
 )
 from .services.instructional_content_classifier import CLASSIFICATION_CATEGORIES
-from .services.llm_client import LocalLLMError
 from .services.outline_parser import build_dag_from_outline
 
 
@@ -185,9 +184,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         extension = Path(outline_file.name).suffix
         try:
             build_dag_from_outline(course, outline.outline_file.path, extension)
-        except LocalLLMError as exc:
+        except Exception as exc:
             outline.delete()
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         serializer = CourseDetailSerializer(course, context={"request": request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -329,15 +328,31 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         return [
             {
                 "order": index,
+                "type": "image_description" if learning_object.kind == LearningObject.Kind.IMAGE else "lesson_content",
+                "kind": learning_object.kind,
+                "section_title": learning_object.section_title,
                 "title": learning_object.title,
                 "content": learning_object.content,
+                "image_url": learning_object.image_url,
                 "source": "teacher_reviewed",
                 "learning_object_id": learning_object.id,
             }
-            for index, learning_object in enumerate(material.learning_objects.all().order_by("order", "id"))
+            for index, learning_object in enumerate(
+                item
+                for item in material.learning_objects.all().order_by("order", "id")
+                if not is_structural_metadata_label(item.title)
+            )
         ]
 
     def _set_learning_objects_confirmed(self, material, confirmed):
+        stale_ids = [
+            item.id
+            for item in material.learning_objects.all()
+            if is_structural_metadata_label(item.title)
+        ]
+        if stale_ids:
+            material.learning_objects.filter(id__in=stale_ids).delete()
+
         generated_json = material.generated_json or {}
         learning_objects = self._learning_objects_snapshot(material)
         narration_script = build_narration_script_from_learning_objects(learning_objects)
@@ -406,6 +421,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         LearningObject.objects.create(
             material=material,
             kind=LearningObject.Kind.TEXT,
+            section_title=serializer.validated_data.get("section_title", ""),
             title=serializer.validated_data["title"],
             content=serializer.validated_data["content"],
             order=serializer.validated_data.get("order", (max_order or 0) + 1 if max_order is not None else 0),
@@ -539,7 +555,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save(kind=LearningObject.Kind.TEXT, image_prompt="")
+        serializer.save()
         self._set_learning_objects_confirmed(material, False)
         return self._serialize_course_detail(course, request)
 

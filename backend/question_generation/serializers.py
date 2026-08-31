@@ -11,7 +11,7 @@ class QuestionSerializer(serializers.ModelSerializer):
         fields = [
             "id", "node", "node_title", "question_text",
             "question_format", "choices", "bloom_level",
-            "difficulty", "category",
+            "thinking_order", "difficulty", "category",
         ]
         # NOTE: correct_answer intentionally excluded
         # frontend should NOT receive it until after submission
