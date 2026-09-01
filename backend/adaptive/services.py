@@ -54,28 +54,21 @@ def _first_chunk(lesson_node):
     return chunks[0] if chunks else None
 
 
-def _next_chunk(lesson_node, current_chunk):
-    chunks = _text_chunks(lesson_node)
-    ids = [chunk.id for chunk in chunks]
-    try:
-        index = ids.index(current_chunk.id)
-    except ValueError:
-        return None
-    return chunks[index + 1] if index + 1 < len(chunks) else None
-
-
 def _next_lesson_node(current_node):
+    # LessonNode.source is a LearningMaterial, which has no `order` field to
+    # sequence by, and source__created_at can collide when materials are
+    # created back-to-back (e.g. a batch import) rather than one at a time
+    # through the UI. LessonNode's own auto-increment id is unique and
+    # reflects insertion order into this table, so it's used directly.
     next_node = (
-        LessonNode.objects.filter(
-            module=current_node.module,
-            source__order__gt=current_node.source.order,
-        )
-        .order_by("source__order", "source__id")
+        LessonNode.objects.filter(module=current_node.module, id__gt=current_node.id)
+        .order_by("id")
         .first()
     )
     if next_node is not None:
         return next_node
 
+    # CourseModule.source is an OutlineNode, which does have `order`.
     next_module = (
         CourseModule.objects.filter(
             is_active=True,
@@ -88,9 +81,7 @@ def _next_lesson_node(current_node):
     if next_module is None:
         return None
 
-    return next_module.lesson_nodes.order_by(
-        "source__depth", "source__order", "source__id"
-    ).first()
+    return next_module.lesson_nodes.order_by("id").first()
 
 
 def _attempted_question_ids(learning_state, chunk, bucket_levels):
@@ -121,6 +112,43 @@ def _pick_question(chunk, bucket_levels, difficulty, exclude_ids):
 
     # pool exhausted — every question in this bucket has already been seen
     return pool.order_by("id").first()
+
+
+def _next_available_question(node, chunk, min_tier, learning_state):
+    """Find the next unattempted question at or after `min_tier` in `chunk`,
+    falling through to later chunks of `node` (from their own tier 0) when
+    `chunk` has nothing left from `min_tier` onward.
+
+    A chunk simply may not have a generated question for every tier — e.g. a
+    short chunk that never yielded an apply/analyze-level question. That is
+    a content gap, not a reason to strand the learner on a chunk that has
+    nothing further to ask; this treats a tier with no question the same as
+    a tier already cleared and keeps looking forward.
+
+    Returns (chunk, question, tier) for the next question, or
+    (None, None, None) if nothing remains anywhere in `node`.
+    """
+    chunks = _text_chunks(node)
+    try:
+        start_index = [c.id for c in chunks].index(chunk.id)
+    except ValueError:
+        start_index = 0
+
+    for chunk_index in range(start_index, len(chunks)):
+        candidate_chunk = chunks[chunk_index]
+        first_tier = min_tier if chunk_index == start_index else 0
+        for tier in range(first_tier, len(TIER_BUCKETS)):
+            bucket_levels = TIER_BUCKETS[tier]
+            exclude_ids = (
+                _attempted_question_ids(learning_state, candidate_chunk, bucket_levels)
+                if chunk_index == start_index
+                else []
+            )
+            question = _pick_question(candidate_chunk, bucket_levels, DEFAULT_DIFFICULTY, exclude_ids)
+            if question is not None:
+                return candidate_chunk, question, tier
+
+    return None, None, None
 
 
 def resolve_start(lesson_node):
@@ -174,29 +202,27 @@ class AdaptiveScoringService:
         if is_correct:
             next_variant = STARTING_VARIANT
 
-            if bucket_index < len(TIER_BUCKETS) - 1:
-                # one tier down, three to go — same chunk, next bloom tier
-                next_bucket = TIER_BUCKETS[bucket_index + 1]
-                exclude_ids = _attempted_question_ids(learning_state, current_chunk, next_bucket)
-                next_question = _pick_question(current_chunk, next_bucket, DEFAULT_DIFFICULTY, exclude_ids)
-            else:
-                candidate_chunk = _next_chunk(current_node, current_chunk)
-                if candidate_chunk is not None:
-                    # chunk's three tiers cleared — next topic, same lesson
+            # Search forward from the next tier: same chunk first (skipping
+            # any tier that has no generated question), then later chunks in
+            # this lesson node from their own tier 0.
+            candidate_chunk, next_question, _tier = _next_available_question(
+                current_node, current_chunk, bucket_index + 1, learning_state
+            )
+            if next_question is not None:
+                if candidate_chunk.id != current_chunk.id:
                     next_chunk = candidate_chunk
                     chunk_changed = True
-                    next_question = _pick_question(next_chunk, TIER_BUCKETS[0], DEFAULT_DIFFICULTY, [])
+            else:
+                candidate_node = _next_lesson_node(current_node)
+                if candidate_node is not None:
+                    # lesson's chunks cleared — next lesson
+                    next_node = candidate_node
+                    node_changed = True
+                    next_chunk, next_question = resolve_start(next_node)
+                    new_mastery = STARTING_MASTERY
                 else:
-                    candidate_node = _next_lesson_node(current_node)
-                    if candidate_node is not None:
-                        # lesson's chunks cleared — next lesson
-                        next_node = candidate_node
-                        node_changed = True
-                        next_chunk, next_question = resolve_start(next_node)
-                        new_mastery = STARTING_MASTERY
-                    else:
-                        completed = True
-                        next_question = None
+                    completed = True
+                    next_question = None
         else:
             # wrong: same chunk, same bloom tier — remediate with a different,
             # easier question from the pool; escalate the narration variant.
