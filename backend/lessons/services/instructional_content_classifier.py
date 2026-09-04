@@ -14,16 +14,226 @@ CLASSIFICATION_CATEGORIES = {
     "document_metadata",
     "table_header",
     "reference",
+    "answer_key",
+    "navigation",
+    "needs_review",
     "decorative_or_noise",
 }
 
 NARRATION_CATEGORIES = {"lesson_content"}
 
+EXCLUDED_HEADING_LABELS = {
+    "acknowledgment",
+    "acknowledgments",
+    "acknowledgement",
+    "acknowledgements",
+    "about the author",
+    "about the authors",
+    "answer key",
+    "answers",
+    "bibliography",
+    "copyright",
+    "dedication",
+    "general instructions",
+    "glossary",
+    "index",
+    "publisher information",
+    "references",
+    "sources",
+    "suggested answers",
+    "table of contents",
+}
+
+ASSESSMENT_HEADING_LABELS = {
+    "assessment",
+    "assessments",
+    "check your knowledge",
+    "check your understanding",
+    "evaluation",
+    "evaluations",
+    "exercise",
+    "exercises",
+    "practice questions",
+    "quiz",
+    "quizzes",
+    "review questions",
+    "test",
+    "tests",
+    "teacher check",
+    "knowledge check",
+    "comprehension check",
+    "self check",
+    "ask",
+    "worksheet",
+    "worksheets",
+}
+
+
+def _normalized_label(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").casefold()).strip()
+
+
+def _normalized_repeated_text(text: str) -> str:
+    normalized = _normalized_label(text)
+    return re.sub(r"\b\d+\b", "#", normalized)
+
+
+def _is_question_or_assessment(text: str) -> bool:
+    stripped = re.sub(r"\s+", " ", text or "").strip()
+    label = _normalized_label(stripped)
+    if not label:
+        return False
+    if label in ASSESSMENT_HEADING_LABELS:
+        return True
+    if re.search(r"\b(?:questions?|quizzes?|tests?|assessments?|exercises?|worksheets?)$", label):
+        return True
+    if re.match(r"^\s*[QA]\s*:", stripped, flags=re.IGNORECASE):
+        return True
+    if stripped.endswith("?"):
+        return True
+    if re.search(r"_{3,}", stripped):
+        return True
+    if re.match(r"^\s*(?:directions?|instructions?)\s*:", stripped, flags=re.IGNORECASE):
+        return True
+    if re.match(r"^\s*\d+[.)]\s+", stripped) and re.search(
+        r"_{3,}|\b(?:choose|fill|match|identify|write|answer|classify)\b",
+        stripped,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if len(re.findall(r"(?:^|\s)[A-Da-d][.)]\s+", stripped)) >= 2:
+        return True
+    if re.match(r"^(?:q\d+|question\s+\d+)\b", label):
+        return True
+    if re.search(r"(?:^|\s)[A-D][.)]\s+\S", stripped) and re.search(r"\?", stripped):
+        return True
+    prompt = re.sub(r"^(?:[•●▪\-*]\s*)?(?:\d+[.)]|[A-Za-z][.)])\s*", "", stripped)
+    prompt_label = _normalized_label(prompt)
+    instruction_phrases = (
+        "answer the following",
+        "choose the correct",
+        "classify the following",
+        "complete the",
+        "fill in",
+        "match the",
+        "multiple choice",
+        "true or false",
+        "write your answer",
+    )
+    return any(phrase in prompt_label for phrase in instruction_phrases)
+
+
+def _is_symbolic_relationship(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    return bool(
+        normalized
+        and len(normalized) <= 180
+        and re.search(r"\S\s*(?:\u2192|->|=>)\s*\S", normalized)
+    )
+
+
+def _is_teacher_facing_editorial_text(text: str) -> bool:
+    label = _normalized_label(text)
+    tokens = set(label.split())
+    if not tokens:
+        return False
+    authoring_terms = {
+        "content",
+        "document",
+        "format",
+        "info",
+        "information",
+        "lesson",
+        "notes",
+        "read",
+        "sequence",
+        "write",
+        "written",
+    }
+    evaluation_terms = {"actual", "like", "more", "random", "rather", "should", "want"}
+    if {"you", "want"}.issubset(tokens) and len(tokens & authoring_terms) >= 2:
+        return True
+    return bool(
+        "teacher" in tokens
+        and "notes" in tokens
+        and tokens & authoring_terms
+        and tokens & evaluation_terms
+    )
+
+
+def _positive_instructional_evidence(text: str) -> bool:
+    stripped = re.sub(r"\s+", " ", text or "").strip()
+    if not stripped or _is_question_or_assessment(stripped):
+        return False
+    if re.match(r"^[•●▪\-*]\s+\S", stripped) and len(stripped.split()) >= 3:
+        return True
+    instructional_patterns = (
+        r"\b(?:is|are)(?:\s+\w+ly)?\s+(?:a|an|the)\b",
+        r"\bis defined as\b",
+        r"\brefers? to\b",
+        r"\bfor example\b",
+        r"\bfor instance\b",
+        r"\bsuch as\b",
+        r"\bbecause\b",
+        r"\bresults? in\b",
+        r"\bcauses?\b",
+        r"\bchanges? (?:into|from)\b",
+        r"\bbecomes?\s+(?:a|an|the)\b",
+        r"\b(?:contains?|includes?|consists? of)\b",
+        r"\bdifference between\b",
+        r"\bprocess of\b",
+        r"\bfirst\b.+\bthen\b",
+        r"\bformula\b",
+    )
+    if any(re.search(pattern, stripped, flags=re.IGNORECASE) for pattern in instructional_patterns):
+        return True
+    # Ordinary explanatory prose remains valid even when it does not use a
+    # dictionary-style definition phrase.
+    return len(stripped.split()) >= 8 and bool(re.search(r"[.!;:]$", stripped))
+
+
+def _repeated_page_chrome_ids(blocks: list[dict]) -> set[int]:
+    occurrences: dict[tuple[str, str], set[int]] = {}
+    ids_by_key: dict[tuple[str, str], list[int]] = {}
+    total_pages = max((int(block.get("page") or 0) for block in blocks), default=0)
+    if total_pages < 2:
+        return set()
+
+    for block in blocks:
+        text = (block.get("text") or "").strip()
+        bbox = block.get("bbox") or (0, 0, 0, 0)
+        page_height = float(block.get("page_height") or 0)
+        if not text or not page_height or len(text.split()) > 14:
+            continue
+        position = None
+        if float(bbox[1]) <= page_height * 0.10:
+            position = "header"
+        elif float(bbox[3]) >= page_height * 0.90:
+            position = "footer"
+        if position is None:
+            continue
+        normalized = _normalized_repeated_text(text)
+        if not normalized:
+            continue
+        key = (position, normalized)
+        occurrences.setdefault(key, set()).add(int(block.get("page") or 0))
+        ids_by_key.setdefault(key, []).append(block["block_id"])
+
+    repeated_ids = set()
+    minimum_pages = 2 if total_pages <= 4 else 3
+    for key, pages in occurrences.items():
+        if len(pages) >= minimum_pages:
+            repeated_ids.update(ids_by_key[key])
+    return repeated_ids
+
 
 def clean_block_text(text: str) -> str:
     lines = [re.sub(r"\s+", " ", line).strip() for line in (text or "").splitlines()]
     lines = [line for line in lines if line]
-    cleaned = " ".join(lines).strip()
+    # Preserve PyMuPDF's physical line boundaries. Joining with spaces erased
+    # vocabulary rows, answer choices, and paragraph formatting, producing one
+    # very long learning-object string.
+    cleaned = "\n".join(lines).strip()
     cleaned = re.sub(r"^G\s+(?=[A-Z])", "", cleaned)
     return cleaned.strip()
 
@@ -252,6 +462,31 @@ def _base_classified_block(block: dict, category: str, reason: str, confidence: 
     return classified
 
 
+def _is_overlapping_extraction_duplicate(block: dict, earlier_blocks: list[dict]) -> bool:
+    """Reject duplicate draw/extraction layers, not intentional repeated teaching."""
+    bbox = block.get("bbox")
+    if not bbox:
+        return False
+    try:
+        rect = fitz.Rect(bbox)
+    except (TypeError, ValueError):
+        return False
+    if rect.is_empty:
+        return False
+    for earlier in earlier_blocks:
+        if earlier.get("page") != block.get("page") or not earlier.get("bbox"):
+            continue
+        try:
+            earlier_rect = fitz.Rect(earlier["bbox"])
+        except (TypeError, ValueError):
+            continue
+        intersection = rect & earlier_rect
+        overlap = intersection.get_area() / max(min(rect.get_area(), earlier_rect.get_area()), 1)
+        if overlap >= 0.90:
+            return True
+    return False
+
+
 def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
     text = block.get("text", "").strip()
     lowered = text.lower()
@@ -260,6 +495,8 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
     visual_bold = bool(block.get("is_bold"))
     visual_strong = visual_bold or (block.get("font_size") is not None and float(block.get("font_size") or 0) >= 12.0)
 
+    if block.get("is_repeated_page_chrome"):
+        return "document_metadata", "Repeated running header or footer.", 1.0
     if block.get("is_figure_text"):
         return "decorative_or_noise", "Text belongs to a captioned figure rather than the lesson body.", 1.0
     if not text or re.fullmatch(r"(?:page\s*)?\d+(?:\s*/\s*\d+)?", lowered):
@@ -271,16 +508,43 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
     if len(text) <= 2:
         return "decorative_or_noise", "Too short to be instructional content.", 0.98
 
-    if text.endswith("?"):
-        return "assessment", "Question or task intended to check learner understanding.", 0.88
-    if lowered in {"references", "bibliography", "sources", "acknowledgments"} or lowered.startswith(("http://", "https://", "www.")):
+    label = _normalized_label(text)
+    if _is_teacher_facing_editorial_text(text):
+        return "teacher_note", "Teacher-facing editorial or authoring comment.", 0.98
+    if re.fullmatch(r"(?:(?:expected|suggested|sample|correct)\s+)?answers?", label):
+        return "answer_key", "Expected or supplied answer is separate from instructional content.", 1.0
+    if _is_question_or_assessment(text):
+        return "assessment", "Question, exercise, or assessment instruction.", 0.98
+    if label in {"answer key", "answers", "suggested answers"}:
+        return "answer_key", "Answer-key material is separate from instructional content.", 1.0
+    if label in EXCLUDED_HEADING_LABELS or lowered.startswith(("http://", "https://", "www.", "doi:")):
         return "reference", "Reference or source information.", 0.96
+    if re.search(r"\bISBN(?:-1[03])?\s*:?\s*(?:97[89][-\s]?)?[0-9Xx][0-9Xx\s-]{8,}\b", text, flags=re.IGNORECASE):
+        return "document_metadata", "ISBN or publication identifier.", 1.0
+    if re.search(r"\b(?:copyright|all rights reserved|published by|printed by|no part of this publication)\b|©", lowered):
+        return "document_metadata", "Copyright or publisher information.", 1.0
+    if re.fullmatch(r".+\.{3,}\s*\d+", text):
+        return "navigation", "Table-of-contents entry with a page number.", 1.0
+    if re.fullmatch(r"(?:next|previous|back|home|click here|tap here)", label):
+        return "navigation", "Document navigation control.", 1.0
+    if re.match(
+        r"^(?:these terms|the following vocabulary)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        return "concept_metadata", "Vocabulary-section introduction, not a concept explanation.", 0.96
     if lowered.startswith(("module ", "grade ", "lesson ", "course ", "author:", "date:", "filename:")) and len(text) < 120:
         return "document_metadata", "Administrative document label.", 0.86
+    if _is_symbolic_relationship(text):
+        return "lesson_content", "Compact symbolic relationship retained as instructional content.", 0.9
+    if re.match(r"^\s*[•●▪\-*]\s*\S", text):
+        return "lesson_content", "Authored bullet retained under its surrounding lesson concept.", 0.9
     if re.fullmatch(r"\d+\.\d+(?:\.\d+)*\.?\s+[A-Z][A-Za-z0-9 ,:&()/+-]{1,80}", text) and not re.search(r"[.!?]$", text):
         return "lesson_content", "Numbered subtopic heading kept as a learning-object boundary.", 0.78
     if re.fullmatch(r"\d+\.?\s+[A-Z][A-Za-z0-9 ,:&()/+-]{1,80}", text) and not re.search(r"[.!?]$", text):
-        return "document_metadata", "Numbered section heading, not narration body.", 0.96
+        if visual_strong:
+            return "lesson_content", "Visually emphasized numbered lesson heading retained as a boundary.", 0.9
+        return "document_metadata", "Unemphasized numbered structural label, not narration body.", 0.86
     if visual_strong and re.fullmatch(r"[A-Za-z][A-Za-z0-9 ,&()/-]{1,80}", text) and not re.search(r"[.!?]", text):
         return "lesson_content", "Bold or visually emphasized title-like text retained as a heading/content boundary.", 0.9
     if len(text.split()) <= 4 and not re.search(r"[.!?]", text):
@@ -291,11 +555,26 @@ def _deterministic_category(block: dict) -> tuple[str, str, float] | None:
 def classify_instructional_blocks(blocks: list[dict], batch_size: int = 20) -> list[dict]:
     classified_by_id = {}
     ambiguous = []
-    seen_text = set()
+    seen_text: dict[str, list[dict]] = {}
 
-    for block in blocks:
+    repeated_page_chrome_ids = _repeated_page_chrome_ids(blocks)
+
+    for original_block in blocks:
+        block = {
+            **original_block,
+            "is_repeated_page_chrome": original_block["block_id"] in repeated_page_chrome_ids,
+        }
+        if block["is_repeated_page_chrome"]:
+            classified_by_id[block["block_id"]] = _base_classified_block(
+                block,
+                "document_metadata",
+                "Repeated running header or footer.",
+                1.0,
+            )
+            continue
         text_key = block.get("text", "").casefold()
-        if text_key in seen_text:
+        earlier_matches = seen_text.get(text_key, [])
+        if _is_overlapping_extraction_duplicate(block, earlier_matches):
             classified_by_id[block["block_id"]] = _base_classified_block(
                 block,
                 "decorative_or_noise",
@@ -303,7 +582,7 @@ def classify_instructional_blocks(blocks: list[dict], batch_size: int = 20) -> l
                 1.0,
             )
             continue
-        seen_text.add(text_key)
+        seen_text.setdefault(text_key, []).append(block)
 
         deterministic = _deterministic_category(block)
         if deterministic:
@@ -315,11 +594,16 @@ def classify_instructional_blocks(blocks: list[dict], batch_size: int = 20) -> l
     for start in range(0, len(ambiguous), batch_size):
         batch = ambiguous[start : start + batch_size]
         for block in batch:
+            is_instructional = _positive_instructional_evidence(block.get("text", ""))
             classified_by_id[block["block_id"]] = _base_classified_block(
                 block,
-                "lesson_content",
-                "Fallback: substantial text kept as lesson content because no rule-based category matched.",
-                0.55,
+                "lesson_content" if is_instructional else "needs_review",
+                (
+                    "Substantial explanatory text with positive instructional evidence."
+                    if is_instructional
+                    else "No positive instructional or exclusion evidence; teacher review required."
+                ),
+                0.65 if is_instructional else 0.4,
             )
 
     return [classified_by_id[block["block_id"]] for block in blocks if block["block_id"] in classified_by_id]
@@ -334,6 +618,14 @@ def split_classified_blocks(classified_blocks: list[dict]) -> dict:
         "concept_metadata_blocks": [b for b in classified_blocks if b.get("category") == "concept_metadata"],
         "ignored_blocks": [
             b for b in classified_blocks
-            if b.get("category") in {"document_metadata", "table_header", "reference", "decorative_or_noise"}
+            if b.get("category") in {
+                "answer_key",
+                "decorative_or_noise",
+                "document_metadata",
+                "navigation",
+                "needs_review",
+                "reference",
+                "table_header",
+            }
         ],
     }

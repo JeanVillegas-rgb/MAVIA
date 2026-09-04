@@ -26,3 +26,6 @@ frontend/node_modules/
 .vscode/
 *.log
 .DS_Store
+
+# Local extraction and visual QA artifacts
+/tmp/

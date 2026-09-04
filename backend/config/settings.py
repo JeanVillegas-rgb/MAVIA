@@ -114,8 +114,8 @@ REST_FRAMEWORK = {
 
 # Quiet the dev server's per-request access log (e.g. the frontend's
 # generation-trace polling floods it at 200 OK / INFO). 4xx/5xx still show
-# since runserver logs those at WARNING/ERROR — only successful requests are
-# silenced, so print()-based pipeline traces are no longer buried.
+# since runserver logs those at WARNING/ERROR; only successful requests are
+# silenced. Application diagnostics use the standard Python logging system.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
