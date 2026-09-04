@@ -641,6 +641,93 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
+        methods=["delete"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/questions/(?P<question_id>[^/.]+)",
+    )
+    def delete_topic_question(self, request, pk=None, node_id=None, question_id=None):
+        """Permanently drop a question and every concept pairing it had."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response(
+                {"detail": "Outline node not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            question = Question.objects.select_related("material").get(
+                pk=question_id,
+                material__course=course,
+                material__outline_node=node,
+            )
+        except (Question.DoesNotExist, ValueError):
+            return Response(
+                {"detail": "Question was not found in this outline node."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        material = question.material
+        question.delete()
+
+        generated_json = material.generated_json or {}
+        generated_json["questions"] = question_snapshots(material)
+        material.generated_json = generated_json
+        material.save(update_fields=["generated_json"])
+        self._refresh_relationship_snapshots({material}, recompute=False)
+
+        return Response(self._learning_resources_payload(node, request))
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)",
+    )
+    def delete_topic_learning_object(self, request, pk=None, node_id=None, object_id=None):
+        """Drop one learning object during final review, keeping its PDF confirmed.
+
+        The step-1 endpoint unconfirms the whole material on delete, which would
+        empty the final-review payload. Final review keeps the confirmation so the
+        remaining concepts stay publishable.
+        """
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response(
+                {"detail": "Outline node not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            learning_object = LearningObject.objects.select_related("material", "group").get(
+                pk=object_id,
+                material__course=course,
+                material__outline_node=node,
+            )
+        except (LearningObject.DoesNotExist, ValueError):
+            return Response(
+                {"detail": "Learning object was not found in this outline node."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not learning_objects_are_confirmed(learning_object.material):
+            return Response(
+                {"detail": "Confirm this learning object before reviewing connections."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        material = learning_object.material
+        group = learning_object.group
+        learning_object.delete()
+        if group is not None and not group.learning_objects.exists():
+            group.delete()
+
+        self._refresh_relationship_snapshots({material})
+
+        return Response(self._learning_resources_payload(node, request))
+
+    @action(
+        detail=True,
         methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/publish",
     )

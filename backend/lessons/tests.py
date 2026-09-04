@@ -3679,3 +3679,159 @@ class LearningObjectPreservationTests(TestCase):
 
         self.assertEqual(automatic_match, separating)
         self.assertEqual(selected_match, characteristics)
+
+
+class FinalReviewDeletionTests(TestCase):
+    """Step 3 (Publish) lets a teacher drop stale questions and content."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.course = CourseGroup.objects.create(title="Science")
+        self.node = OutlineNode.objects.create(
+            course=self.course,
+            title="Properties of Materials",
+            order=0,
+            depth=0,
+        )
+        self.material = LearningMaterial.objects.create(
+            course=self.course,
+            outline_node=self.node,
+            module_node=self.node,
+            title="lesson",
+            pdf_file="learning_materials/lesson.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+            generated_json={"learning_objects_confirmed": True},
+        )
+
+    def _objects_url(self, object_id):
+        return (
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}"
+            f"/learning-objects/{object_id}/"
+        )
+
+    def _questions_url(self, question_id):
+        return (
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}"
+            f"/questions/{question_id}/"
+        )
+
+    def test_deleting_a_question_removes_it_from_the_topic(self):
+        LearningObject.objects.create(
+            material=self.material,
+            title="Solid",
+            content="A solid has a definite shape and volume.",
+            order=0,
+        )
+        ensure_learning_object_groups(self.material)
+        question = Question.objects.create(
+            material=self.material,
+            prompt="Which state of matter keeps its shape?",
+            question_type=Question.Type.MULTIPLE_CHOICE,
+            choices=["Solid", "Liquid"],
+            correct_answer="Solid",
+            order=0,
+        )
+        resources_url = (
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/learning-resources/"
+        )
+        before = self.client.get(resources_url)
+        self.assertEqual(
+            [item["id"] for item in before.data["question_pairings"]],
+            [question.id],
+        )
+
+        response = self.client.delete(self._questions_url(question.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Question.objects.filter(pk=question.id).exists())
+        self.assertEqual(response.data["question_pairings"], [])
+
+    def test_deleting_a_question_from_another_topic_is_rejected(self):
+        other_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Other topic",
+            order=1,
+            depth=0,
+        )
+        other_material = LearningMaterial.objects.create(
+            course=self.course,
+            outline_node=other_node,
+            module_node=other_node,
+            title="other",
+            pdf_file="learning_materials/other.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+            generated_json={"learning_objects_confirmed": True},
+        )
+        question = Question.objects.create(
+            material=other_material,
+            prompt="Unrelated?",
+            question_type=Question.Type.TRUE_FALSE,
+            choices=["True", "False"],
+            correct_answer="True",
+            order=0,
+        )
+
+        response = self.client.delete(self._questions_url(question.id))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Question.objects.filter(pk=question.id).exists())
+
+    def test_deleting_a_learning_object_keeps_the_material_confirmed(self):
+        keeper = LearningObject.objects.create(
+            material=self.material,
+            title="Solid",
+            content="A solid has a definite shape and volume.",
+            order=0,
+        )
+        doomed = LearningObject.objects.create(
+            material=self.material,
+            title="Typo duplicate",
+            content="A solid has a definte shape.",
+            order=1,
+        )
+        ensure_learning_object_groups(self.material)
+
+        response = self.client.delete(self._objects_url(doomed.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(LearningObject.objects.filter(pk=doomed.id).exists())
+        self.material.refresh_from_db()
+        self.assertTrue(self.material.generated_json["learning_objects_confirmed"])
+        remaining = [
+            item["id"]
+            for group in response.data["learning_object_groups"]
+            for item in group["learning_objects"]
+        ]
+        self.assertEqual(remaining, [keeper.id])
+
+    def test_deleting_the_last_object_in_a_group_drops_the_empty_group(self):
+        solo = LearningObject.objects.create(
+            material=self.material,
+            title="Solid",
+            content="A solid has a definite shape and volume.",
+            order=0,
+        )
+        ensure_learning_object_groups(self.material)
+        group_id = LearningObject.objects.get(pk=solo.id).group_id
+        self.assertIsNotNone(group_id)
+
+        response = self.client.delete(self._objects_url(solo.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(LearningObjectGroup.objects.filter(pk=group_id).exists())
+        self.assertEqual(response.data["learning_object_groups"], [])
+
+    def test_deleting_an_unconfirmed_learning_object_is_rejected(self):
+        self.material.generated_json = {"learning_objects_confirmed": False}
+        self.material.save(update_fields=["generated_json"])
+        item = LearningObject.objects.create(
+            material=self.material,
+            title="Solid",
+            content="A solid has a definite shape and volume.",
+            order=0,
+        )
+
+        response = self.client.delete(self._objects_url(item.id))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(LearningObject.objects.filter(pk=item.id).exists())

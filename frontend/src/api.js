@@ -193,6 +193,18 @@ export function createTopicQuestion(courseId, nodeId, data) {
   });
 }
 
+export function deleteTopicQuestion(courseId, nodeId, questionId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/questions/${questionId}/`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteTopicLearningObject(courseId, nodeId, objectId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${objectId}/`, {
+    method: "DELETE",
+  });
+}
+
 export function publishTopic(courseId, nodeId) {
   return request(`/courses/${courseId}/outline-nodes/${nodeId}/publish/`, {
     method: "POST",

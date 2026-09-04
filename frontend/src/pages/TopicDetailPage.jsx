@@ -8,6 +8,8 @@ import {
   createTopicQuestion,
   deleteLearningMaterial,
   deleteLearningObject,
+  deleteTopicLearningObject,
+  deleteTopicQuestion,
   fetchCourse,
   fetchLearningResources,
   generateAudioPlaylist,
@@ -840,6 +842,43 @@ function PublishPanel({
   onMessage,
 }) {
   const [publishing, setPublishing] = useState(false);
+  const [deletingKey, setDeletingKey] = useState("");
+
+  async function runDeletion(key, confirmText, successText, action) {
+    if (!window.confirm(confirmText)) return;
+    setDeletingKey(key);
+    onError("");
+    onMessage("");
+    try {
+      onResourcesChange(await action());
+      onMessage(successText);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setDeletingKey("");
+    }
+  }
+
+  function handleDeleteObject(item) {
+    const label = item.title || "this learning object";
+    return runDeletion(
+      `object-${item.id}`,
+      `Delete "${label}"? It is removed from the course permanently.`,
+      `Deleted learning object "${label}".`,
+      () => deleteTopicLearningObject(courseId, topicId, item.id),
+    );
+  }
+
+  function handleDeleteQuestion(question) {
+    return runDeletion(
+      `question-${question.id}`,
+      `Delete this question? It is removed from every concept it is paired with.
+
+${question.prompt}`,
+      "Question deleted.",
+      () => deleteTopicQuestion(courseId, topicId, question.id),
+    );
+  }
 
   async function handlePublish() {
     setPublishing(true);
@@ -909,13 +948,63 @@ function PublishPanel({
                 <div className="publish-object-list">
                   {group.learning_objects.map((item) => (
                     <div className="publish-object-item" key={item.id}>
-                      <strong>{item.title}</strong>
+                      <div className="publish-item-heading">
+                        <strong>{item.title}</strong>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-small"
+                          disabled={publishing || Boolean(busyAction) || Boolean(deletingKey)}
+                          onClick={() => handleDeleteObject(item)}
+                        >
+                          {deletingKey === `object-${item.id}` ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
                       <FormattedLearningObjectContent
                         content={item.content}
                         className="learning-object-content-text"
                       />
                     </div>
                   ))}
+                </div>
+                <div className="publish-question-list">
+                  <h5>
+                    {group.questions?.length || 0} question
+                    {(group.questions?.length || 0) === 1 ? "" : "s"}
+                  </h5>
+                  {!group.questions?.length ? (
+                    <p className="publish-question-empty">
+                      No confirmed questions are paired with this concept.
+                    </p>
+                  ) : (
+                    group.questions.map((question) => (
+                      <div className="publish-question-item" key={question.id}>
+                        <div className="publish-item-heading">
+                          <span aria-hidden="true">Q</span>
+                          <strong>{question.prompt}</strong>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-small"
+                            disabled={publishing || Boolean(busyAction) || Boolean(deletingKey)}
+                            onClick={() => handleDeleteQuestion(question)}
+                          >
+                            {deletingKey === `question-${question.id}` ? "Deleting..." : "Delete"}
+                          </button>
+                        </div>
+                        {Boolean(question.choices?.length) && (
+                          <ul className="publish-question-choices">
+                            {question.choices.map((choice, choiceIndex) => (
+                              <li
+                                className={choice === question.correct_answer ? "is-correct" : ""}
+                                key={`${question.id}-${choiceIndex}`}
+                              >
+                                {choice}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </article>
             );
