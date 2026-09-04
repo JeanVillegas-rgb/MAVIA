@@ -35,6 +35,21 @@ function RelatedInfo({ info }) {
   );
 }
 
+function LessonPdfBadge({ count = 0 }) {
+  if (!count) return null;
+
+  return (
+    <span
+      className="hierarchy-pdf-badge"
+      title={`${count} lesson PDF${count === 1 ? "" : "s"} uploaded here`}
+      aria-label={`${count} lesson PDF${count === 1 ? "" : "s"} uploaded here`}
+    >
+      <span aria-hidden="true">PDF</span>
+      {count}
+    </span>
+  );
+}
+
 function IconButton({ label, children, tone = "quiet", ...props }) {
   return (
     <button
@@ -154,10 +169,16 @@ function ChildTopicRow({
                 className="hierarchy-title-button"
                 onClick={() => onSelectNode(node)}
               >
-                {node.title}
+                <span className="hierarchy-title-line">
+                  <span>{node.title}</span>
+                  <LessonPdfBadge count={node.lesson_pdf_count} />
+                </span>
               </button>
             ) : (
-              <strong>{node.title}</strong>
+              <strong className="hierarchy-title-line">
+                <span>{node.title}</span>
+                <LessonPdfBadge count={node.lesson_pdf_count} />
+              </strong>
             )
           )}
           {!isEditing && <RelatedInfo info={node.related_info} />}
@@ -256,10 +277,16 @@ function TopLevelTopic({
                   className="hierarchy-title-button hierarchy-title-button-strong"
                   onClick={() => onSelectNode(node)}
                 >
-                  {node.title}
+                  <span className="hierarchy-title-line">
+                    <span>{node.title}</span>
+                    <LessonPdfBadge count={node.lesson_pdf_count} />
+                  </span>
                 </button>
               ) : (
-                <h4>{node.title}</h4>
+                <h4 className="hierarchy-title-line">
+                  <span>{node.title}</span>
+                  <LessonPdfBadge count={node.lesson_pdf_count} />
+                </h4>
               )
             )}
             {!isEditing && <RelatedInfo info={node.related_info} />}

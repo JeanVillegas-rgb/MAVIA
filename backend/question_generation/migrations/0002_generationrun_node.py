@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('lessons', '0012_learningobjectprerequisiteedge'),
+        ('lessons', '0009_alter_courseoutline_options_and_more'),
         ('question_generation', '0001_initial'),
     ]
 

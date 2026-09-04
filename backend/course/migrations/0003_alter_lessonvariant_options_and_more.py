@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('course', '0002_alter_coursemodule_options_alter_lessonnode_options_and_more'),
-        ('lessons', '0015_outlinenode_related_info'),
+        ('lessons', '0009_alter_courseoutline_options_and_more'),
     ]
 
     operations = [

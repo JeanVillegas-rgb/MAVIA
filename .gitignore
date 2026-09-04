@@ -1,4 +1,4 @@
-PIPELINE.md 
+PIPELINE.md
 CLASSIFIER_STUDY_GUIDE.md
 
 # Python
@@ -13,10 +13,7 @@ staticfiles/
 media/
 db.sqlite3
 
-# Bloom's classifier model weights (~500MB — shared out-of-band, not in git)
-backend/question_generation/classifier/trained_model/
-
-# Virtual environment
+# Virtual environments
 .venv/
 venv/
 mavia/
@@ -30,3 +27,9 @@ frontend/node_modules/
 .vscode/
 *.log
 .DS_Store
+
+# Local extraction and visual QA artifacts
+/tmp/
+
+# Bloom classifier weights (~500MB, shared out-of-band)
+backend/question_generation/classifier/trained_model/

@@ -4,7 +4,10 @@ from .models import (
     CourseGroup,
     LearningMaterial,
     LearningObject,
+    LearningObjectMatchSuggestion,
     OutlineNode,
+    Question,
+    QuestionLearningObjectLink,
 )
 from .services.audio_generator import remove_missing_audio_urls
 from .services.content_generator import is_structural_metadata_label
@@ -91,16 +94,105 @@ class CourseListSerializer(serializers.ModelSerializer):
         return obj.nodes.count()
 
     def get_has_outline(self, obj):
-        return hasattr(obj, "outline")
+        return obj.outlines.exists()
 
     def get_outline_approved(self, obj):
-        return hasattr(obj, "outline") and obj.outline.is_approved
+        outlines = obj.outlines.all()
+        return outlines.exists() and not outlines.filter(is_approved=False).exists()
 
 
 class LearningObjectSerializer(serializers.ModelSerializer):
+    outline_node_id = serializers.IntegerField(
+        source="material.outline_node_id",
+        read_only=True,
+        allow_null=True,
+    )
+
     class Meta:
         model = LearningObject
-        fields = ["id", "kind", "section_title", "title", "content", "image_url", "order"]
+        fields = [
+            "id",
+            "material",
+            "outline_node_id",
+            "group",
+            "kind",
+            "section_title",
+            "title",
+            "content",
+            "image_url",
+            "order",
+            "source_page",
+            "source_block_id",
+            "source_excerpt",
+        ]
+
+
+class LearningObjectMatchSuggestionSerializer(serializers.ModelSerializer):
+    source_learning_object = LearningObjectSerializer(read_only=True)
+    candidate_learning_object = LearningObjectSerializer(read_only=True)
+
+    class Meta:
+        model = LearningObjectMatchSuggestion
+        fields = [
+            "id",
+            "outline_node",
+            "source_learning_object",
+            "candidate_learning_object",
+            "similarity_score",
+            "confidence",
+            "evidence",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class QuestionLearningObjectLinkSerializer(serializers.ModelSerializer):
+    learning_object_group_id = serializers.IntegerField(
+        source="learning_object.group_id",
+        read_only=True,
+        allow_null=True,
+    )
+    learning_object_title = serializers.CharField(
+        source="learning_object.title",
+        read_only=True,
+    )
+
+    class Meta:
+        model = QuestionLearningObjectLink
+        fields = [
+            "learning_object",
+            "learning_object_group_id",
+            "learning_object_title",
+            "relevance_score",
+            "method",
+            "is_primary",
+            "review_status",
+            "reviewed_at",
+        ]
+
+
+class QuestionSerializer(serializers.ModelSerializer):
+    learning_object_links = QuestionLearningObjectLinkSerializer(many=True, read_only=True)
+    outline_node_id = serializers.IntegerField(
+        source="material.outline_node_id",
+        read_only=True,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = Question
+        fields = [
+            "id",
+            "material",
+            "outline_node_id",
+            "prompt",
+            "order",
+            "source_page",
+            "source_block_id",
+            "source_excerpt",
+            "learning_object_links",
+        ]
 
 
 class LearningObjectMutationSerializer(serializers.ModelSerializer):
@@ -132,6 +224,7 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
     outline_node_title = serializers.SerializerMethodField()
     outline_node_path = serializers.SerializerMethodField()
     module_node_title = serializers.SerializerMethodField()
+    questions = QuestionSerializer(many=True, read_only=True)
 
     class Meta:
         model = LearningMaterial
@@ -149,6 +242,7 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
             "generated_json",
             "created_at",
             "learning_objects",
+            "questions",
         ]
 
     def get_filename(self, obj):
@@ -203,15 +297,29 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_outline(self, obj):
-        if hasattr(obj, "outline"):
-            return {
-                "id": obj.outline.id,
-                "filename": obj.outline.outline_file.name.split("/")[-1],
-                "is_approved": obj.outline.is_approved,
-                "uploaded_at": obj.outline.uploaded_at,
-                "approved_at": obj.outline.approved_at,
-            }
-        return None
+        outlines = list(obj.outlines.all())
+        if not outlines:
+            return None
+
+        latest = outlines[-1]
+        all_approved = all(outline.is_approved for outline in outlines)
+        return {
+            "id": latest.id,
+            "filename": latest.outline_file.name.split("/")[-1],
+            "is_approved": all_approved,
+            "uploaded_at": latest.uploaded_at,
+            "approved_at": latest.approved_at if all_approved else None,
+            "source_count": len(outlines),
+            "files": [
+                {
+                    "id": outline.id,
+                    "filename": outline.outline_file.name.split("/")[-1],
+                    "is_approved": outline.is_approved,
+                    "uploaded_at": outline.uploaded_at,
+                }
+                for outline in outlines
+            ],
+        }
 
     def get_hierarchy(self, obj):
         roots = obj.nodes.filter(parent__isnull=True)

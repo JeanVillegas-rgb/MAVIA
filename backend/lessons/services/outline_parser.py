@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import re
-import os
 import contextlib
 import io
+import logging
+import os
+import re
 from dataclasses import dataclass, field
 
 import fitz
 
 from lessons.models import CourseGroup, OutlineNode
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -1362,6 +1366,136 @@ def _has_enough_embedded_pdf_text(text: str) -> bool:
     return len(cleaned) >= 120 and len(words) >= 25
 
 
+def _document_structure_evidence(text: str) -> dict:
+    """Measure document structure without using subject-specific vocabulary."""
+    lines = [re.sub(r"\s+", " ", line).strip() for line in (text or "").splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return {
+            "line_count": 0,
+            "explicit_items": 0,
+            "hierarchical_items": 0,
+            "numbered_items": 0,
+            "bullet_items": 0,
+            "prose_ratio": 0.0,
+            "outline_heading": False,
+            "curriculum_schema_markers": 0,
+            "structured_items": 0,
+        }
+
+    explicit_items = sum(
+        bool(
+            re.match(
+                r"^(?:module|unit|chapter|week|lesson|topic|subtopic)\s*"
+                r"(?:no\.?|number|#)?\s*\d+(?:\.\d+)*\b",
+                line,
+                flags=re.IGNORECASE,
+            )
+        )
+        for line in lines
+    )
+    hierarchical_items = sum(
+        bool(re.match(r"^\d+(?:\.\d+)+[.)]?\s+\S+", line))
+        for line in lines
+    )
+    numbered_items = sum(
+        bool(re.match(r"^\d+[.)]\s+\S+", line)) and len(line.split()) <= 14
+        for line in lines
+    )
+    bullet_items = sum(
+        bool(re.match(r"^[^\w\s]{1,3}\s+\S+", line)) and len(line.split()) <= 14
+        for line in lines
+    )
+    prose_lines = sum(
+        len(line.split()) >= 14 and bool(re.search(r"[.!?;:]$", line))
+        for line in lines
+    )
+    outline_heading = any(
+        re.search(
+            r"\b(?:course|weekly|curriculum)\s+outline\b|\bsyllabus\b|\bscope\s+and\s+sequence\b",
+            line,
+            flags=re.IGNORECASE,
+        )
+        for line in lines
+    )
+    normalized_text = "\n".join(lines).casefold()
+    curriculum_schema_markers = sum(
+        marker in normalized_text
+        for marker in (
+            "content standard",
+            "learning competenc",
+            "learning outcome",
+            "course code",
+            "credit unit",
+            "grading period",
+        )
+    )
+    structured_items = explicit_items + hierarchical_items + numbered_items + bullet_items
+    prose_ratio = prose_lines / max(len(lines), 1)
+
+    return {
+        "line_count": len(lines),
+        "explicit_items": explicit_items,
+        "hierarchical_items": hierarchical_items,
+        "numbered_items": numbered_items,
+        "bullet_items": bullet_items,
+        "prose_ratio": prose_ratio,
+        "outline_heading": outline_heading,
+        "curriculum_schema_markers": curriculum_schema_markers,
+        "structured_items": structured_items,
+    }
+
+
+def is_course_outline_document(text: str) -> bool:
+    """Classify curriculum structure without using subject-specific vocabulary."""
+    evidence = _document_structure_evidence(text)
+    if not evidence["line_count"]:
+        return False
+
+    return bool(
+        (evidence["outline_heading"] and evidence["structured_items"] >= 2)
+        or (evidence["explicit_items"] >= 3 and evidence["structured_items"] >= 4)
+        or (
+            evidence["curriculum_schema_markers"] >= 2
+            and evidence["hierarchical_items"] >= 2
+            and evidence["prose_ratio"] < 0.60
+        )
+    )
+
+
+def is_course_outline_pdf(file_path: str) -> bool:
+    """Return whether a PDF's visible structure represents a course outline."""
+    document = fitz.open(file_path)
+    try:
+        visible_text = "\n".join(page.get_text("text") for page in document)
+    finally:
+        document.close()
+    return is_course_outline_document(visible_text)
+
+
+def validate_course_outline_pdf(file_path: str) -> None:
+    """Reject lesson PDFs before they can replace the saved course outline."""
+    if not is_course_outline_pdf(file_path):
+        raise ValueError(
+            "This PDF appears to be lesson material, not a course outline. "
+            "Upload a course outline containing modules, lessons, topics, or a curriculum schedule."
+        )
+
+    extracted_text = extract_outline_text(file_path, ".pdf")
+    marker = re.search(r"weekly course outline", extracted_text, flags=re.IGNORECASE)
+    parse_text = extracted_text[marker.start():] if marker else extracted_text
+    parsed = parse_outline_text(parse_text)
+
+    def count_nodes(nodes: list[ParsedOutlineNode]) -> int:
+        return sum(1 + count_nodes(node.children) for node in nodes)
+
+    if count_nodes(parsed) < 2:
+        raise ValueError(
+            "This PDF does not contain enough course-outline structure. "
+            "At least two identifiable module, lesson, or topic nodes are required."
+        )
+
+
 def _render_pdf_pages_as_images(document: fitz.Document, max_pages: int | None = None) -> list[dict]:
     pages = []
     limit = max_pages or int(os.getenv("MAX_PDF_PAGE_IMAGES_FOR_VISION", "8"))
@@ -1559,7 +1693,58 @@ def _persist_nodes(
     return created
 
 
-def build_dag_from_outline(course: CourseGroup, file_path: str, extension: str) -> list[OutlineNode]:
+def _merge_persisted_nodes(
+    course: CourseGroup,
+    nodes: list[ParsedOutlineNode],
+    parent: OutlineNode | None = None,
+) -> list[OutlineNode]:
+    """Merge one parsed outline tree into the course without deleting prior nodes.
+
+    Titles are compared only among siblings. An existing module/topic keeps its
+    database identity so lesson materials already mapped to it remain valid;
+    newly encountered siblings are appended after the current last sibling.
+    """
+    siblings = list(course.nodes.filter(parent=parent).order_by("order", "id"))
+    by_title = {_normalized_title_text(node.title): node for node in siblings}
+    next_order = max((node.order for node in siblings), default=-1) + 1
+    merged: list[OutlineNode] = []
+
+    for parsed in nodes:
+        title_key = _normalized_title_text(parsed.title)
+        outline_node = by_title.get(title_key)
+        if outline_node is None:
+            outline_node = OutlineNode.objects.create(
+                course=course,
+                parent=parent,
+                title=parsed.title,
+                related_info=parsed.related_info,
+                order=next_order,
+                depth=parent.depth + 1 if parent else 0,
+            )
+            by_title[title_key] = outline_node
+            next_order += 1
+        elif parsed.related_info:
+            # Preserve teacher-edited/existing values and fill only information
+            # that was absent from the earlier outline source.
+            combined_info = {**parsed.related_info, **(outline_node.related_info or {})}
+            if combined_info != outline_node.related_info:
+                outline_node.related_info = combined_info
+                outline_node.save(update_fields=["related_info"])
+
+        merged.append(outline_node)
+        if parsed.children:
+            merged.extend(_merge_persisted_nodes(course, parsed.children, outline_node))
+
+    return merged
+
+
+def build_dag_from_outline(
+    course: CourseGroup,
+    file_path: str,
+    extension: str,
+    *,
+    replace: bool = False,
+) -> list[OutlineNode]:
     text = extract_outline_text(file_path, extension)
     # Prefer parsing the weekly course outline section when present to avoid
     # capturing course-info sections such as "Intended Learning Outcomes",
@@ -1569,10 +1754,10 @@ def build_dag_from_outline(course: CourseGroup, file_path: str, extension: str) 
         # slice from the marker onward to focus parsing on the actual weekly outline
         text = text[marker.start():]
     parsed = parse_outline_text(text)
-    print(
-        "[TRACE outline] parsed roots:",
-        [node.title for node in parsed],
-        flush=True,
-    )
-    course.nodes.all().delete()
-    return _persist_nodes(course, parsed)
+    logger.debug("Parsed course-outline roots: %s", [node.title for node in parsed])
+    if not parsed:
+        raise ValueError("No course-outline topics could be extracted from this PDF.")
+    if replace:
+        course.nodes.all().delete()
+        return _persist_nodes(course, parsed)
+    return _merge_persisted_nodes(course, parsed)

@@ -125,10 +125,64 @@ export function uploadLearningMaterial(courseId, formData) {
   });
 }
 
-export function regenerateLearningMaterial(courseId, materialId) {
-  return request(`/courses/${courseId}/materials/${materialId}/regenerate-outputs/`, {
+export function uploadCoursePdf(courseId, formData) {
+  return request(`/courses/${courseId}/upload-pdf/`, {
     method: "POST",
+    body: formData,
   });
+}
+
+export function fetchLearningResources(courseId, nodeId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/learning-resources/`);
+}
+
+export function connectLearningObjects(courseId, nodeId, learningObjectIds, label = "") {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/connect-learning-objects/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      learning_object_ids: learningObjectIds,
+      ...(label.trim() ? { label: label.trim() } : {}),
+    }),
+  });
+}
+
+export function separateLearningObject(courseId, nodeId, learningObjectId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/separate-learning-object/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learning_object_id: learningObjectId }),
+  });
+}
+
+export function acceptLearningObjectMatchSuggestion(courseId, nodeId, suggestionId) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/match-suggestions/${suggestionId}/accept/`,
+    { method: "POST" },
+  );
+}
+
+export function rejectLearningObjectMatchSuggestion(courseId, nodeId, suggestionId) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/match-suggestions/${suggestionId}/reject/`,
+    { method: "POST" },
+  );
+}
+
+export function reviewQuestionPairing(courseId, nodeId, questionId, decision, learningObjectGroupId = null) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/questions/${questionId}/pairing/`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        decision,
+        ...(learningObjectGroupId !== null
+          ? { learning_object_group_id: Number(learningObjectGroupId) }
+          : {}),
+      }),
+    },
+  );
 }
 
 export function deleteLearningMaterial(courseId, materialId) {
@@ -189,41 +243,4 @@ export function deleteCourseOutline(courseId) {
 
 export function deleteCourse(id) {
   return request(`/courses/${id}/`, { method: "DELETE" });
-}
-
-export function startQuestionGeneration(materialId, nodeId = null) {
-  const path = nodeId
-    ? `/generation/materials/${materialId}/nodes/${nodeId}/start/`
-    : `/generation/materials/${materialId}/start/`;
-  return request(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  });
-}
-
-export function fetchQuestionRuns(materialId) {
-  return request(`/generation/runs/?material_id=${materialId}`);
-}
-
-export function fetchQuestionRunEvents(runId, afterSeq = 0) {
-  return request(`/generation/runs/${runId}/events/?after=${afterSeq}`);
-}
-
-export function fetchMaterialQuestions(materialId) {
-  return request(`/generation/materials/${materialId}/questions/`);
-}
-
-export function updateGeneratedQuestion(questionId, data) {
-  return request(`/generation/questions/${questionId}/`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-}
-
-export function deleteGeneratedQuestion(questionId) {
-  return request(`/generation/questions/${questionId}/`, {
-    method: "DELETE",
-  });
 }

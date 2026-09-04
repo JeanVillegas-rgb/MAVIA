@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('lessons', '0015_outlinenode_related_info'),
+        ('lessons', '0009_alter_courseoutline_options_and_more'),
         ('question_generation', '0002_generationrun_node'),
     ]
 

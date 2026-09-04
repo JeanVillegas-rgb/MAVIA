@@ -44,7 +44,7 @@ export default function App() {
       <header className="topbar">
         <Link to="/" className="brand">
           <h1>Mavia</h1>
-          <small>LLM-powered course outline hierarchy</small>
+          <small>Course outline and lesson PDF processing</small>
         </Link>
         <AuthStatus />
       </header>

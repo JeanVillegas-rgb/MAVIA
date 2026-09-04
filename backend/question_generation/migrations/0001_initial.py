@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('lessons', '0012_learningobjectprerequisiteedge'),
+        ('lessons', '0009_alter_courseoutline_options_and_more'),
     ]
 
     operations = [

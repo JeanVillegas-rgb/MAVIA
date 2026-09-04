@@ -1,16 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import CourseHierarchy from "../components/CourseHierarchy";
 import {
   confirmCourseOutline,
   createOutlineNode,
-  deleteCourseOutline,
   deleteOutlineNode,
   fetchCourse,
   updateOutlineNode,
-  uploadCourseOutline,
-  uploadLearningMaterial,
+  uploadCoursePdf,
 } from "../api";
+
+function formatMatchedMaterialLocation(material) {
+  const path = material?.outline_node_path || [];
+  if (path.length > 1) {
+    return `Lesson PDF uploaded and classified to\nTopic: ${path[0].title}.\nSubtopic: ${path
+      .slice(1)
+      .map((node) => node.title)
+      .join(" > ")}.`;
+  }
+
+  if (path.length === 1) {
+    return `Lesson PDF uploaded and classified to\nTopic: ${path[0].title}.`;
+  }
+
+  if (material?.module_node_title) {
+    return `Lesson PDF uploaded. Topic: ${material.module_node_title}.\nNo matching subtopic was found.`;
+  }
+
+  return "Lesson PDF uploaded, but its topic placement could not be determined.";
+}
 
 export default function CourseDetailPage() {
   const { id } = useParams();
@@ -19,16 +37,9 @@ export default function CourseDetailPage() {
   const [error, setError] = useState("");
   const [outlineBusy, setOutlineBusy] = useState(false);
   const [hierarchyBusy, setHierarchyBusy] = useState(false);
-  const [materialBusy, setMaterialBusy] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [outlineMessage, setOutlineMessage] = useState("");
   const [nodeToDelete, setNodeToDelete] = useState(null);
-  const outlineInputRef = useRef(null);
-
-  async function loadCourse() {
-    const data = await fetchCourse(id);
-    setCourse(data);
-  }
 
   useEffect(() => {
     let cancelled = false;
@@ -51,44 +62,53 @@ export default function CourseDetailPage() {
     };
   }, [id]);
 
-  async function handleOutlineUpload(event) {
+  async function handlePdfUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setOutlineBusy(true);
     setError("");
+    setOutlineMessage("");
+    setUploadMessage("");
     try {
+      const existingMaterialIds = new Set((course?.materials || []).map((material) => material.id));
       const formData = new FormData();
-      formData.append("outline_file", file);
-      await uploadCourseOutline(id, formData);
-      await loadCourse();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setOutlineBusy(false);
-      event.target.value = "";
-    }
-  }
+      formData.append("pdf_file", file);
+      formData.append("title", file.name.replace(/\.pdf$/i, ""));
+      const updatedCourse = await uploadCoursePdf(id, formData);
+      setCourse(updatedCourse);
 
-  async function handleDeleteOutline() {
-    if (!course?.outline) return;
-    setShowDeleteConfirm(true);
-  }
-
-  async function confirmDeleteOutline() {
-    setOutlineBusy(true);
-    setError("");
-    try {
-      const data = await deleteCourseOutline(id);
-      setCourse(data);
-      setShowDeleteConfirm(false);
-      if (outlineInputRef.current) {
-        outlineInputRef.current.value = "";
+      if (updatedCourse.upload_type === "outline") {
+        setOutlineMessage(
+          course?.outline
+            ? "Course outline detected and merged automatically. Existing hierarchy nodes were preserved and new topics were added for review."
+            : "Course outline detected and extracted. Review the hierarchy before confirming it."
+        );
+      } else {
+        const uploadedMaterial = (updatedCourse.materials || []).find((material) =>
+          updatedCourse.uploaded_material_id
+            ? material.id === updatedCourse.uploaded_material_id
+            : !existingMaterialIds.has(material.id)
+        );
+        if (uploadedMaterial?.status === "failed") {
+          setError(
+            uploadedMaterial.error_message
+              || "The lesson material could not be matched to the course hierarchy."
+          );
+          return;
+        }
+        const placementMessage = formatMatchedMaterialLocation(uploadedMaterial);
+        setUploadMessage(
+          updatedCourse.upload_reused
+            ? `This lesson PDF was already uploaded. Loaded the existing material.\n${placementMessage}`
+            : `Lesson material detected automatically.\n${placementMessage}`
+        );
       }
     } catch (err) {
       setError(err.message);
     } finally {
       setOutlineBusy(false);
+      event.target.value = "";
     }
   }
 
@@ -104,46 +124,6 @@ export default function CourseDetailPage() {
       setError(err.message);
     } finally {
       setOutlineBusy(false);
-    }
-  }
-
-  async function handleAutoMaterialUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setMaterialBusy(true);
-    setError("");
-    setUploadMessage("");
-    try {
-      const formData = new FormData();
-      formData.append("pdf_file", file);
-      formData.append("title", file.name.replace(/\.pdf$/i, ""));
-      const updatedCourse = await uploadLearningMaterial(id, formData);
-      setCourse(updatedCourse);
-
-      const matchingMaterials = (updatedCourse.materials || [])
-        .filter((material) => material.filename === file.name)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      const uploadedMaterial = matchingMaterials[0];
-      const topicLabel = uploadedMaterial?.outline_node_title
-        ? `topic '${uploadedMaterial.outline_node_title}'`
-        : uploadedMaterial?.module_node_title
-        ? `module '${uploadedMaterial.module_node_title}'`
-        : null;
-      const classifiedBy = uploadedMaterial?.outline_node_title || uploadedMaterial?.module_node_title
-        ? 'LLM classification'
-        : 'automatic classification';
-
-      setUploadMessage(
-        topicLabel
-          ? `Lesson PDF uploaded and classified by the LLM to ${topicLabel}.`
-          : `Lesson PDF uploaded and will be classified by the LLM to the best matching topic automatically.`
-      );
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setMaterialBusy(false);
-      event.target.value = "";
     }
   }
 
@@ -224,63 +204,40 @@ export default function CourseDetailPage() {
         {error && <div className="error-banner">{error}</div>}
       </section>
 
-      {!course.outline?.is_approved && (
-        <section className="card" style={{ marginBottom: "1.25rem" }}>
-          <h3>Course outline extraction</h3>
-          <p className="muted-text">
-            Upload a PDF course outline. The LLM extracts a draft hierarchy. Review it, then
-            confirm it before it appears as ready in Your courses.
-          </p>
-          <div className="action-row">
-            <label className="btn btn-primary">
-              {outlineBusy ? "Extracting..." : "Upload outline"}
-              <input
-                ref={outlineInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                hidden
-                disabled={outlineBusy}
-                onChange={handleOutlineUpload}
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              onClick={handleDeleteOutline}
-              disabled={outlineBusy || !course.outline}
-            >
-              Delete outline
-            </button>
+      <section className="card" style={{ marginBottom: "1.25rem" }}>
+        <h3>Upload course PDF</h3>
+        <p className="muted-text">
+          Upload either a course outline or lesson material. Mavia identifies the document automatically:
+          outlines extend the hierarchy, while lesson materials are placed under the matching topic or subtopic.
+        </p>
+        <div className="action-row">
+          <label className="btn btn-primary">
+            {outlineBusy ? "Processing..." : "Upload PDF"}
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              hidden
+              disabled={outlineBusy}
+              onChange={handlePdfUpload}
+            />
+          </label>
+        </div>
+        {outlineMessage && <div className="success-banner">{outlineMessage}</div>}
+        {uploadMessage && <div className="success-banner lesson-placement-banner">{uploadMessage}</div>}
+        {course.outline && (
+          <div className="outline-source-summary">
+            <strong>{course.outline.source_count || 1} outline PDF{(course.outline.source_count || 1) === 1 ? "" : "s"}</strong>
+            <ul>
+              {(course.outline.files || [{ id: course.outline.id, filename: course.outline.filename }]).map((file) => (
+                <li key={file.id}>{file.filename}</li>
+              ))}
+            </ul>
+            {!course.outline.is_approved && (
+              <small>New outline content is pending teacher confirmation.</small>
+            )}
           </div>
-          {course.outline && (
-            <p className="muted-text">
-              Current outline: {course.outline.filename} (pending teacher confirmation)
-            </p>
-          )}
-        </section>
-      )}
-
-      {course.outline?.is_approved && (
-        <section className="card" style={{ marginBottom: "1.25rem" }}>
-          <h3>Upload lesson PDF</h3>
-          <p className="muted-text">
-            Upload a lesson PDF and the LLM will classify it to the most suitable topic or subtopic automatically.
-          </p>
-          <div className="action-row">
-            <label className="btn btn-primary">
-              {materialBusy ? "Uploading..." : "Upload lesson PDF"}
-              <input
-                type="file"
-                accept=".pdf,application/pdf"
-                hidden
-                disabled={materialBusy}
-                onChange={handleAutoMaterialUpload}
-              />
-            </label>
-          </div>
-          {uploadMessage && <div className="success-banner">{uploadMessage}</div>}
-        </section>
-      )}
+        )}
+      </section>
 
       <section className="card" style={{ marginBottom: "1.25rem" }}>
         <div className="section-heading-row">
@@ -323,36 +280,6 @@ export default function CourseDetailPage() {
           </div>
         )}
       </section>
-
-      {showDeleteConfirm && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-outline-title">
-            <h3 id="delete-outline-title">Delete outline?</h3>
-            <p>
-              This will remove the uploaded outline and the extracted draft hierarchy for this
-              course.
-            </p>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowDeleteConfirm(false)}
-                disabled={outlineBusy}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={confirmDeleteOutline}
-                disabled={outlineBusy}
-              >
-                {outlineBusy ? "Deleting..." : "Delete outline"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {nodeToDelete && (
         <div className="modal-backdrop" role="presentation">

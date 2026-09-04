@@ -73,8 +73,6 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
-        # question generation writes trace events from a background thread
-        # while the frontend polls — wait out transient SQLite locks
         "OPTIONS": {"timeout": 20},
     }
 }
@@ -136,10 +134,11 @@ OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 # Model for question generation (separate from the content generation model)
 QUESTION_LLM_MODEL = os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
 
+
 # Quiet the dev server's per-request access log (e.g. the frontend's
 # generation-trace polling floods it at 200 OK / INFO). 4xx/5xx still show
-# since runserver logs those at WARNING/ERROR — only successful requests are
-# silenced, so print()-based pipeline traces are no longer buried.
+# since runserver logs those at WARNING/ERROR; only successful requests are
+# silenced. Application diagnostics use the standard Python logging system.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
