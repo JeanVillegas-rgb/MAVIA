@@ -15,9 +15,13 @@ Course-outline and lesson-PDF processing for accessible science content.
 ## Matching approach
 
 Learning-object matching uses configurable title/content TF-IDF, character n-grams,
-keyword overlap, and document-structure evidence. Question pairing uses configurable
-TF-IDF, source-block proximity, and same-page evidence. High-confidence question
-pairs can be automatic; uncertain or unmatched pairs require a teacher decision.
+keyword overlap, and document-structure evidence. An exact title is evidence, but it
+does not override the content score. Object matches at 50% or above are connected
+automatically only when the content evidence also reaches 30% against every member
+of the destination group. Matches from 30% through 49% require teacher review, and
+lower scores are ignored. Question pairing uses configurable TF-IDF, source-block
+proximity, and same-page evidence. High-confidence question pairs can be automatic;
+uncertain or unmatched pairs require a teacher decision.
 
 Sentence-BERT is not currently implemented. It is a possible future semantic signal,
 not part of the present methodology.

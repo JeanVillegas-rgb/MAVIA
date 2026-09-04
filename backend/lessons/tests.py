@@ -36,6 +36,7 @@ from .services.audio_generator import generate_material_audio_playlist
 from .services.instructional_content_classifier import (
     classify_instructional_blocks,
     clean_block_text,
+    detect_instructional_document_role,
     extract_pdf_text_blocks,
 )
 from .services.learning_resource_linker import (
@@ -43,6 +44,8 @@ from .services.learning_resource_linker import (
     ensure_learning_object_groups,
     learning_object_match_evidence,
     question_pairing_debug_configuration,
+    refresh_learning_object_match_suggestions,
+    refresh_question_learning_object_links,
     synchronize_detected_questions,
 )
 from .features.pdf_processing.use_cases import (
@@ -292,7 +295,72 @@ class LearningResourceRelationshipTests(TestCase):
             title=title,
             pdf_file=f"learning_materials/{title}.pdf",
             status=LearningMaterial.Status.COMPLETED,
+            generated_json={"learning_objects_confirmed": True},
         )
+
+    def test_review_connections_is_blank_until_learning_objects_are_confirmed(self):
+        draft = LearningMaterial.objects.create(
+            course=self.course,
+            outline_node=self.node,
+            module_node=self.node,
+            title="draft",
+            pdf_file="learning_materials/draft.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+            generated_json={"learning_objects_confirmed": False},
+        )
+        LearningObject.objects.create(
+            material=draft,
+            title="Solid",
+            content="A solid has a definite shape and volume.",
+        )
+        ensure_learning_object_groups(draft)
+        resources_url = (
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/learning-resources/"
+        )
+
+        before = self.client.get(resources_url)
+
+        self.assertEqual(before.status_code, status.HTTP_200_OK)
+        self.assertEqual(before.data["learning_object_groups"], [])
+        self.assertEqual(before.data["question_pairings"], [])
+
+        confirmed = self.client.post(
+            f"/api/courses/{self.course.id}/materials/{draft.id}/confirm-learning-objects/",
+            {},
+            format="json",
+        )
+        after = self.client.get(resources_url)
+
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(after.data["learning_object_groups"]), 1)
+
+    def test_teacher_can_add_a_manual_multiple_choice_question_to_a_topic(self):
+        lesson = self._material("confirmed-lesson")
+        LearningObject.objects.create(
+            material=lesson,
+            title="Solid",
+            content="A solid has a definite shape and volume.",
+        )
+        ensure_learning_object_groups(lesson)
+
+        response = self.client.post(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/questions/",
+            {
+                "prompt": "Which state of matter keeps its shape?",
+                "question_type": "multiple_choice",
+                "choices": ["Solid", "Liquid", "Gas", "Plasma"],
+                "correct_answer": "Solid",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        question = Question.objects.get(prompt="Which state of matter keeps its shape?")
+        self.assertEqual(question.question_type, Question.Type.MULTIPLE_CHOICE)
+        self.assertEqual(question.choices, ["Solid", "Liquid", "Gas", "Plasma"])
+        self.assertEqual(question.correct_answer, "Solid")
+        self.assertEqual(question.material.generated_json["document_source"], "manual_questions")
+        self.assertTrue(question.learning_object_links.exists())
 
     def test_upload_rejects_a_topic_from_another_selected_module(self):
         other_module = OutlineNode.objects.create(
@@ -336,7 +404,7 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(weights["source_block_proximity"], 0.25)
         self.assertEqual(weights["same_page"], 0.5)
 
-    def test_same_concept_from_different_pdfs_shares_a_neutral_group(self):
+    def test_related_but_not_high_confidence_content_waits_for_review(self):
         first_material = self._material("standard")
         second_material = self._material("alternate")
         first = LearningObject.objects.create(
@@ -356,10 +424,12 @@ class LearningResourceRelationshipTests(TestCase):
         second.refresh_from_db()
 
         self.assertIsNotNone(first.group_id)
-        self.assertEqual(first.group_id, second.group_id)
+        self.assertNotEqual(first.group_id, second.group_id)
+        suggestion = LearningObjectMatchSuggestion.objects.get(status="pending")
+        self.assertEqual(suggestion.confidence, LearningObjectMatchSuggestion.Confidence.MEDIUM)
         self.assertFalse(hasattr(first.group, "difficulty"))
 
-    def test_equivalent_wording_from_different_pdfs_can_share_a_group(self):
+    def test_equivalent_wording_with_enough_content_support_is_auto_grouped(self):
         first_material = self._material("concise")
         second_material = self._material("detailed")
         first = LearningObject.objects.create(
@@ -381,6 +451,112 @@ class LearningResourceRelationshipTests(TestCase):
         second.refresh_from_db()
 
         self.assertEqual(first.group_id, second.group_id)
+        suggestion = LearningObjectMatchSuggestion.objects.get(status="accepted")
+        self.assertEqual(suggestion.confidence, LearningObjectMatchSuggestion.Confidence.HIGH)
+
+    def test_high_content_match_is_automatically_connected(self):
+        first_material = self._material("first-definition")
+        second_material = self._material("second-definition")
+        content = "A solid has a definite shape and volume because its particles are tightly packed."
+        first = LearningObject.objects.create(
+            material=first_material,
+            title="Solid definition",
+            content=content,
+        )
+        second = LearningObject.objects.create(
+            material=second_material,
+            title="Solid definition",
+            content=content,
+        )
+
+        ensure_learning_object_groups(first_material)
+        ensure_learning_object_groups(second_material)
+        first.refresh_from_db()
+        second.refresh_from_db()
+
+        self.assertEqual(first.group_id, second.group_id)
+        suggestion = LearningObjectMatchSuggestion.objects.get()
+        self.assertEqual(suggestion.confidence, LearningObjectMatchSuggestion.Confidence.HIGH)
+        self.assertEqual(suggestion.status, LearningObjectMatchSuggestion.Status.ACCEPTED)
+
+    def test_high_suggestion_between_existing_groups_is_automatically_connected(self):
+        first_material = self._material("existing-first")
+        second_material = self._material("existing-second")
+        content = "A liquid has a fixed volume and takes the shape of its container."
+        first = LearningObject.objects.create(
+            material=first_material,
+            group=LearningObjectGroup.objects.create(outline_node=self.node, label="Liquid A"),
+            title="Liquid definition",
+            content=content,
+        )
+        second = LearningObject.objects.create(
+            material=second_material,
+            group=LearningObjectGroup.objects.create(outline_node=self.node, label="Liquid B"),
+            title="Liquid definition",
+            content=content,
+        )
+
+        refresh_learning_object_match_suggestions(second_material)
+        first.refresh_from_db()
+        second.refresh_from_db()
+
+        self.assertEqual(first.group_id, second.group_id)
+        suggestion = LearningObjectMatchSuggestion.objects.get()
+        self.assertEqual(suggestion.confidence, LearningObjectMatchSuggestion.Confidence.HIGH)
+        self.assertEqual(suggestion.status, LearningObjectMatchSuggestion.Status.ACCEPTED)
+
+    def test_exact_title_alone_does_not_force_high_confidence(self):
+        material = self._material("candidate")
+        candidate = LearningObject.objects.create(
+            material=material,
+            title="Solid",
+            content="This section lists playground games and outdoor activities.",
+        )
+
+        evidence = learning_object_match_evidence(
+            "Solid (Part 2 of 3)",
+            "A worked example calculates the travel time of a moving vehicle.",
+            0,
+            candidate,
+        )
+
+        self.assertTrue(evidence["exact_normalized_title"])
+        self.assertLess(evidence["score"], 0.75)
+        self.assertLess(evidence["content_support"], 0.45)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "LEARNING_OBJECT_MATCH_AUTO_THRESHOLD": "0.40",
+            "LEARNING_OBJECT_MATCH_REVIEW_THRESHOLD": "0.20",
+            "LEARNING_OBJECT_MATCH_MINIMUM_MARGIN": "0.00",
+            "LEARNING_OBJECT_MATCH_GROUP_MEMBER_THRESHOLD": "0.00",
+            "LEARNING_OBJECT_MATCH_CONTENT_SUPPORT_THRESHOLD": "0.45",
+        },
+    )
+    def test_shared_solid_title_does_not_connect_different_content(self):
+        definition_material = self._material("definition")
+        example_material = self._material("example")
+        definition = LearningObject.objects.create(
+            material=definition_material,
+            title="Solid",
+            content="A solid is matter with a definite shape and a definite volume.",
+        )
+        example = LearningObject.objects.create(
+            material=example_material,
+            title="Solid (Part 2 of 3)",
+            content="Examples include a book on a shelf, an ice cube in a glass, and a rock on a table.",
+        )
+
+        ensure_learning_object_groups(definition_material)
+        ensure_learning_object_groups(example_material)
+        definition.refresh_from_db()
+        example.refresh_from_db()
+
+        self.assertNotEqual(definition.group_id, example.group_id)
+        suggestion = LearningObjectMatchSuggestion.objects.get(status="pending")
+        self.assertEqual(suggestion.confidence, LearningObjectMatchSuggestion.Confidence.MEDIUM)
+        self.assertLess(suggestion.evidence["content_support"], 0.45)
 
     def test_different_concepts_on_the_same_topic_node_keep_separate_groups(self):
         first_material = self._material("shape-source")
@@ -453,6 +629,7 @@ class LearningResourceRelationshipTests(TestCase):
                 "character_ngram",
                 "keyword_overlap",
                 "structure",
+                "content_support",
                 "exact_normalized_title",
             },
         )
@@ -488,7 +665,7 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertNotEqual(first.group_id, second.group_id)
         self.assertEqual(suggestion.status, LearningObjectMatchSuggestion.Status.PENDING)
         self.assertEqual(suggestion.confidence, LearningObjectMatchSuggestion.Confidence.MEDIUM)
-        self.assertEqual(suggestion.evidence["method"], "hybrid_tfidf_v2")
+        self.assertEqual(suggestion.evidence["method"], "hybrid_tfidf_v3_content_guard")
 
     @patch.dict(
         "os.environ",
@@ -574,6 +751,40 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertTrue(link.is_primary)
         self.assertEqual(link.method, "layout_tfidf")
         self.assertNotIn(question.prompt, solid.content)
+
+    def test_question_only_pdf_pairs_against_learning_objects_in_its_topic(self):
+        lesson_material = self._material("lesson")
+        question_material = self._material("assessment")
+        solid = LearningObject.objects.create(
+            material=lesson_material,
+            title="Solid shape",
+            content="A solid has a definite shape and keeps its form inside a container.",
+            order=0,
+        )
+        LearningObject.objects.create(
+            material=lesson_material,
+            title="Liquid shape",
+            content="A liquid flows and takes the shape of its container.",
+            order=1,
+        )
+        ensure_learning_object_groups(lesson_material)
+        question = Question.objects.create(
+            material=question_material,
+            prompt="Which state of matter has a definite shape and keeps its form?",
+        )
+
+        refresh_question_learning_object_links(question_material)
+        link = QuestionLearningObjectLink.objects.get(question=question)
+
+        self.assertEqual(link.learning_object, solid)
+        self.assertEqual(link.method, "topic_tfidf")
+        self.assertIn(
+            link.review_status,
+            {
+                QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
+                QuestionLearningObjectLink.ReviewStatus.PENDING_REVIEW,
+            },
+        )
 
     def test_question_detector_keeps_choices_but_removes_supplied_answer(self):
         payloads = detected_question_payloads(
@@ -2449,6 +2660,105 @@ class LearningObjectPreservationTests(TestCase):
 
         self.assertEqual([item["category"] for item in classified[-2:]], ["assessment", "assessment"])
         self.assertEqual([item["title"] for item in learning_objects], ["Matter"])
+
+    def test_question_only_document_is_detected_as_assessment(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "Science Review Questions", "line_count": 1},
+            {"block_id": 2, "page": 1, "text": "1. Define matter.", "line_count": 1},
+            {"block_id": 3, "page": 1, "text": "2. Explain why a solid keeps its shape.", "line_count": 1},
+            {"block_id": 4, "page": 1, "text": "3. Compare a liquid and a gas.", "line_count": 1},
+            {"block_id": 5, "page": 1, "text": "4. Which state has a definite volume?", "line_count": 1},
+        ]
+
+        classified = classify_instructional_blocks(blocks)
+
+        self.assertEqual(detect_instructional_document_role(classified), "assessment")
+        self.assertEqual(
+            [item["category"] for item in classified[1:]],
+            ["assessment", "assessment", "assessment", "assessment"],
+        )
+
+    def test_true_false_and_multiple_choice_document_is_detected_as_assessment(self):
+        blocks = [
+            {"block_id": 1, "page": 1, "text": "A. True or False", "line_count": 1},
+            {"block_id": 2, "page": 1, "text": "1. A solid has a definite shape and volume.", "line_count": 1},
+            {"block_id": 3, "page": 1, "text": "True / False", "line_count": 1},
+            {"block_id": 4, "page": 1, "text": "2. A liquid takes the shape of its container.", "line_count": 1},
+            {"block_id": 5, "page": 1, "text": "True / False", "line_count": 1},
+            {"block_id": 6, "page": 2, "text": "B. Multiple Choice", "line_count": 1},
+            {"block_id": 7, "page": 2, "text": "1. Which state of matter has a definite shape?", "line_count": 1},
+            {"block_id": 8, "page": 2, "text": "A. Solid B. Liquid C. Gas D. Plasma", "line_count": 1},
+            {"block_id": 9, "page": 2, "text": "2. Which state fills its entire container?", "line_count": 1},
+            {"block_id": 10, "page": 2, "text": "A. Solid B. Liquid C. Gas D. Ice", "line_count": 1},
+        ]
+
+        classified = classify_instructional_blocks(blocks)
+
+        self.assertEqual(detect_instructional_document_role(classified), "assessment")
+
+    def test_numbered_instruction_questions_are_extracted_as_separate_prompts(self):
+        payloads = detected_question_payloads(
+            [
+                {
+                    "block_id": 1,
+                    "page": 1,
+                    "category": "assessment",
+                    "text": "1. Define matter.\n2. Explain why a solid keeps its shape.\n3. Compare liquids and gases.",
+                }
+            ]
+        )
+
+        self.assertEqual(
+            [payload["prompt"] for payload in payloads],
+            [
+                "1. Define matter.",
+                "2. Explain why a solid keeps its shape.",
+                "3. Compare liquids and gases.",
+            ],
+        )
+
+    def test_true_false_statements_are_extracted_from_question_only_document(self):
+        classified = [
+            {"block_id": 1, "page": 1, "category": "assessment", "text": "A. True or False"},
+            {
+                "block_id": 2,
+                "page": 1,
+                "category": "lesson_content",
+                "text": "1. A solid has a definite shape and definite volume.",
+            },
+            {"block_id": 3, "page": 1, "category": "lesson_content", "text": "True / False"},
+            {
+                "block_id": 4,
+                "page": 1,
+                "category": "lesson_content",
+                "text": "2. A liquid takes the shape of its container.",
+            },
+            {"block_id": 5, "page": 1, "category": "lesson_content", "text": "True / False"},
+            {"block_id": 6, "page": 1, "category": "assessment", "text": "B. Multiple Choice"},
+            {
+                "block_id": 7,
+                "page": 1,
+                "category": "assessment",
+                "text": "1. Which example is a gas?",
+            },
+            {
+                "block_id": 8,
+                "page": 1,
+                "category": "assessment",
+                "text": "A. Milk\nB. Rock\nC. Water\nD. Oxygen",
+            },
+        ]
+
+        payloads = detected_question_payloads(classified)
+
+        self.assertEqual(
+            [item["prompt"] for item in payloads],
+            [
+                "1. A solid has a definite shape and definite volume.",
+                "2. A liquid takes the shape of its container.",
+                "1. Which example is a gas?",
+            ],
+        )
 
     def test_teacher_check_prompt_and_expected_answer_are_not_learning_objects(self):
         blocks = [

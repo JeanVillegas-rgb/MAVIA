@@ -153,5 +153,10 @@ LOGGING = {
             "level": "WARNING",
             "propagate": False,
         },
+        "lessons.views": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }

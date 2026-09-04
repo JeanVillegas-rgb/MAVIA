@@ -257,12 +257,24 @@ class LearningObjectMatchSuggestion(models.Model):
 class Question(models.Model):
     """A detected question kept separate from learner-facing lesson content."""
 
+    class Type(models.TextChoices):
+        OPEN_ENDED = "open_ended", "Open ended"
+        TRUE_FALSE = "true_false", "True/False"
+        MULTIPLE_CHOICE = "multiple_choice", "Multiple choice"
+
     material = models.ForeignKey(
         LearningMaterial,
         related_name="questions",
         on_delete=models.CASCADE,
     )
     prompt = models.TextField()
+    question_type = models.CharField(
+        max_length=30,
+        choices=Type.choices,
+        default=Type.OPEN_ENDED,
+    )
+    choices = models.JSONField(default=list, blank=True)
+    correct_answer = models.TextField(blank=True)
     order = models.PositiveIntegerField(default=0)
     source_page = models.PositiveIntegerField(null=True, blank=True)
     source_block_id = models.PositiveIntegerField(null=True, blank=True)

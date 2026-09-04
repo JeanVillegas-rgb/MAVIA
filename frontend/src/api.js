@@ -185,6 +185,14 @@ export function reviewQuestionPairing(courseId, nodeId, questionId, decision, le
   );
 }
 
+export function createTopicQuestion(courseId, nodeId, data) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/questions/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
 export function deleteLearningMaterial(courseId, materialId) {
   return request(`/courses/${courseId}/materials/${materialId}/`, {
     method: "DELETE",

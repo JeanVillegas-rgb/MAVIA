@@ -5,6 +5,7 @@ import {
   confirmLearningObjects,
   connectLearningObjects,
   createLearningObject,
+  createTopicQuestion,
   deleteLearningMaterial,
   deleteLearningObject,
   fetchCourse,
@@ -35,6 +36,79 @@ function findTopLevelNode(topic, allTopics) {
 
 function isImageLearningObject(item) {
   return item?.kind === "image" || Boolean(item?.image_url);
+}
+
+function isQuestionMaterial(material) {
+  const generatedJson = material?.generated_json || {};
+  return generatedJson.document_role === "assessment"
+    || (!(material?.learning_objects?.length) && Boolean(material?.questions?.length));
+}
+
+function renderInlineFormatting(text) {
+  return String(text || "").split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => (
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>
+      : <Fragment key={`${part}-${index}`}>{part}</Fragment>
+  ));
+}
+
+function FormattedLearningObjectContent({ content, className = "" }) {
+  const lines = String(content || "No narration content.")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const blocks = [];
+  let list = [];
+  let listType = "ul";
+  let implicitListMode = false;
+
+  function flushList() {
+    if (!list.length) return;
+    const ListTag = listType;
+    blocks.push(
+      <ListTag className="formatted-content-list" key={`list-${blocks.length}`}>
+        {list.map((item, index) => <li key={`${item}-${index}`}>{renderInlineFormatting(item)}</li>)}
+      </ListTag>,
+    );
+    list = [];
+  }
+
+  lines.forEach((line) => {
+    const bullet = line.match(/^(?:[-*\u2022])\s+(.+)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    const isHeading = line.endsWith(":") && line.length <= 90;
+    if (bullet || numbered) {
+      const nextType = numbered ? "ol" : "ul";
+      if (list.length && listType !== nextType) flushList();
+      listType = nextType;
+      list.push((bullet || numbered)[1]);
+      return;
+    }
+    if (isHeading) {
+      flushList();
+      blocks.push(
+        <p className="formatted-content-heading" key={`line-${blocks.length}`}>
+          <strong>{renderInlineFormatting(line)}</strong>
+        </p>,
+      );
+      implicitListMode = true;
+      return;
+    }
+    if (implicitListMode) {
+      listType = "ul";
+      list.push(line);
+      return;
+    }
+    flushList();
+    blocks.push(
+      <p key={`line-${blocks.length}`}>
+        {renderInlineFormatting(line)}
+      </p>,
+    );
+  });
+  flushList();
+
+  return <div className={`formatted-learning-object-content ${className}`.trim()}>{blocks}</div>;
 }
 
 function logLearningObjectMatchDebug(payload) {
@@ -69,9 +143,11 @@ function logLearningObjectMatchDebug(payload) {
       character_ngram: Number(evidence.character_ngram || 0),
       keyword_overlap: Number(evidence.keyword_overlap || 0),
       structure: Number(evidence.structure || 0),
+      content_support: Number(evidence.content_support || 0),
       runner_up_score: Number(evidence.runner_up_score || 0),
       winner_margin: margin,
       minimum_group_member_score: groupMemberScore,
+      minimum_group_content_support: Number(evidence.minimum_group_content_support || 0),
       exact_normalized_title: Boolean(evidence.exact_normalized_title),
     });
     console.table([
@@ -98,6 +174,18 @@ function logLearningObjectMatchDebug(payload) {
         actual: groupMemberScore,
         required: thresholds.minimum_group_member,
         passed: groupMemberScore >= Number(thresholds.minimum_group_member ?? 0),
+      },
+      {
+        rule: "Content evidence",
+        actual: Number(evidence.content_support || 0),
+        required: thresholds.minimum_content_support,
+        passed: Number(evidence.content_support || 0) >= Number(thresholds.minimum_content_support ?? 0),
+      },
+      {
+        rule: "Every member content",
+        actual: Number(evidence.minimum_group_content_support || 0),
+        required: thresholds.minimum_content_support,
+        passed: Number(evidence.minimum_group_content_support || 0) >= Number(thresholds.minimum_content_support ?? 0),
       },
     ]);
     console.debug("Raw match suggestion", suggestion);
@@ -167,33 +255,161 @@ function ReviewQueueNavigator({ index, count, onChange, disabled, itemLabel }) {
   );
 }
 
-function ReviewQueuePanel({
+function ObjectPairsPanel({
   suggestions,
-  questionPairings,
-  groups,
   materialById,
   busyAction,
+  pendingQuestionCount,
+  onReviewStepChange,
   onReview,
-  onReviewQuestion,
 }) {
-  const [activeTab, setActiveTab] = useState(suggestions.length ? "objects" : "questions");
-  const [editingQuestionId, setEditingQuestionId] = useState(null);
-  const [selectedGroupId, setSelectedGroupId] = useState("");
   const [objectIndex, setObjectIndex] = useState(0);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const totalToReview = suggestions.length + questionPairings.length;
-
-  useEffect(() => {
-    if (activeTab === "objects" && !suggestions.length && questionPairings.length) {
-      setActiveTab("questions");
-    } else if (activeTab === "questions" && !questionPairings.length && suggestions.length) {
-      setActiveTab("objects");
-    }
-  }, [activeTab, questionPairings.length, suggestions.length]);
 
   useEffect(() => {
     setObjectIndex((current) => Math.max(0, Math.min(current, suggestions.length - 1)));
   }, [suggestions.length]);
+
+  return (
+    <aside className="match-suggestion-panel panel-aside" aria-labelledby="object-pairs-panel-title">
+      <div className="match-suggestion-heading">
+        <div>
+          <span className="connection-eyebrow">Review queue</span>
+          <h4 id="object-pairs-panel-title">Review object pairs</h4>
+        </div>
+        <span>{suggestions.length} to review</span>
+      </div>
+      <div className="review-step-indicator" aria-label="Review progress">
+        <span className="is-active">1</span>
+        <div aria-hidden="true" />
+        <span>2</span>
+        <strong>Object pairs</strong>
+      </div>
+
+      <p className="match-suggestion-intro">
+        Review one pair at a time. Accept if both teach the same concept; decline if they do not.
+      </p>
+      {!suggestions.length ? (
+        <div className="review-queue-empty">No learning-object pairs need review.</div>
+      ) : (
+        <>
+          <ReviewQueueNavigator
+            index={objectIndex}
+            count={suggestions.length}
+            onChange={setObjectIndex}
+            disabled={Boolean(busyAction)}
+            itemLabel="Object pair"
+          />
+          <div className="match-suggestion-list">
+            {suggestions.map((suggestion, index) => {
+              const source = suggestion.source_learning_object;
+              const candidate = suggestion.candidate_learning_object;
+              const sourceMaterial = materialById.get(Number(source.material));
+              const candidateMaterial = materialById.get(Number(candidate.material));
+              return (
+                <article
+                  className={`match-suggestion-card ${
+                    index === objectIndex ? "" : "is-hidden"
+                  }`.trim()}
+                  key={suggestion.id}
+                >
+                  <div className="match-suggestion-score">
+                    <span>Similarity</span>
+                    <strong>{Math.round(suggestion.similarity_score * 100)}%</strong>
+                    <em>{suggestion.confidence} confidence</em>
+                  </div>
+                  <div className="match-suggestion-pair">
+                    <div className="match-source-card">
+                      <div className="match-source-label">
+                        <span aria-hidden="true">A</span>
+                        <small>{sourceMaterial?.filename || `PDF ${source.material}`}</small>
+                      </div>
+                      <strong>{source.title}</strong>
+                      {source.image_url && (
+                        <img
+                          className="review-source-image"
+                          src={source.image_url}
+                          alt={source.title || "Source A"}
+                        />
+                      )}
+                      <p className="match-source-content">
+                        {source.content || "No narration content."}
+                      </p>
+                    </div>
+                    <div className="match-pair-connector" aria-hidden="true">
+                      <span>+</span>
+                      <small>possible match</small>
+                    </div>
+                    <div className="match-source-card">
+                      <div className="match-source-label">
+                        <span aria-hidden="true">B</span>
+                        <small>{candidateMaterial?.filename || `PDF ${candidate.material}`}</small>
+                      </div>
+                      <strong>{candidate.title}</strong>
+                      {candidate.image_url && (
+                        <img
+                          className="review-source-image"
+                          src={candidate.image_url}
+                          alt={candidate.title || "Source B"}
+                        />
+                      )}
+                      <p className="match-source-content">
+                        {candidate.content || "No narration content."}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="match-suggestion-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      disabled={Boolean(busyAction)}
+                      onClick={() => onReview(suggestion, "reject")}
+                    >
+                      {busyAction === `suggestion-reject-${suggestion.id}`
+                        ? "Declining..."
+                        : "Decline"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      disabled={Boolean(busyAction)}
+                      onClick={() => onReview(suggestion, "accept")}
+                    >
+                      {busyAction === `suggestion-accept-${suggestion.id}`
+                        ? "Accepting..."
+                        : "Accept"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <div className="review-step-actions review-step-actions-next">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={Boolean(busyAction)}
+          onClick={() => onReviewStepChange("questions")}
+        >
+          Next step: Question pairs ({pendingQuestionCount})
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function ReviewQueuePanel({
+  questionPairings,
+  groups,
+  materialById,
+  busyAction,
+  onReviewStepChange,
+  onReviewQuestion,
+}) {
+  const [editingQuestionId, setEditingQuestionId] = useState(null);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [questionIndex, setQuestionIndex] = useState(0);
 
   useEffect(() => {
     setQuestionIndex((current) => Math.max(0, Math.min(current, questionPairings.length - 1)));
@@ -203,9 +419,7 @@ function ReviewQueuePanel({
   useEffect(() => {
     setEditingQuestionId(null);
     setSelectedGroupId("");
-  }, [activeTab, currentQuestionId]);
-
-  if (!totalToReview) return null;
+  }, [currentQuestionId]);
 
   function beginConceptChange(question) {
     const link = question.learning_object_links?.[0];
@@ -214,296 +428,401 @@ function ReviewQueuePanel({
   }
 
   return (
-    <aside className="match-suggestion-panel" aria-labelledby="match-suggestion-title">
+    <section className="match-suggestion-panel" aria-labelledby="match-suggestion-title">
       <div className="match-suggestion-heading">
         <div>
           <span className="connection-eyebrow">Review queue</span>
-          <h4 id="match-suggestion-title">Teacher decisions</h4>
+          <h4 id="match-suggestion-title">Review question pairs</h4>
         </div>
-        <span>{totalToReview} to review</span>
+        <span>{questionPairings.length} to review</span>
       </div>
-      <div className="review-queue-tabs" role="tablist" aria-label="Review queue type">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "objects"}
-          className={activeTab === "objects" ? "is-active" : ""}
-          onClick={() => setActiveTab("objects")}
-        >
-          Object pairs <span>{suggestions.length}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "questions"}
-          className={activeTab === "questions" ? "is-active" : ""}
-          onClick={() => setActiveTab("questions")}
-        >
-          Question pairs <span>{questionPairings.length}</span>
-        </button>
+      <div className="review-step-indicator" aria-label="Review progress">
+        <span className="is-complete">1</span>
+        <div aria-hidden="true" />
+        <span className="is-active">2</span>
+        <strong>Question pairs</strong>
       </div>
 
-      {activeTab === "objects" && (
+      <p className="match-suggestion-intro">
+        Review one uncertain question at a time. Accept the suggested concept, change it, or decline it.
+      </p>
+      {!questionPairings.length ? (
+        <div className="review-queue-empty">No question pairs need review.</div>
+      ) : (
         <>
-          <p className="match-suggestion-intro">
-            Review one pair at a time. Accept if both teach the same concept; decline if they do not.
-          </p>
-          {!suggestions.length ? (
-            <div className="review-queue-empty">No learning-object pairs need review.</div>
-          ) : (
-            <>
-              <ReviewQueueNavigator
-                index={objectIndex}
-                count={suggestions.length}
-                onChange={setObjectIndex}
-                disabled={Boolean(busyAction)}
-                itemLabel="Object pair"
-              />
-              <div className="match-suggestion-list">
-                {suggestions.map((suggestion, index) => {
-                  const source = suggestion.source_learning_object;
-                  const candidate = suggestion.candidate_learning_object;
-                  const sourceMaterial = materialById.get(Number(source.material));
-                  const candidateMaterial = materialById.get(Number(candidate.material));
-                  return (
-                    <article
-                      className={`match-suggestion-card ${
-                        index === objectIndex ? "" : "is-hidden"
-                      }`.trim()}
-                      key={suggestion.id}
-                    >
-                      <div className="match-suggestion-score">
-                        <span>Similarity</span>
-                        <strong>{Math.round(suggestion.similarity_score * 100)}%</strong>
-                        <em>{suggestion.confidence} confidence</em>
-                      </div>
-                      <div className="match-suggestion-pair">
-                        <div className="match-source-card">
-                          <div className="match-source-label">
-                            <span aria-hidden="true">A</span>
-                            <small>{sourceMaterial?.filename || `PDF ${source.material}`}</small>
-                          </div>
-                          <strong>{source.title}</strong>
-                          {source.image_url && (
-                            <img
-                              className="review-source-image"
-                              src={source.image_url}
-                              alt={source.title || "Source A"}
-                            />
-                          )}
-                          <p className="match-source-content">
-                            {source.content || "No narration content."}
-                          </p>
-                        </div>
-                        <div className="match-pair-connector" aria-hidden="true">
-                          <span>+</span>
-                          <small>possible match</small>
-                        </div>
-                        <div className="match-source-card">
-                          <div className="match-source-label">
-                            <span aria-hidden="true">B</span>
-                            <small>{candidateMaterial?.filename || `PDF ${candidate.material}`}</small>
-                          </div>
-                          <strong>{candidate.title}</strong>
-                          {candidate.image_url && (
-                            <img
-                              className="review-source-image"
-                              src={candidate.image_url}
-                              alt={candidate.title || "Source B"}
-                            />
-                          )}
-                          <p className="match-source-content">
-                            {candidate.content || "No narration content."}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="match-suggestion-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          disabled={Boolean(busyAction)}
-                          onClick={() => onReview(suggestion, "reject")}
-                        >
-                          {busyAction === `suggestion-reject-${suggestion.id}`
-                            ? "Declining..."
-                            : "Decline"}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-small"
-                          disabled={Boolean(busyAction)}
-                          onClick={() => onReview(suggestion, "accept")}
-                        >
-                          {busyAction === `suggestion-accept-${suggestion.id}`
-                            ? "Accepting..."
-                            : "Accept"}
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
+      <ReviewQueueNavigator
+        index={questionIndex}
+        count={questionPairings.length}
+        onChange={setQuestionIndex}
+        disabled={Boolean(busyAction)}
+        itemLabel="Question pair"
+      />
+      <div className="question-review-list">
+        {questionPairings.map((question, index) => {
+          const link = question.learning_object_links?.[0];
+          const suggestedGroup = groups.find(
+            (group) => Number(group.id) === Number(link?.learning_object_group_id),
+          );
+          const suggestedObject = suggestedGroup?.learning_objects?.find(
+            (item) => Number(item.id) === Number(link?.learning_object),
+          ) || suggestedGroup?.learning_objects?.[0];
+          const suggestedLabel = suggestedGroup?.label
+            || suggestedGroup?.learning_objects?.[0]?.title
+            || link?.learning_object_title
+            || "No suggested concept";
+          const material = materialById.get(Number(question.material));
+          const suggestedMaterial = materialById.get(Number(suggestedObject?.material));
+          const isUnmatched = link?.review_status === "unmatched";
+          const isEditing = editingQuestionId === question.id;
+          return (
+          <article
+            className={`question-review-card ${index === questionIndex ? "" : "is-hidden"}`.trim()}
+            key={question.id}
+          >
+            <div className="question-review-meta">
+              <span className={`question-review-status ${isUnmatched ? "is-unmatched" : ""}`}>
+                {isUnmatched ? "No confident match" : "Needs review"}
+              </span>
+              <small title={material?.filename || ""}>
+                {material?.filename || material?.title || `PDF ${question.material}`}
+              </small>
+            </div>
+            <div className="question-review-prompt">
+              <span aria-hidden="true">Q</span>
+              <strong>{question.prompt}</strong>
+            </div>
+            <div className="question-review-suggestion">
+              <div className="question-review-suggestion-heading">
+                <small>{isUnmatched ? "Best available concept" : "Suggested concept"}</small>
+                {suggestedMaterial && <span>{suggestedMaterial.filename || suggestedMaterial.title}</span>}
               </div>
-            </>
-          )}
-        </>
-      )}
+              <strong>{suggestedLabel}</strong>
+              {suggestedObject?.image_url && (
+                <img
+                  className="review-source-image"
+                  src={suggestedObject.image_url}
+                  alt={suggestedObject.title || suggestedLabel}
+                />
+              )}
+              <p>{suggestedObject?.content || "No learning-object content is available."}</p>
+            </div>
 
-      {activeTab === "questions" && (
-        <>
-          <p className="match-suggestion-intro">
-            Review one uncertain question at a time. Accept the suggested concept, change it, or decline it.
-          </p>
-          {!questionPairings.length ? (
-            <div className="review-queue-empty">No question pairs need review.</div>
-          ) : (
-            <>
-              <ReviewQueueNavigator
-                index={questionIndex}
-                count={questionPairings.length}
-                onChange={setQuestionIndex}
-                disabled={Boolean(busyAction)}
-                itemLabel="Question pair"
-              />
-              <div className="question-review-list">
-                {questionPairings.map((question, index) => {
-                  const link = question.learning_object_links?.[0];
-                  const suggestedGroup = groups.find(
-                    (group) => Number(group.id) === Number(link?.learning_object_group_id),
-                  );
-                  const suggestedObject = suggestedGroup?.learning_objects?.find(
-                    (item) => Number(item.id) === Number(link?.learning_object),
-                  ) || suggestedGroup?.learning_objects?.[0];
-                  const suggestedLabel = suggestedGroup?.label
-                    || suggestedGroup?.learning_objects?.[0]?.title
-                    || link?.learning_object_title
-                    || "No suggested concept";
-                  const material = materialById.get(Number(question.material));
-                  const suggestedMaterial = materialById.get(Number(suggestedObject?.material));
-                  const isUnmatched = link?.review_status === "unmatched";
-                  const isEditing = editingQuestionId === question.id;
-                  return (
-                  <article
-                    className={`question-review-card ${index === questionIndex ? "" : "is-hidden"}`.trim()}
-                    key={question.id}
+            {isEditing && (
+              <div className="question-concept-picker">
+                <label htmlFor={`question-concept-${question.id}`}>Choose the correct concept</label>
+                <select
+                  id={`question-concept-${question.id}`}
+                  value={selectedGroupId}
+                  onChange={(event) => setSelectedGroupId(event.target.value)}
+                >
+                  <option value="">Select a concept...</option>
+                  {groups.map((group) => (
+                    <option value={group.id} key={group.id}>
+                      {group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
+                    </option>
+                  ))}
+                </select>
+                <div className="question-concept-picker-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small"
+                    disabled={Boolean(busyAction)}
+                    onClick={() => setEditingQuestionId(null)}
                   >
-                    <div className="question-review-meta">
-                      <span className={`question-review-status ${isUnmatched ? "is-unmatched" : ""}`}>
-                        {isUnmatched ? "No confident match" : "Needs review"}
-                      </span>
-                      <small title={material?.filename || ""}>
-                        {material?.filename || material?.title || `PDF ${question.material}`}
-                      </small>
-                    </div>
-                    <div className="question-review-prompt">
-                      <span aria-hidden="true">Q</span>
-                      <strong>{question.prompt}</strong>
-                    </div>
-                    <div className="question-review-suggestion">
-                      <div className="question-review-suggestion-heading">
-                        <small>{isUnmatched ? "Best available concept" : "Suggested concept"}</small>
-                        {suggestedMaterial && <span>{suggestedMaterial.filename || suggestedMaterial.title}</span>}
-                      </div>
-                      <strong>{suggestedLabel}</strong>
-                      {suggestedObject?.image_url && (
-                        <img
-                          className="review-source-image"
-                          src={suggestedObject.image_url}
-                          alt={suggestedObject.title || suggestedLabel}
-                        />
-                      )}
-                      <p>{suggestedObject?.content || "No learning-object content is available."}</p>
-                    </div>
-
-                    {isEditing && (
-                      <div className="question-concept-picker">
-                        <label htmlFor={`question-concept-${question.id}`}>Choose the correct concept</label>
-                        <select
-                          id={`question-concept-${question.id}`}
-                          value={selectedGroupId}
-                          onChange={(event) => setSelectedGroupId(event.target.value)}
-                        >
-                          <option value="">Select a concept...</option>
-                          {groups.map((group) => (
-                            <option value={group.id} key={group.id}>
-                              {group.label || group.learning_objects?.[0]?.title || `Concept ${group.id}`}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="question-concept-picker-actions">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-small"
-                            disabled={Boolean(busyAction)}
-                            onClick={() => setEditingQuestionId(null)}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-primary btn-small"
-                            disabled={!selectedGroupId || Boolean(busyAction)}
-                            onClick={async () => {
-                              const completed = await onReviewQuestion(
-                                question,
-                                "change",
-                                selectedGroupId,
-                              );
-                              if (completed) setEditingQuestionId(null);
-                            }}
-                          >
-                            {busyAction === `question-change-${question.id}`
-                              ? "Saving..."
-                              : "Save concept"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {!isEditing && (
-                      <div className="question-review-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          disabled={Boolean(busyAction)}
-                          onClick={() => onReviewQuestion(question, "unpair")}
-                        >
-                          {busyAction === `question-unpair-${question.id}`
-                            ? "Declining..."
-                            : "Decline"}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          disabled={Boolean(busyAction)}
-                          onClick={() => beginConceptChange(question)}
-                        >
-                          Change concept
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-small"
-                          disabled={!link || Boolean(busyAction)}
-                          onClick={() => onReviewQuestion(question, "confirm")}
-                        >
-                          {busyAction === `question-confirm-${question.id}`
-                            ? "Accepting..."
-                            : "Accept"}
-                        </button>
-                      </div>
-                    )}
-                    </article>
-                  );
-                })}
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    disabled={!selectedGroupId || Boolean(busyAction)}
+                    onClick={async () => {
+                      const completed = await onReviewQuestion(
+                        question,
+                        "change",
+                        selectedGroupId,
+                      );
+                      if (completed) setEditingQuestionId(null);
+                    }}
+                  >
+                    {busyAction === `question-change-${question.id}`
+                      ? "Saving..."
+                      : "Save concept"}
+                  </button>
+                </div>
               </div>
-            </>
-          )}
+            )}
+
+            {!isEditing && (
+              <div className="question-review-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  disabled={Boolean(busyAction)}
+                  onClick={() => onReviewQuestion(question, "unpair")}
+                >
+                  {busyAction === `question-unpair-${question.id}`
+                    ? "Declining..."
+                    : "Decline"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  disabled={Boolean(busyAction)}
+                  onClick={() => beginConceptChange(question)}
+                >
+                  Change concept
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-small"
+                  disabled={!link || Boolean(busyAction)}
+                  onClick={() => onReviewQuestion(question, "confirm")}
+                >
+                  {busyAction === `question-confirm-${question.id}`
+                    ? "Accepting..."
+                    : "Accept"}
+                </button>
+              </div>
+            )}
+            </article>
+          );
+        })}
+      </div>
         </>
       )}
+      <div className="review-step-actions">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={Boolean(busyAction)}
+          onClick={() => onReviewStepChange("objects")}
+        >
+          Back to object pairs
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ManualQuestionPanel({
+  courseId,
+  topicId,
+  groups,
+  onResourcesChange,
+  onCourseChange,
+  onError,
+  onMessage,
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [questionType, setQuestionType] = useState("true_false");
+  const [prompt, setPrompt] = useState("");
+  const [choices, setChoices] = useState(["", "", "", ""]);
+  const [correctAnswer, setCorrectAnswer] = useState("True");
+  const [conceptGroupId, setConceptGroupId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function switchType(type) {
+    setQuestionType(type);
+    setChoices(["", "", "", ""]);
+    setCorrectAnswer(type === "true_false" ? "True" : "");
+  }
+
+  async function handleUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    onError("");
+    onMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("pdf_file", file);
+      formData.append("title", file.name.replace(/\.pdf$/i, ""));
+      formData.append("outline_node_id", topicId);
+      const updatedCourse = await uploadLearningMaterial(courseId, formData);
+      onCourseChange(updatedCourse);
+      onMessage("Question PDF uploaded and matched against the confirmed concepts.");
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSaving(true);
+    onError("");
+    onMessage("");
+    try {
+      const finalChoices = questionType === "true_false"
+        ? ["True", "False"]
+        : choices.map((choice) => choice.trim()).filter(Boolean);
+      const data = await createTopicQuestion(courseId, topicId, {
+        prompt: prompt.trim(),
+        question_type: questionType,
+        choices: finalChoices,
+        correct_answer: correctAnswer,
+        learning_object_group_id: conceptGroupId || null,
+      });
+      onResourcesChange(data.resources);
+      const updatedCourse = await fetchCourse(courseId);
+      onCourseChange(updatedCourse);
+      setPrompt("");
+      setChoices(["", "", "", ""]);
+      setCorrectAnswer(questionType === "true_false" ? "True" : "");
+      setConceptGroupId("");
+      onMessage(
+        conceptGroupId
+          ? "Question added and paired with the selected concept."
+          : "Question added and matched with the best available confirmed concept.",
+      );
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <aside className="match-suggestion-panel panel-aside" aria-labelledby="manual-question-panel-title">
+      <div className="match-suggestion-heading">
+        <div>
+          <span className="connection-eyebrow">Question tools</span>
+          <h4 id="manual-question-panel-title">Add questions</h4>
+        </div>
+      </div>
+
+      <div className="question-source-upload">
+        <p className="question-source-prompt">Did you prepare your questions in a PDF?</p>
+        <label className="question-sidebar-action question-sidebar-upload">
+          <span aria-hidden="true">PDF</span>
+          <strong>{uploading ? "Processing question PDF..." : "Upload question PDF"}</strong>
+          <input
+            type="file"
+            accept=".pdf,application/pdf"
+            hidden
+            disabled={uploading}
+            onChange={handleUpload}
+          />
+        </label>
+      </div>
+
+      <div className="question-source-divider" role="separator">
+        <span>OR</span>
+      </div>
+
+      <form className="question-manual-form" onSubmit={handleSubmit}>
+        <div className="question-type-toggle" role="tablist" aria-label="Question type">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={questionType === "true_false"}
+            className={questionType === "true_false" ? "is-active" : ""}
+            onClick={() => switchType("true_false")}
+          >
+            True/False
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={questionType === "multiple_choice"}
+            className={questionType === "multiple_choice" ? "is-active" : ""}
+            onClick={() => switchType("multiple_choice")}
+          >
+            Multiple choice
+          </button>
+        </div>
+
+        <label className="question-manual-field">
+          Question
+          <textarea
+            required
+            rows="3"
+            value={prompt}
+            placeholder="Enter the question"
+            onChange={(event) => setPrompt(event.target.value)}
+          />
+        </label>
+
+        <label className="question-manual-field">
+          Concept to tie to
+          <select
+            value={conceptGroupId}
+            onChange={(event) => setConceptGroupId(event.target.value)}
+          >
+            <option value="">Best available match</option>
+            {groups.map((group) => (
+              <option value={group.id} key={group.id}>
+                {group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {questionType === "multiple_choice" && (
+          <div className="question-manual-choice-list">
+            <span>Answer choices</span>
+            {choices.map((choice, index) => (
+              <label key={index}>
+                <span>{String.fromCharCode(65 + index)}</span>
+                <input
+                  required={index < 2}
+                  value={choice}
+                  placeholder={`Choice ${String.fromCharCode(65 + index)}`}
+                  onChange={(event) => {
+                    const next = [...choices];
+                    next[index] = event.target.value;
+                    setChoices(next);
+                    if (correctAnswer === choice) setCorrectAnswer(event.target.value);
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+        )}
+
+        <label className="question-manual-field">
+          Correct answer
+          <select
+            required
+            value={correctAnswer}
+            onChange={(event) => setCorrectAnswer(event.target.value)}
+          >
+            {questionType === "true_false" ? (
+              <>
+                <option value="True">True</option>
+                <option value="False">False</option>
+              </>
+            ) : (
+              <>
+                <option value="">Select the correct answer</option>
+                {choices.map((choice, index) => (
+                  choice.trim() ? <option value={choice.trim()} key={index}>{String.fromCharCode(65 + index)}. {choice}</option> : null
+                ))}
+              </>
+            )}
+          </select>
+        </label>
+
+        <button type="submit" className="btn btn-primary question-manual-submit" disabled={saving}>
+          {saving ? "Adding question..." : "Add question"}
+        </button>
+      </form>
     </aside>
   );
 }
 
-function LearningObjectConnections({ courseId, topicId, materials, onError, onMessage }) {
+function LearningObjectConnections({
+  courseId,
+  topicId,
+  materials,
+  reviewStep,
+  onReviewStepChange,
+  onCourseChange,
+  onError,
+  onMessage,
+}) {
   const [resources, setResources] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState("");
@@ -514,7 +833,7 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
 
   const materialSignature = useMemo(
     () => materials
-      .map((material) => `${material.id}:${material.learning_objects.map((item) => `${item.id}:${item.group}:${item.title}:${(item.content || "").length}`).join(",")}`)
+      .map((material) => `${material.id}:${Boolean(material.generated_json?.learning_objects_confirmed)}:${material.learning_objects.map((item) => `${item.id}:${item.group}:${item.title}:${(item.content || "").length}`).join(",")}`)
       .join("|"),
     [materials],
   );
@@ -524,8 +843,13 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
 
     async function loadResources() {
       setLoading(true);
+      const startedAt = performance.now();
       try {
         const data = await fetchLearningResources(courseId, topicId);
+        console.info("[MAVIA review] Queue loaded", {
+          request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
+          server: data.debug,
+        });
         if (!cancelled) {
           setResources(data);
           setSelectedIds([]);
@@ -554,7 +878,10 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
     const status = question.learning_object_links?.[0]?.review_status;
     return !status || status === "pending_review" || status === "unmatched";
   });
-  const totalReviewCount = matchSuggestions.length + questionReviewQueue.length;
+  const confirmedSourceCount = materials.filter(
+    (material) => material.generated_json?.learning_objects_confirmed
+      && material.learning_objects?.length,
+  ).length;
   const materialById = useMemo(
     () => new Map(materials.map((material) => [Number(material.id), material])),
     [materials],
@@ -586,11 +913,13 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
     return searchableText.includes(query);
   });
   const selectedGroupCount = new Set(selectedIds.map((id) => groupByObjectId.get(id))).size;
-  const pairedQuestionCount = new Set(
-    groups.flatMap((group) => group.questions.map((question) => question.id)),
-  ).size;
+
+  useEffect(() => {
+    if (reviewStep === "questions") setSelectedIds([]);
+  }, [reviewStep]);
 
   function toggleSelection(objectId) {
+    if (reviewStep !== "objects") return;
     setSelectedIds((current) => (
       current.includes(objectId)
         ? current.filter((id) => id !== objectId)
@@ -599,7 +928,7 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
   }
 
   async function connectSelected() {
-    if (selectedIds.length < 2) return;
+    if (reviewStep !== "objects" || selectedIds.length < 2) return;
     setBusyAction("connect");
     onError("");
     onMessage("");
@@ -618,6 +947,7 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
   }
 
   async function separateObject(item) {
+    if (reviewStep !== "objects") return;
     setBusyAction(`separate-${item.id}`);
     onError("");
     onMessage("");
@@ -637,11 +967,33 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
     setBusyAction(`suggestion-${decision}-${suggestion.id}`);
     onError("");
     onMessage("");
+    const startedAt = performance.now();
+    const evidence = suggestion.evidence || {};
+    console.groupCollapsed(
+      `[MAVIA review] ${decision} object pair ${suggestion.id}`,
+    );
+    console.info("Request", {
+      decision,
+      suggestion_id: suggestion.id,
+      source: suggestion.source_learning_object?.title,
+      candidate: suggestion.candidate_learning_object?.title,
+      similarity: suggestion.similarity_score,
+      confidence: suggestion.confidence,
+      winner_margin: evidence.winner_margin,
+      minimum_group_member_score: evidence.minimum_group_member_score,
+      content_support: evidence.content_support,
+      minimum_group_content_support: evidence.minimum_group_content_support,
+    });
     try {
       const action = decision === "accept"
         ? acceptLearningObjectMatchSuggestion
         : rejectLearningObjectMatchSuggestion;
       const data = await action(courseId, topicId, suggestion.id);
+      console.info("Response", {
+        request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
+        server: data.debug,
+        remaining_object_reviews: data.match_suggestions?.length || 0,
+      });
       setResources(data);
       onMessage(
         decision === "accept"
@@ -649,8 +1001,13 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
           : "Suggested connection was rejected and the objects remain separate.",
       );
     } catch (err) {
+      console.error("Review failed", {
+        request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
+        error: err,
+      });
       onError(err.message);
     } finally {
+      console.groupEnd();
       setBusyAction("");
     }
   }
@@ -659,6 +1016,14 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
     setBusyAction(`question-${decision}-${question.id}`);
     onError("");
     onMessage("");
+    const startedAt = performance.now();
+    console.groupCollapsed(`[MAVIA review] ${decision} question ${question.id}`);
+    console.info("Request", {
+      decision,
+      question_id: question.id,
+      learning_object_group_id: learningObjectGroupId,
+      current_pairing: question.learning_object_links?.[0],
+    });
     try {
       const data = await reviewQuestionPairing(
         courseId,
@@ -667,6 +1032,14 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
         decision,
         learningObjectGroupId,
       );
+      console.info("Response", {
+        request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
+        server: data.debug,
+        remaining_question_reviews: (data.question_pairings || []).filter((item) => {
+          const status = item.learning_object_links?.[0]?.review_status;
+          return !status || status === "pending_review" || status === "unmatched";
+        }).length,
+      });
       setResources(data);
       if (decision === "confirm") {
         onMessage("Question paired with the suggested concept.");
@@ -677,27 +1050,36 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
       }
       return true;
     } catch (err) {
+      console.error("Review failed", {
+        request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
+        error: err,
+      });
       onError(err.message);
       return false;
     } finally {
+      console.groupEnd();
       setBusyAction("");
     }
   }
 
   return (
-    <div className={`connection-review-layout ${totalReviewCount > 0 ? "has-recommendations" : ""}`}>
-      <section className="connection-review-panel" aria-labelledby="connection-review-title">
+    <div className="connection-review-layout has-recommendations">
+      {reviewStep === "objects" && (
+      <section
+        className="connection-review-panel"
+        aria-labelledby="connection-review-title"
+      >
       <div className="connection-review-heading">
         <div>
           <span className="connection-eyebrow">Teacher review</span>
-          <h3 id="connection-review-title">Connected Learning Objects</h3>
+          <h3 id="connection-review-title">Related Concepts</h3>
           <p>
             Review learning objects from every PDF and connect equivalent content into one concept group.
             Each object remains a separate variation for the learning-path module.
           </p>
         </div>
         <span className="connection-source-count">
-          {materials.length} source PDF{materials.length === 1 ? "" : "s"}
+          {confirmedSourceCount} confirmed source{confirmedSourceCount === 1 ? "" : "s"}
         </span>
       </div>
 
@@ -705,21 +1087,13 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
         <div className="connection-empty">Checking learning-object connections…</div>
       ) : (
         <>
-          <div className="connection-summary" aria-label="Connection summary">
-            <div><strong>{groups.length}</strong><span>Concept groups</span></div>
-            <div><strong>{connectedGroups.length}</strong><span>Connected</span></div>
-            <div><strong>{singletonGroups.length}</strong><span>Single-source</span></div>
-            <div><strong>{totalReviewCount}</strong><span>To review</span></div>
-            <div><strong>{pairedQuestionCount}</strong><span>Paired questions</span></div>
-          </div>
-
           <div className="connection-review-main">
           <div className="connection-toolbar">
             <div className="connection-filters" aria-label="Filter learning-object groups">
               {[
-                ["connected", "Connected", connectedGroups.length],
-                ["single", "Single only", singletonGroups.length],
-                ["all", "All groups", groups.length],
+                ["all", "All", groups.length],
+                ["single", "Standalone", singletonGroups.length],
+                ["connected", "Grouped", connectedGroups.length],
               ].map(([value, label, count]) => (
                 <button
                   key={value}
@@ -750,52 +1124,55 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
 
           {!visibleGroups.length ? (
             <div className="connection-empty">
-              {filter === "connected"
-                ? "No connected groups match this view. Open “Single only” and connect equivalent objects."
-                : "No learning-object groups match this filter."}
+              {confirmedSourceCount === 0
+                ? "Confirm the extracted learning objects in a lesson file before reviewing connections."
+                : searchTerm.trim()
+                  ? "No concepts match your search."
+                  : filter === "connected"
+                    ? "No grouped concepts match this view. Open “Standalone” and connect equivalent objects."
+                    : "No learning-object groups match this filter."}
             </div>
           ) : (
             <div className="connection-group-list">
-              {visibleGroups.map((group) => {
-                const sourceIds = new Set(group.learning_objects.map((item) => item.material));
+              {visibleGroups.map((group, groupIndex) => {
                 const isConnected = group.learning_objects.length > 1;
+                const groupNumber = groupIndex + 1;
                 return (
                   <article className={`connection-group-card ${isConnected ? "is-connected" : ""}`} key={group.id}>
                     <header>
-                      <div>
-                        <span className="connection-group-id">Group {group.id}</span>
+                      <div className="connection-group-heading-copy">
+                        <span className="connection-group-number" aria-label={`Concept ${groupNumber}`}>{groupNumber}</span>
                         <h4>{group.label || group.learning_objects[0]?.title || "Untitled concept"}</h4>
                       </div>
                       <span className={`connection-status ${isConnected ? "is-connected" : "is-single"}`}>
                         {isConnected
-                          ? `${group.learning_objects.length} variations · ${sourceIds.size} PDF${sourceIds.size === 1 ? "" : "s"}`
+                          ? `${group.learning_objects.length} variations`
                           : "Single variation"}
                       </span>
                     </header>
 
                     <div className="connection-object-list">
-                      {group.learning_objects.map((item) => {
+                      {group.learning_objects.map((item, itemIndex) => {
                         const material = materialById.get(Number(item.material));
                         const isImage = isImageLearningObject(item);
                         const isMissingImageDescription = isImage && !item.content?.trim();
                         return (
                           <div className="connection-object-row" key={item.id}>
-                            <label className="connection-object-select">
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.includes(item.id)}
-                                disabled={Boolean(busyAction)}
-                                onChange={() => toggleSelection(item.id)}
-                              />
-                              <span className="sr-only">Select {item.title}</span>
-                            </label>
+                            {reviewStep === "objects" && (
+                              <label className="connection-object-select">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.includes(item.id)}
+                                  disabled={Boolean(busyAction)}
+                                  onChange={() => toggleSelection(item.id)}
+                                />
+                                <span className="sr-only">Select {item.title}</span>
+                              </label>
+                            )}
                             <div className="connection-object-copy">
                               <div className="connection-object-title-row">
-                                <span className="connection-object-order">{Number(item.order) + 1}</span>
+                                <span className="connection-object-order">{groupNumber}.{itemIndex + 1}</span>
                                 <strong>{item.title}</strong>
-                                <span className="connection-object-source">
-                                  {material?.filename || material?.title || `PDF ${item.material}`}
-                                </span>
                               </div>
                               {isImage && item.image_url && (
                                 <figure className="learning-object-image-preview connection-object-image">
@@ -816,19 +1193,22 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
                                   </span>
                                 </div>
                               )}
-                              <p
+                              <FormattedLearningObjectContent
+                                content={item.content}
                                 className={`learning-object-content-text connection-object-full-content ${
                                   isImage ? "image-description-text" : ""
                                 }`.trim()}
-                              >
-                                {item.content || "No narration content."}
-                              </p>
+                              />
                               <small>
                                 {item.kind === "image" ? "Image learning object" : "Text learning object"}
                                 {item.section_title ? ` · Section: ${item.section_title}` : ""}
                               </small>
+                              <div className="connection-object-source-footer">
+                                <strong>Source material:</strong>{" "}
+                                <span>{material?.filename || material?.title || `PDF ${item.material}`}</span>
+                              </div>
                             </div>
-                            {isConnected && (
+                            {isConnected && reviewStep === "objects" && (
                               <button
                                 type="button"
                                 className="btn btn-secondary btn-small"
@@ -845,7 +1225,13 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
 
                     {group.questions.length > 0 && (
                       <div className="connection-question-list">
-                        <h5>Questions paired with this concept</h5>
+                        <div className="connection-question-heading">
+                          <span aria-hidden="true">?</span>
+                          <div>
+                            <h5>Questions paired with this concept</h5>
+                            <small>{group.questions.length} linked question{group.questions.length === 1 ? "" : "s"}</small>
+                          </div>
+                        </div>
                         {group.questions.map((question) => {
                           const link = question.learning_object_links.find(
                             (item) => Number(item.learning_object_group_id) === Number(group.id),
@@ -876,7 +1262,7 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
         </>
       )}
 
-      {!loading && selectedIds.length > 0 && (
+      {!loading && reviewStep === "objects" && selectedIds.length > 0 && (
         <aside className="connection-selection-dock" aria-label="Selected learning objects">
           <div className="connection-selection-dock-heading">
             <div>
@@ -899,7 +1285,7 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
             </button>
           </div>
           <label>
-            Group label <span>(optional)</span>
+            Concept label <span>(optional)</span>
             <input
               value={groupLabel}
               disabled={busyAction === "connect"}
@@ -918,15 +1304,37 @@ function LearningObjectConnections({ courseId, topicId, materials, onError, onMe
         </aside>
       )}
       </section>
-      <ReviewQueuePanel
-        suggestions={matchSuggestions}
-        questionPairings={questionReviewQueue}
-        groups={groups}
-        materialById={materialById}
-        busyAction={busyAction}
-        onReview={reviewMatchSuggestion}
-        onReviewQuestion={reviewQuestion}
-      />
+      )}
+      {reviewStep === "objects" ? (
+        <ObjectPairsPanel
+          suggestions={matchSuggestions}
+          materialById={materialById}
+          busyAction={busyAction}
+          pendingQuestionCount={questionReviewQueue.length}
+          onReviewStepChange={onReviewStepChange}
+          onReview={reviewMatchSuggestion}
+        />
+      ) : (
+        <>
+          <ReviewQueuePanel
+            questionPairings={questionReviewQueue}
+            groups={groups}
+            materialById={materialById}
+            busyAction={busyAction}
+            onReviewStepChange={onReviewStepChange}
+            onReviewQuestion={reviewQuestion}
+          />
+          <ManualQuestionPanel
+            courseId={courseId}
+            topicId={topicId}
+            groups={groups}
+            onResourcesChange={setResources}
+            onCourseChange={onCourseChange}
+            onError={onError}
+            onMessage={onMessage}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1012,7 +1420,7 @@ function LearningObjectForm({ initialValue = null, submitLabel, busy, onCancel, 
   );
 }
 
-function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }) {
+function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, onReviewConnections }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [reviewEditMode, setReviewEditMode] = useState(false);
@@ -1024,6 +1432,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
   const [learningObjectToDelete, setLearningObjectToDelete] = useState(null);
 
   const generatedJson = material.generated_json || {};
+  const isAssessmentDocument = isQuestionMaterial(material);
   const learningObjectsConfirmed = Boolean(generatedJson.learning_objects_confirmed);
   const lessonPlaylist = generatedJson.lesson_playlist || [];
   const lessonAudioGenerated = Boolean(generatedJson.lesson_audio_generated);
@@ -1134,7 +1543,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
       const updatedCourse = await deleteLearningMaterial(courseId, material.id);
       onCourseChange(updatedCourse);
       setShowDeleteMaterialConfirm(false);
-      onMessage("Lesson material deleted.");
+      onMessage(isAssessmentDocument ? "Question document deleted." : "Lesson material deleted.");
     } catch (err) {
       onError(err.message);
     } finally {
@@ -1175,6 +1584,63 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
     setReviewEditMode(true);
     setSelectedId(imageObject.id);
     setEditingId(imageObject.id);
+  }
+
+  if (isAssessmentDocument) {
+    return (
+      <article className="material-card question-document-card">
+        <div className="material-header">
+          <div>
+            <span className="connection-eyebrow">Question file</span>
+            <h4>{material.title}</h4>
+            <p>{material.filename} · {material.questions?.length || 0} extracted questions</p>
+          </div>
+          <span className={`status-pill status-${material.status}`}>{material.status}</span>
+        </div>
+        <div className="assessment-document-banner">
+          <strong>Question document detected</strong>
+          <span>Questions are matched against learning objects from lesson PDFs in this topic.</span>
+        </div>
+        <div className="question-document-actions">
+          <button type="button" className="btn btn-primary btn-small" onClick={onReviewConnections}>
+            Review question assignments
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger btn-small"
+            disabled={Boolean(busyAction)}
+            onClick={() => {
+              if (window.confirm("Delete this question document and all extracted questions?")) removeMaterial();
+            }}
+          >
+            {busyAction === "delete-material" ? "Deleting..." : "Delete question file"}
+          </button>
+        </div>
+        <div className="question-document-list">
+          {(material.questions || []).map((question, index) => {
+            const link = question.learning_object_links?.[0];
+            const isConfirmed = ["auto_confirmed", "teacher_confirmed"].includes(link?.review_status);
+            const statusLabel = isConfirmed
+              ? "Assigned"
+              : link?.review_status === "pending_review"
+                ? "Needs review"
+                : "Not matched";
+            return (
+              <div className="question-document-row" key={question.id}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{question.prompt}</strong>
+                  <small>
+                    {statusLabel}
+                    {link?.learning_object_title ? ` · ${link.learning_object_title}` : ""}
+                  </small>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </article>
+    );
   }
 
   return (
@@ -1386,13 +1852,12 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage }
                                 </span>
                               </div>
                             )}
-                            <p
+                            <FormattedLearningObjectContent
+                              content={item.content}
                               className={`learning-object-content-text ${
                                 isImage ? "image-description-text" : ""
                               }`.trim()}
-                            >
-                              {item.content}
-                            </p>
+                            />
                           </>
                         )}
                       </div>
@@ -1599,8 +2064,9 @@ export default function TopicDetailPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [activeSource, setActiveSource] = useState("");
+  const [activeSource, setActiveSource] = useState("connections");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [connectionReviewStep, setConnectionReviewStep] = useState("objects");
 
   useEffect(() => {
     let cancelled = false;
@@ -1632,13 +2098,33 @@ export default function TopicDetailPage() {
     ),
     [course?.materials, topicId],
   );
+  const lessonMaterials = useMemo(
+    () => materials.filter((material) => !isQuestionMaterial(material)),
+    [materials],
+  );
+  const confirmedLessonMaterials = useMemo(
+    () => lessonMaterials.filter(
+      (material) => Boolean(material.generated_json?.learning_objects_confirmed),
+    ),
+    [lessonMaterials],
+  );
+  const pendingLessonMaterials = useMemo(
+    () => lessonMaterials.filter(
+      (material) => !material.generated_json?.learning_objects_confirmed,
+    ),
+    [lessonMaterials],
+  );
+  const questionMaterials = useMemo(
+    () => materials.filter((material) => isQuestionMaterial(material)),
+    [materials],
+  );
   const selectedMaterial = materials.find(
     (material) => String(material.id) === String(activeSource),
   );
 
   useEffect(() => {
     if (!materials.length) {
-      setActiveSource("");
+      setActiveSource("connections");
       return;
     }
     setActiveSource((current) => {
@@ -1646,7 +2132,7 @@ export default function TopicDetailPage() {
       if (materials.some((material) => String(material.id) === String(current))) {
         return current;
       }
-      return String(materials[0].id);
+      return "connections";
     });
   }, [materials]);
 
@@ -1668,14 +2154,20 @@ export default function TopicDetailPage() {
       const uploadedMaterial = [...(updatedCourse.materials || [])]
         .filter((material) => String(material.outline_node) === String(topic.id))
         .sort((a, b) => Number(b.id) - Number(a.id))[0];
-      if (uploadedMaterial) setActiveSource(String(uploadedMaterial.id));
+      if (uploadedMaterial) {
+        setActiveSource(String(uploadedMaterial.id));
+      }
       if (uploadedMaterial?.status === "failed") {
         setError(uploadedMaterial.error_message || "Content extraction failed for this PDF.");
         return;
       }
       const objectCount = uploadedMaterial?.learning_objects?.length || 0;
+      const questionCount = uploadedMaterial?.questions?.length || 0;
+      const isQuestionDocument = isQuestionMaterial(uploadedMaterial);
       setMessage(
-        objectCount
+        isQuestionDocument
+          ? `Question document detected: ${questionCount} question${questionCount === 1 ? "" : "s"} extracted and excluded from lesson narration.`
+          : objectCount
           ? `${objectCount} learning object${objectCount === 1 ? "" : "s"} extracted from the uploaded PDF.`
           : "No learning objects were extracted. You can add them manually below.",
       );
@@ -1712,7 +2204,7 @@ export default function TopicDetailPage() {
 
   return (
     <section className={`topic-workspace-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}`}>
-      <aside className="card lesson-pdf-sidebar" aria-label="Lesson PDF navigation">
+      <aside className="card lesson-pdf-sidebar" aria-label="Uploaded PDF navigation">
         <div className="lesson-sidebar-brand-row">
           <Link to="/" className="lesson-sidebar-brand" title="Mavia home">
             <span className="lesson-sidebar-brand-mark" aria-hidden="true">M</span>
@@ -1733,7 +2225,7 @@ export default function TopicDetailPage() {
         </div>
 
         {materials.length > 0 && (
-          <nav className="lesson-pdf-navigation" aria-label="Uploaded lesson PDFs">
+          <nav className="lesson-pdf-navigation" aria-label="Uploaded PDFs">
             <button
               type="button"
               className={`lesson-pdf-nav-item connection-nav-item ${activeSource === "connections" ? "is-active" : ""}`}
@@ -1743,32 +2235,102 @@ export default function TopicDetailPage() {
             >
               <span className="lesson-pdf-short-label" aria-hidden="true">R</span>
               <span className="lesson-pdf-nav-copy">
-                <strong>Review connections</strong>
+                <strong>Review Connections</strong>
               </span>
             </button>
 
-            <div className="lesson-pdf-nav-label">Uploaded files</div>
-            <ul className="lesson-pdf-list">
-              {materials.map((material, index) => {
+            {confirmedLessonMaterials.length > 0 && (
+              <>
+                <div className="lesson-pdf-nav-label confirmed-file-nav-label">
+                  Confirmed lesson files
+                  <span>{confirmedLessonMaterials.length}</span>
+                </div>
+                <ul className="lesson-pdf-list">
+                  {confirmedLessonMaterials.map((material, index) => {
+                    const isActive = String(activeSource) === String(material.id);
+                    return (
+                      <li key={material.id}>
+                        <button
+                          type="button"
+                          className={`lesson-pdf-nav-item ${isActive ? "is-active" : ""}`}
+                          aria-current={isActive ? "page" : undefined}
+                          title={material.filename || material.title}
+                          onClick={() => setActiveSource(String(material.id))}
+                        >
+                          <span className="lesson-pdf-short-label" aria-hidden="true">{index + 1}</span>
+                          <span className="lesson-pdf-nav-copy">
+                            <strong>{material.title || `Lesson PDF ${index + 1}`}</strong>
+                            <small>Ready for connections</small>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
+
+            {pendingLessonMaterials.length > 0 && (
+              <>
+                <div className="lesson-pdf-nav-label pending-file-nav-label">
+                  Awaiting confirmation
+                  <span>{pendingLessonMaterials.length}</span>
+                </div>
+                <ul className="lesson-pdf-list">
+                  {pendingLessonMaterials.map((material, index) => {
+                    const isActive = String(activeSource) === String(material.id);
+                    return (
+                      <li key={material.id}>
+                        <button
+                          type="button"
+                          className={`lesson-pdf-nav-item pending-file-nav-item ${isActive ? "is-active" : ""}`}
+                          aria-current={isActive ? "page" : undefined}
+                          title={material.filename || material.title}
+                          onClick={() => setActiveSource(String(material.id))}
+                        >
+                          <span className="lesson-pdf-short-label" aria-hidden="true">P{index + 1}</span>
+                          <span className="lesson-pdf-nav-copy">
+                            <strong>{material.title || `Lesson PDF ${index + 1}`}</strong>
+                            <small>Review and confirm first</small>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
+
+            {questionMaterials.length > 0 && (
+              <>
+                <div className="lesson-pdf-nav-label question-file-nav-label">
+                  Question files
+                  <span>{questionMaterials.length}</span>
+                </div>
+                <ul className="lesson-pdf-list">
+                  {questionMaterials.map((material, index) => {
                 const isActive = String(activeSource) === String(material.id);
                 return (
                   <li key={material.id}>
                     <button
                       type="button"
-                      className={`lesson-pdf-nav-item ${isActive ? "is-active" : ""}`}
+                      className={`lesson-pdf-nav-item question-file-nav-item ${isActive ? "is-active" : ""}`}
                       aria-current={isActive ? "page" : undefined}
                       title={material.filename || material.title}
                       onClick={() => setActiveSource(String(material.id))}
                     >
-                      <span className="lesson-pdf-short-label" aria-hidden="true">{index + 1}</span>
+                      <span className="lesson-pdf-short-label" aria-hidden="true">Q{index + 1}</span>
                       <span className="lesson-pdf-nav-copy">
-                        <strong>{material.title || `Lesson PDF ${index + 1}`}</strong>
+                        <strong>{material.title || `Question PDF ${index + 1}`}</strong>
+                        <small>Questions only</small>
                       </span>
                     </button>
                   </li>
                 );
-              })}
-            </ul>
+                  })}
+                </ul>
+              </>
+            )}
           </nav>
         )}
       </aside>
@@ -1785,16 +2347,18 @@ export default function TopicDetailPage() {
                 Selected module/topic: {selectedModule?.title || topic.title} / {topic.title}
               </p>
             </div>
-            <label className="btn btn-primary">
-              {uploading ? "Processing..." : "Upload lesson PDF"}
-              <input
-                type="file"
-                accept=".pdf,application/pdf"
-                hidden
-                disabled={uploading}
-                onChange={handleMaterialUpload}
-              />
-            </label>
+            {!(activeSource === "connections" && connectionReviewStep === "questions") && (
+              <label className="btn btn-primary">
+                {uploading ? "Processing..." : "Upload PDF"}
+                <input
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  hidden
+                  disabled={uploading}
+                  onChange={handleMaterialUpload}
+                />
+              </label>
+            )}
           </div>
         </section>
 
@@ -1808,6 +2372,9 @@ export default function TopicDetailPage() {
             courseId={courseId}
             topicId={topicId}
             materials={materials}
+            reviewStep={connectionReviewStep}
+            onReviewStepChange={setConnectionReviewStep}
+            onCourseChange={setCourse}
             onError={setError}
             onMessage={setMessage}
           />
@@ -1820,10 +2387,11 @@ export default function TopicDetailPage() {
               onCourseChange={setCourse}
               onError={setError}
               onMessage={setMessage}
+              onReviewConnections={() => setActiveSource("connections")}
             />
           </div>
         ) : (
-          <div className="empty-state">Choose a lesson PDF from the sidebar.</div>
+          <div className="empty-state">Choose a PDF from the sidebar.</div>
         )}
       </main>
     </section>

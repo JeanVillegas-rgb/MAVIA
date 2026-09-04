@@ -96,7 +96,8 @@ def _is_question_or_assessment(text: str) -> bool:
     if re.match(r"^\s*(?:directions?|instructions?)\s*:", stripped, flags=re.IGNORECASE):
         return True
     if re.match(r"^\s*\d+[.)]\s+", stripped) and re.search(
-        r"_{3,}|\b(?:choose|fill|match|identify|write|answer|classify)\b",
+        r"_{3,}|\b(?:answer|calculate|choose|classify|compare|define|describe|discuss|"
+        r"explain|fill|give|identify|list|match|name|select|solve|state|write)\b",
         stripped,
         flags=re.IGNORECASE,
     ):
@@ -607,6 +608,49 @@ def classify_instructional_blocks(blocks: list[dict], batch_size: int = 20) -> l
             )
 
     return [classified_by_id[block["block_id"]] for block in blocks if block["block_id"] in classified_by_id]
+
+
+def detect_instructional_document_role(classified_blocks: list[dict]) -> str:
+    """Identify question-heavy documents before lesson-content fallback runs."""
+    assessment_blocks = [
+        block for block in classified_blocks if block.get("category") == "assessment"
+    ]
+    lesson_blocks = [
+        block for block in classified_blocks if block.get("category") == "lesson_content"
+    ]
+    if not assessment_blocks:
+        return "lesson"
+    if not lesson_blocks:
+        return "assessment"
+
+    assessment_section_count = sum(
+        bool(
+            re.search(
+                r"\b(?:true\s*(?:/|or)\s*false|multiple\s+choice|fill\s+in|matching)\b",
+                block.get("text") or "",
+                flags=re.IGNORECASE,
+            )
+        )
+        for block in assessment_blocks
+    )
+    longest_lesson_block = max(
+        (len((block.get("text") or "").split()) for block in lesson_blocks),
+        default=0,
+    )
+    if assessment_section_count >= 2 and longest_lesson_block <= 25:
+        return "assessment"
+
+    assessment_words = sum(len((block.get("text") or "").split()) for block in assessment_blocks)
+    lesson_words = sum(len((block.get("text") or "").split()) for block in lesson_blocks)
+    classified_words = assessment_words + lesson_words
+    assessment_ratio = assessment_words / classified_words if classified_words else 0.0
+    # Worksheets often contain short declarative True/False prompts that look
+    # like lesson sentences in isolation. Once several explicit assessment
+    # blocks dominate the document, treat those short statements as part of the
+    # assessment instead of allowing them to turn the PDF into lesson material.
+    if len(assessment_blocks) >= 3 and assessment_ratio >= 0.60:
+        return "assessment"
+    return "mixed"
 
 
 def split_classified_blocks(classified_blocks: list[dict]) -> dict:

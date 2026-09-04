@@ -17,6 +17,7 @@ from lessons.models import CourseGroup, LearningMaterial, LearningObject, Outlin
 
 from .instructional_content_classifier import (
     classify_instructional_blocks,
+    detect_instructional_document_role,
     extract_pdf_text_blocks,
     find_captioned_figure_regions,
     split_classified_blocks,
@@ -2498,6 +2499,7 @@ def _sync_learning_objects(material: LearningMaterial, generated_json: dict):
     from .learning_resource_linker import (
         prior_learning_object_groups,
         question_snapshots,
+        refresh_question_learning_object_links,
         refresh_learning_object_match_suggestions,
         remove_empty_learning_object_groups,
         resolve_learning_object_group,
@@ -2558,6 +2560,23 @@ def _sync_learning_objects(material: LearningMaterial, generated_json: dict):
     remove_empty_learning_object_groups(material)
     refresh_learning_object_match_suggestions(material)
     synchronize_detected_questions(material, generated_json.get("classified_blocks") or [])
+    if material.outline_node_id and material.learning_objects.exists():
+        question_only_materials = (
+            LearningMaterial.objects.filter(
+                course=material.course,
+                outline_node_id=material.outline_node_id,
+                questions__isnull=False,
+                learning_objects__isnull=True,
+            )
+            .exclude(pk=material.pk)
+            .distinct()
+        )
+        for question_material in question_only_materials:
+            refresh_question_learning_object_links(question_material)
+            question_document_json = question_material.generated_json or {}
+            question_document_json["questions"] = question_snapshots(question_material)
+            question_material.generated_json = question_document_json
+            question_material.save(update_fields=["generated_json"])
     generated_json["questions"] = question_snapshots(material)
     material.generated_json = generated_json
     _save_material_update(material, ["generated_json"])
@@ -2701,17 +2720,28 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
         lesson_title = outline_context.get("topic_title") or metadata.get("lesson_title") or material.title
         _trace("classifying instructional blocks")
         classified_blocks = classify_instructional_blocks(extracted_blocks)
+        document_role = detect_instructional_document_role(classified_blocks)
+        _trace(f"document role detected: {document_role}")
         _trace(f"recording {len(images)} images for teacher descriptions")
         image_descriptions = describe_pdf_images(images, lesson_title, cleaned_preserved_text)
         _trace("building learning objects")
         sections = split_classified_blocks(classified_blocks)
         learning_objects = build_section_learning_objects(classified_blocks, image_descriptions)
+        if document_role == "assessment":
+            # A question-only PDF must not be copied back into lesson narration,
+            # even when it contains prose-like prompts or answer choices.
+            learning_objects = []
         fallback_used = False
         has_lesson_content = any(
             item.get("type") in {"teacher_text", "lesson_content"} and item.get("content", "").strip()
             for item in learning_objects
         )
-        if not has_lesson_content and not learning_objects:
+        if (
+            document_role != "assessment"
+            and not sections["assessments"]
+            and not has_lesson_content
+            and not learning_objects
+        ):
             image_objects = [item for item in learning_objects if item.get("type") == "image_description"]
             fallback_objects = build_fallback_learning_objects_from_text(cleaned_preserved_text)
             learning_objects = image_objects + fallback_objects
@@ -2739,6 +2769,7 @@ def generate_material_outputs(material: LearningMaterial) -> LearningMaterial:
                 if auto_classified
                 else "teacher_selected_topic_validated_by_tfidf"
             ),
+            "document_role": document_role,
             "summary": "",
             "original_text": text,
             "cleaned_preserved_text": cleaned_preserved_text,

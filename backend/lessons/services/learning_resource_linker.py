@@ -15,6 +15,7 @@ from lessons.models import (
     Question,
     QuestionLearningObjectLink,
 )
+from .instructional_content_classifier import detect_instructional_document_role
 
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,14 @@ _QUESTION_CONTAINER_LABELS = {
     "review questions",
     "teacher check",
     "test",
+    "true false",
+    "true or false",
     "worksheet",
 }
+
+
+def learning_objects_are_confirmed(material: LearningMaterial) -> bool:
+    return bool((material.generated_json or {}).get("learning_objects_confirmed"))
 
 
 def normalize_learning_object_title(value: str) -> str:
@@ -77,14 +84,17 @@ def _match_configuration() -> dict[str, float]:
     total = sum(weights.values()) or 1.0
     return {
         **{name: value / total for name, value in weights.items()},
-        "auto_threshold": _env_score("LEARNING_OBJECT_MATCH_AUTO_THRESHOLD", 0.52),
-        "review_threshold": _env_score("LEARNING_OBJECT_MATCH_REVIEW_THRESHOLD", 0.34),
+        "auto_threshold": _env_score("LEARNING_OBJECT_MATCH_AUTO_THRESHOLD", 0.50),
+        "review_threshold": _env_score("LEARNING_OBJECT_MATCH_REVIEW_THRESHOLD", 0.30),
         "minimum_margin": _env_score("LEARNING_OBJECT_MATCH_MINIMUM_MARGIN", 0.08),
         "group_member_threshold": _env_score(
             "LEARNING_OBJECT_MATCH_GROUP_MEMBER_THRESHOLD",
-            0.38,
+            0.45,
         ),
-        "exact_title_score": _env_score("LEARNING_OBJECT_MATCH_EXACT_TITLE_SCORE", 0.96),
+        "content_support_threshold": _env_score(
+            "LEARNING_OBJECT_MATCH_CONTENT_SUPPORT_THRESHOLD",
+            0.30,
+        ),
     }
 
 
@@ -92,7 +102,7 @@ def learning_object_match_debug_configuration() -> dict:
     """Expose the effective matcher settings for developer-console diagnostics."""
     configuration = _match_configuration()
     return {
-        "method": "hybrid_tfidf_v2",
+        "method": "hybrid_tfidf_v3_content_guard",
         "weights": {
             "title_tfidf": configuration["title"],
             "content_tfidf": configuration["content"],
@@ -105,7 +115,7 @@ def learning_object_match_debug_configuration() -> dict:
             "teacher_review": configuration["review_threshold"],
             "minimum_winner_margin": configuration["minimum_margin"],
             "minimum_group_member": configuration["group_member_threshold"],
-            "exact_normalized_title": configuration["exact_title_score"],
+            "minimum_content_support": configuration["content_support_threshold"],
         },
     }
 
@@ -193,8 +203,11 @@ def learning_object_match_evidence(
         + configuration["keywords"] * keyword_score
         + configuration["structure"] * structure_score
     )
-    if exact_title:
-        score = max(score, configuration["exact_title_score"])
+    content_support = (
+        (0.55 * content_score)
+        + (0.30 * character_score)
+        + (0.15 * keyword_score)
+    )
     return {
         "score": round(min(1.0, score), 6),
         "title_tfidf": round(title_score, 6),
@@ -202,6 +215,7 @@ def learning_object_match_evidence(
         "character_ngram": round(character_score, 6),
         "keyword_overlap": round(keyword_score, 6),
         "structure": round(structure_score, 6),
+        "content_support": round(content_support, 6),
         "exact_normalized_title": exact_title,
     }
 
@@ -218,6 +232,7 @@ def _rank_candidate_groups(
     candidates = (
         LearningObject.objects.filter(
             material__outline_node_id=material.outline_node_id,
+            material__generated_json__learning_objects_confirmed=True,
             kind=kind,
             group__isnull=False,
         )
@@ -257,6 +272,8 @@ def _match_decision(
     section_title: str = "",
     source_object_id: int | None = None,
 ) -> dict | None:
+    if not learning_objects_are_confirmed(material):
+        return None
     ranked = _rank_candidate_groups(
         material,
         title,
@@ -279,24 +296,34 @@ def _match_decision(
     runner_up_score = ranked[1]["evidence"]["score"] if len(ranked) > 1 else 0.0
     margin = best["evidence"]["score"] - runner_up_score
     group_member_scores = []
-    for member in best["candidate"].group.learning_objects.exclude(pk=source_object_id):
+    group_member_content_supports = []
+    for member in best["candidate"].group.learning_objects.filter(
+        material__generated_json__learning_objects_confirmed=True,
+    ).exclude(pk=source_object_id):
         if member.material_id == material.id:
             continue
-        group_member_scores.append(
-            learning_object_match_evidence(
-                title,
-                content,
-                order,
-                member,
-                section_title=section_title,
-            )["score"]
+        member_evidence = learning_object_match_evidence(
+            title,
+            content,
+            order,
+            member,
+            section_title=section_title,
         )
+        group_member_scores.append(member_evidence["score"])
+        group_member_content_supports.append(member_evidence["content_support"])
     minimum_group_score = min(group_member_scores) if group_member_scores else best["evidence"]["score"]
+    minimum_group_content_support = (
+        min(group_member_content_supports)
+        if group_member_content_supports
+        else best["evidence"]["content_support"]
+    )
     score = best["evidence"]["score"]
     if (
         score >= configuration["auto_threshold"]
+        and best["evidence"]["content_support"] >= configuration["content_support_threshold"]
         and margin >= configuration["minimum_margin"]
         and minimum_group_score >= configuration["group_member_threshold"]
+        and minimum_group_content_support >= configuration["content_support_threshold"]
     ):
         confidence = LearningObjectMatchSuggestion.Confidence.HIGH
     elif score >= configuration["review_threshold"]:
@@ -308,12 +335,14 @@ def _match_decision(
             "runner_up_score": round(runner_up_score, 6),
             "winner_margin": round(margin, 6),
             "minimum_group_member_score": round(minimum_group_score, 6),
-            "method": "hybrid_tfidf_v2",
+            "minimum_group_content_support": round(minimum_group_content_support, 6),
+            "method": "hybrid_tfidf_v3_content_guard",
         }
     )
     logger.debug(
         "Learning-object match: material=%s source_object=%s candidate=%s score=%.4f "
-        "auto_threshold=%.4f review_threshold=%.4f margin=%.4f minimum_margin=%.4f "
+        "auto_threshold=%.4f review_threshold=%.4f content_support=%.4f "
+        "content_support_threshold=%.4f margin=%.4f minimum_margin=%.4f "
         "group_member_score=%.4f group_member_threshold=%.4f confidence=%s evidence=%s",
         material.id,
         source_object_id,
@@ -321,6 +350,8 @@ def _match_decision(
         score,
         configuration["auto_threshold"],
         configuration["review_threshold"],
+        best["evidence"]["content_support"],
+        configuration["content_support_threshold"],
         margin,
         configuration["minimum_margin"],
         minimum_group_score,
@@ -363,13 +394,23 @@ def _is_form_identity_line(text: str) -> bool:
     return bool(re.search(r"_{3,}", text or "") and len(set(label.split()) & fields) >= 2)
 
 
-def _is_question_line(text: str) -> bool:
+def _is_question_line(text: str, *, allow_numbered_statement: bool = False) -> bool:
     stripped = _clean_question_line(text)
     if not stripped or _is_answer_line(stripped) or _is_form_identity_line(stripped):
         return False
     if stripped.endswith("?"):
         return True
     if re.match(r"^(?:q\s*:|q\d+\b|question\s+\d+\b)", stripped, flags=re.IGNORECASE):
+        return True
+    numbered_prompt = re.sub(r"^\d+[.)]\s*", "", stripped)
+    if allow_numbered_statement and numbered_prompt != stripped:
+        return True
+    if numbered_prompt != stripped and re.match(
+        r"^(?:answer|calculate|choose|classify|compare|define|describe|discuss|explain|"
+        r"give|identify|list|match|name|select|solve|state|write)\b",
+        numbered_prompt,
+        flags=re.IGNORECASE,
+    ):
         return True
     if re.search(r"_{3,}", stripped):
         without_number = re.sub(r"^\d+[.)]\s*", "", stripped)
@@ -381,17 +422,24 @@ def _is_question_line(text: str) -> bool:
 
 
 def _starts_new_question(text: str) -> bool:
+    cleaned = re.sub(r"^\d+[.)]\s*", "", _clean_question_line(text))
     return bool(
         re.match(
             r"^(?:q\s*:|question\s+\d+\b|who|what|when|where|why|how|which|whose|whom|"
-            r"is|are|am|do|does|did|can|could|will|would|should|has|have|had|may|might|were|was)\b",
-            _clean_question_line(text),
+            r"is|are|am|do|does|did|can|could|will|would|should|has|have|had|may|might|were|was|"
+            r"answer|calculate|choose|classify|compare|define|describe|discuss|explain|give|"
+            r"identify|list|match|name|select|solve|state|write)\b",
+            cleaned,
             flags=re.IGNORECASE,
         )
     )
 
 
-def _question_prompts_from_block(text: str) -> list[str]:
+def _question_prompts_from_block(
+    text: str,
+    *,
+    allow_numbered_statements: bool = False,
+) -> list[str]:
     """Extract question prompts while leaving headings and supplied answers out."""
     raw_lines = [_clean_question_line(line) for line in (text or "").splitlines()]
     lines = [line for line in raw_lines if line]
@@ -402,7 +450,7 @@ def _question_prompts_from_block(text: str) -> list[str]:
         if not current:
             return
         prompt = "\n".join(current).strip()
-        if _is_question_line(prompt):
+        if _is_question_line(prompt, allow_numbered_statement=allow_numbered_statements):
             prompts.append(prompt)
         current.clear()
 
@@ -417,10 +465,16 @@ def _question_prompts_from_block(text: str) -> list[str]:
         # Some teacher guides place Q and A on the same physical line. Keep
         # the authored question and discard the supplied answer portion.
         question_only = re.split(r"\s+(?:A|Answer)\s*:\s*", line, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-        starts_question = _is_question_line(question_only)
+        starts_question = _is_question_line(
+            question_only,
+            allow_numbered_statement=allow_numbered_statements,
+        )
         starts_question_phrase = _starts_new_question(question_only)
+        starts_numbered_question = bool(re.match(r"^\d+[.)]\s*", question_only))
         is_choice = bool(re.match(r"^[A-Da-d][.)]\s+", question_only))
 
+        if starts_numbered_question and current:
+            flush()
         if (
             starts_question_phrase
             and current
@@ -439,12 +493,23 @@ def _question_prompts_from_block(text: str) -> list[str]:
 
 
 def detected_question_payloads(classified_blocks: list[dict]) -> list[dict]:
-    """Return database-ready questions from blocks already labeled assessment."""
+    """Return database-ready questions, including True/False worksheet statements."""
     payloads = []
+    document_is_assessment = (
+        detect_instructional_document_role(classified_blocks or []) == "assessment"
+    )
     for block in classified_blocks or []:
-        if block.get("category") != "assessment":
+        category = block.get("category")
+        is_contextual_assessment_block = (
+            document_is_assessment
+            and category in {"lesson_content", "needs_review"}
+        )
+        if category != "assessment" and not is_contextual_assessment_block:
             continue
-        for prompt in _question_prompts_from_block(block.get("text") or ""):
+        for prompt in _question_prompts_from_block(
+            block.get("text") or "",
+            allow_numbered_statements=is_contextual_assessment_block,
+        ):
             payloads.append(
                 {
                     "prompt": prompt,
@@ -571,6 +636,13 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
     """Persist the best explainable cross-PDF candidate for each local object."""
     if material.outline_node_id is None:
         return
+    if not learning_objects_are_confirmed(material):
+        LearningObjectMatchSuggestion.objects.filter(
+            Q(source_learning_object__material=material)
+            | Q(candidate_learning_object__material=material),
+            status=LearningObjectMatchSuggestion.Status.PENDING,
+        ).delete()
+        return
     retained_ids = []
     learning_objects = list(
         material.learning_objects.select_related("material", "group").order_by("order", "id")
@@ -593,6 +665,20 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
             source_learning_object=source,
             candidate_learning_object=candidate,
         ).first()
+        if (
+            decision["confidence"] == LearningObjectMatchSuggestion.Confidence.HIGH
+            and candidate_object.group_id
+            and (not existing or existing.status != LearningObjectMatchSuggestion.Status.REJECTED)
+            and source_object.group_id != candidate_object.group_id
+        ):
+            old_group_id = source_object.group_id
+            source_object.group_id = candidate_object.group_id
+            source_object.save(update_fields=["group"])
+            if old_group_id:
+                LearningObjectGroup.objects.filter(
+                    pk=old_group_id,
+                    learning_objects__isnull=True,
+                ).delete()
         same_group = bool(
             source_object.group_id
             and source_object.group_id == candidate_object.group_id
@@ -681,7 +767,48 @@ def _lexical_scores(question: Question, learning_objects: list[LearningObject]) 
         matrix = TfidfVectorizer(lowercase=True, stop_words="english", ngram_range=(1, 2)).fit_transform(documents)
     except (TypeError, ValueError):
         return [0.0] * len(learning_objects)
-    return [float(value) for value in cosine_similarity(matrix[0:1], matrix[1:]).ravel()]
+    base_scores = cosine_similarity(matrix[0:1], matrix[1:]).ravel()
+
+    # Character n-grams compare related word forms such as "fill" and "fills"
+    # without using subject-specific rules.
+    content_documents = [question.prompt] + [item.content for item in learning_objects]
+    try:
+        character_matrix = TfidfVectorizer(
+            lowercase=True,
+            analyzer="char_wb",
+            ngram_range=(3, 5),
+        ).fit_transform(content_documents)
+        character_scores = cosine_similarity(
+            character_matrix[0:1], character_matrix[1:]
+        ).ravel()
+    except (TypeError, ValueError):
+        character_scores = [0.0] * len(learning_objects)
+
+    generic_title_words = {
+        "example", "examples", "fact", "facts", "key", "lesson", "matter",
+        "part", "point", "points", "remember", "state", "states", "student",
+        "students",
+    }
+    question_words = set(normalize_learning_object_title(question.prompt).split()) - generic_title_words
+    scores = []
+    for learning_object, base_score, character_score in zip(
+        learning_objects,
+        base_scores,
+        character_scores,
+    ):
+        title_words = (
+            set(normalize_learning_object_title(learning_object.title).split())
+            - generic_title_words
+        )
+        title_coverage = (
+            len(title_words & question_words) / len(title_words)
+            if title_words
+            else 0.0
+        )
+        direct_title_score = (0.65 * float(base_score)) + (0.35 * title_coverage)
+        morphology_score = (0.65 * float(base_score)) + (0.35 * float(character_score))
+        scores.append(max(float(base_score), direct_title_score, morphology_score))
+    return scores
 
 
 def _pairing_score(
@@ -691,6 +818,11 @@ def _pairing_score(
     weights: dict[str, float] | None = None,
 ) -> float:
     weights = weights or question_pairing_debug_configuration()["weights"]
+    same_material = question.material_id == learning_object.material_id
+    if not same_material:
+        # Page and block positions have no meaning across different PDFs. Use
+        # the full lexical score when pairing a question-only document to its topic.
+        return min(1.0, lexical_score)
     same_page = bool(
         question.source_page
         and learning_object.source_page
@@ -713,7 +845,22 @@ def _pairing_score(
 
 def refresh_question_learning_object_links(material: LearningMaterial) -> None:
     """Auto-confirm strong pairs and preserve teacher decisions for uncertain ones."""
-    learning_objects = list(material.learning_objects.order_by("order", "id"))
+    learning_objects = (
+        list(material.learning_objects.order_by("order", "id"))
+        if learning_objects_are_confirmed(material)
+        else []
+    )
+    uses_topic_candidates = not learning_objects and material.outline_node_id is not None
+    if uses_topic_candidates:
+        learning_objects = list(
+            LearningObject.objects.filter(
+                material__outline_node_id=material.outline_node_id,
+                material__generated_json__learning_objects_confirmed=True,
+            )
+            .exclude(material_id=material.id)
+            .select_related("material", "group")
+            .order_by("material_id", "order", "id")
+        )
     questions = list(material.questions.order_by("order", "id"))
     if not learning_objects:
         QuestionLearningObjectLink.objects.filter(
@@ -756,7 +903,7 @@ def refresh_question_learning_object_links(material: LearningMaterial) -> None:
             question=question,
             learning_object=best,
             relevance_score=round(score, 6),
-            method="layout_tfidf",
+            method="topic_tfidf" if uses_topic_candidates else "layout_tfidf",
             is_primary=is_primary,
             review_status=review_status,
         )
@@ -824,6 +971,9 @@ def question_snapshots(material: LearningMaterial) -> list[dict]:
             {
                 "id": question.id,
                 "prompt": question.prompt,
+                "question_type": question.question_type,
+                "choices": question.choices,
+                "correct_answer": question.correct_answer,
                 "order": question.order,
                 "source_page": question.source_page,
                 "source_block_id": question.source_block_id,
