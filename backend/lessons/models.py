@@ -50,6 +50,8 @@ class OutlineNode(models.Model):
     related_info = models.JSONField(default=dict, blank=True)
     order = models.PositiveIntegerField(default=0)
     depth = models.PositiveSmallIntegerField(default=0)
+    published = models.BooleanField(default=False)
+    published_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["depth", "order", "id"]

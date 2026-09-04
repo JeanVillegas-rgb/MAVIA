@@ -4098,6 +4098,10 @@ button {
   background: #f7f4ed;
 }
 
+.review-step-indicator.has-three-steps {
+  grid-template-columns: auto minmax(1rem, 1fr) auto minmax(1rem, 1fr) auto;
+}
+
 .review-step-indicator > span {
   display: inline-grid;
   width: 1.65rem;
@@ -4139,6 +4143,46 @@ button {
   display: flex;
   padding-top: 0.72rem;
   border-top: 1px solid #eadfca;
+}
+
+.review-step-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding-top: 0.72rem;
+  border-top: 1px solid #eadfca;
+}
+
+.publish-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.publish-status small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.publish-object-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.publish-object-item {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.publish-object-item > strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: #1f2937;
 }
 
 .review-step-actions .btn {

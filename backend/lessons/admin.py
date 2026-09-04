@@ -23,8 +23,8 @@ class CourseOutlineAdmin(admin.ModelAdmin):
 
 @admin.register(OutlineNode)
 class OutlineNodeAdmin(admin.ModelAdmin):
-    list_display = ("title", "course", "depth", "order", "parent")
-    list_filter = ("course", "depth")
+    list_display = ("title", "course", "depth", "order", "parent", "published", "published_at")
+    list_filter = ("course", "depth", "published")
     search_fields = ("title",)
 
 
@@ -35,7 +35,11 @@ class LearningObjectInline(admin.TabularInline):
 
 @admin.register(LearningMaterial)
 class LearningMaterialAdmin(admin.ModelAdmin):
-    list_display = ("title", "course", "status", "created_at")
+    list_display = ("title", "course", "status", "lesson_audio_generated", "created_at")
     list_filter = ("course", "status")
     search_fields = ("title",)
     inlines = [LearningObjectInline]
+
+    @admin.display(boolean=True, description="Audio generated")
+    def lesson_audio_generated(self, obj):
+        return bool((obj.generated_json or {}).get("lesson_audio_generated"))

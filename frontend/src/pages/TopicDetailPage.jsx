@@ -11,6 +11,7 @@ import {
   fetchCourse,
   fetchLearningResources,
   generateAudioPlaylist,
+  publishTopic,
   rejectLearningObjectMatchSuggestion,
   reviewQuestionPairing,
   separateLearningObject,
@@ -278,10 +279,12 @@ function ObjectPairsPanel({
         </div>
         <span>{suggestions.length} to review</span>
       </div>
-      <div className="review-step-indicator" aria-label="Review progress">
+      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
         <span className="is-active">1</span>
         <div aria-hidden="true" />
         <span>2</span>
+        <div aria-hidden="true" />
+        <span>3</span>
         <strong>Object pairs</strong>
       </div>
 
@@ -439,10 +442,12 @@ function ReviewQueuePanel({
         </div>
         <span className="connection-source-count">{questionPairings.length} to review</span>
       </div>
-      <div className="review-step-indicator" aria-label="Review progress">
+      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
         <div aria-hidden="true" />
         <span className="is-active">2</span>
+        <div aria-hidden="true" />
+        <span>3</span>
         <strong>Question pairs</strong>
       </div>
 
@@ -590,7 +595,7 @@ function ReviewQueuePanel({
       </div>
         </>
       )}
-      <div className="review-step-actions">
+      <div className="review-step-actions-row">
         <button
           type="button"
           className="btn btn-secondary"
@@ -598,6 +603,14 @@ function ReviewQueuePanel({
           onClick={() => onReviewStepChange("objects")}
         >
           Back to object pairs
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={Boolean(busyAction)}
+          onClick={() => onReviewStepChange("publish")}
+        >
+          Next step: Publish
         </button>
       </div>
     </section>
@@ -813,9 +826,134 @@ function ManualQuestionPanel({
   );
 }
 
+function PublishPanel({
+  courseId,
+  topicId,
+  topic,
+  groups,
+  confirmedSourceCount,
+  busyAction,
+  onReviewStepChange,
+  onResourcesChange,
+  onCourseChange,
+  onError,
+  onMessage,
+}) {
+  const [publishing, setPublishing] = useState(false);
+
+  async function handlePublish() {
+    setPublishing(true);
+    onError("");
+    onMessage("");
+    try {
+      const data = await publishTopic(courseId, topicId);
+      onResourcesChange(data);
+      if (data.course) onCourseChange(data.course);
+      const info = data.publish || {};
+      const audioCount = info.audio_generated_count || 0;
+      const materialCount = info.materials_processed || 0;
+      onMessage(
+        `Course published. ${audioCount} audio file${audioCount === 1 ? "" : "s"} generated across `
+        + `${materialCount} lesson file${materialCount === 1 ? "" : "s"}.`,
+      );
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  return (
+    <section className="connection-review-panel" aria-labelledby="publish-panel-title">
+      <div className="connection-review-heading">
+        <div>
+          <span className="connection-eyebrow">Final review</span>
+          <h3 id="publish-panel-title">Learning objects overview</h3>
+          <p>
+            Review every confirmed learning object for this topic, then publish to generate lesson audio.
+          </p>
+        </div>
+        <span className="connection-source-count">
+          {groups.length} concept{groups.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+        <span className="is-complete">1</span>
+        <div aria-hidden="true" />
+        <span className="is-complete">2</span>
+        <div aria-hidden="true" />
+        <span className="is-active">3</span>
+        <strong>Publish</strong>
+      </div>
+
+      {!groups.length ? (
+        <div className="review-queue-empty">No confirmed learning objects are available yet.</div>
+      ) : (
+        <div className="connection-group-list">
+          {groups.map((group, groupIndex) => {
+            const isConnected = group.learning_objects.length > 1;
+            const groupNumber = groupIndex + 1;
+            return (
+              <article className={`connection-group-card ${isConnected ? "is-connected" : ""}`} key={group.id}>
+                <header>
+                  <div className="connection-group-heading-copy">
+                    <span className="connection-group-number" aria-label={`Concept ${groupNumber}`}>{groupNumber}</span>
+                    <h4>{group.label || group.learning_objects[0]?.title || "Untitled concept"}</h4>
+                  </div>
+                  <span className={`connection-status ${isConnected ? "is-connected" : "is-single"}`}>
+                    {isConnected
+                      ? `${group.learning_objects.length} variations`
+                      : "Single variation"}
+                  </span>
+                </header>
+                <div className="publish-object-list">
+                  {group.learning_objects.map((item) => (
+                    <div className="publish-object-item" key={item.id}>
+                      <strong>{item.title}</strong>
+                      <FormattedLearningObjectContent
+                        content={item.content}
+                        className="learning-object-content-text"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="review-step-actions-row">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={publishing || Boolean(busyAction)}
+          onClick={() => onReviewStepChange("questions")}
+        >
+          Back to question pairs
+        </button>
+        <div className="publish-status">
+          {topic?.published_at && (
+            <small>Last published {new Date(topic.published_at).toLocaleString()}</small>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={publishing || Boolean(busyAction) || confirmedSourceCount === 0}
+            onClick={handlePublish}
+          >
+            {publishing ? "Publishing..." : topic?.published ? "Republish course" : "Publish course"}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LearningObjectConnections({
   courseId,
   topicId,
+  topic,
   materials,
   reviewStep,
   onReviewStepChange,
@@ -1063,7 +1201,7 @@ function LearningObjectConnections({
   }
 
   return (
-    <div className="connection-review-layout has-recommendations">
+    <div className={`connection-review-layout ${reviewStep === "publish" ? "" : "has-recommendations"}`.trim()}>
       {reviewStep === "objects" && (
       <section
         className="connection-review-panel"
@@ -1305,7 +1443,7 @@ function LearningObjectConnections({
       )}
       </section>
       )}
-      {reviewStep === "objects" ? (
+      {reviewStep === "objects" && (
         <ObjectPairsPanel
           suggestions={matchSuggestions}
           materialById={materialById}
@@ -1314,7 +1452,8 @@ function LearningObjectConnections({
           onReviewStepChange={onReviewStepChange}
           onReview={reviewMatchSuggestion}
         />
-      ) : (
+      )}
+      {reviewStep === "questions" && (
         <>
           <ReviewQueuePanel
             questionPairings={questionReviewQueue}
@@ -1334,6 +1473,21 @@ function LearningObjectConnections({
             onMessage={onMessage}
           />
         </>
+      )}
+      {reviewStep === "publish" && (
+        <PublishPanel
+          courseId={courseId}
+          topicId={topicId}
+          topic={topic}
+          groups={groups}
+          confirmedSourceCount={confirmedSourceCount}
+          busyAction={busyAction}
+          onReviewStepChange={onReviewStepChange}
+          onResourcesChange={setResources}
+          onCourseChange={onCourseChange}
+          onError={onError}
+          onMessage={onMessage}
+        />
       )}
     </div>
   );
@@ -2371,6 +2525,7 @@ export default function TopicDetailPage() {
           <LearningObjectConnections
             courseId={courseId}
             topicId={topicId}
+            topic={topic}
             materials={materials}
             reviewStep={connectionReviewStep}
             onReviewStepChange={setConnectionReviewStep}

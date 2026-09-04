@@ -16,7 +16,7 @@ from .services.content_generator import is_structural_metadata_label
 class OutlineNodeSerializer(serializers.ModelSerializer):
     class Meta:
         model = OutlineNode
-        fields = ["id", "title", "depth", "order", "parent", "related_info"]
+        fields = ["id", "title", "depth", "order", "parent", "related_info", "published", "published_at"]
 
 
 class OutlineNodeMutationSerializer(serializers.Serializer):
@@ -57,6 +57,8 @@ class OutlineHierarchyNodeSerializer(serializers.ModelSerializer):
             "related_info",
             "lesson_pdf_count",
             "has_lesson_pdf",
+            "published",
+            "published_at",
             "children",
         ]
 

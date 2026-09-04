@@ -642,6 +642,62 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/publish",
+    )
+    def publish_topic(self, request, pk=None, node_id=None):
+        """Generate lesson audio for every confirmed material and mark the topic published."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response(
+                {"detail": "Outline node not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        confirmed_materials = (
+            LearningMaterial.objects.filter(
+                course=course,
+                outline_node=node,
+                generated_json__learning_objects_confirmed=True,
+            )
+            .exclude(learning_objects__isnull=True)
+            .distinct()
+        )
+        if not confirmed_materials.exists():
+            return Response(
+                {"detail": "Confirm at least one lesson file's learning objects before publishing."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        audio_generated_count = 0
+        audio_errors = []
+        for material in confirmed_materials:
+            try:
+                result = generate_material_audio_playlist(material, scope="lessons")
+                audio_generated_count += result["generated_count"]
+            except AudioGenerationError as exc:
+                audio_errors.append(f"{material.title or material.pdf_file.name}: {exc}")
+
+        node.published = True
+        node.published_at = timezone.now()
+        node.save(update_fields=["published", "published_at"])
+
+        payload = self._learning_resources_payload(node, request)
+        payload["publish"] = {
+            "published": True,
+            "published_at": node.published_at.isoformat(),
+            "audio_generated_count": audio_generated_count,
+            "materials_processed": confirmed_materials.count(),
+            "audio_errors": audio_errors,
+        }
+        refreshed_course = self.get_queryset().get(pk=course.pk)
+        payload["course"] = CourseDetailSerializer(refreshed_course, context={"request": request}).data
+        return Response(payload)
+
+    @action(
+        detail=True,
+        methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/questions/(?P<question_id>[^/.]+)/pairing",
     )
     def review_question_pairing(self, request, pk=None, node_id=None, question_id=None):

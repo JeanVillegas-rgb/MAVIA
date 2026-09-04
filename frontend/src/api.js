@@ -193,6 +193,12 @@ export function createTopicQuestion(courseId, nodeId, data) {
   });
 }
 
+export function publishTopic(courseId, nodeId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/publish/`, {
+    method: "POST",
+  });
+}
+
 export function deleteLearningMaterial(courseId, materialId) {
   return request(`/courses/${courseId}/materials/${materialId}/`, {
     method: "DELETE",

@@ -1151,6 +1151,56 @@ class LearningResourceRelationshipTests(TestCase):
 
         self.assertEqual([item["title"] for item in data["learning_objects"]], ["Matter"])
 
+    def test_publish_topic_requires_a_confirmed_material(self):
+        response = self.client.post(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/publish/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.published)
+
+    @patch("lessons.services.audio_generator.synthesize_text_to_audio")
+    def test_publish_topic_generates_audio_and_marks_the_node_published(self, synthesize_audio):
+        from django.conf import settings
+        from pathlib import Path
+
+        material = self._material("confirmed-lesson")
+        material.generated_json = {
+            **material.generated_json,
+            "narration_script": [
+                {"order": 1, "type": "lesson_content", "content": "Matter has mass and volume."},
+            ],
+            "lesson_playlist": [
+                {"order": 0, "title": "Matter", "narration_item_order": 1},
+            ],
+        }
+        material.save(update_fields=["generated_json"])
+        LearningObject.objects.create(
+            material=material,
+            title="Matter",
+            content="Matter has mass and volume.",
+        )
+        ensure_learning_object_groups(material)
+        synthesize_audio.return_value = Path(settings.MEDIA_ROOT) / "audio_lessons" / "matter.mp3"
+
+        response = self.client.post(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/publish/",
+            {},
+            format="json",
+        )
+
+        self.node.refresh_from_db()
+        material.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(self.node.published)
+        self.assertIsNotNone(self.node.published_at)
+        self.assertEqual(response.data["publish"]["audio_generated_count"], 1)
+        self.assertTrue(material.generated_json["lesson_audio_generated"])
+        synthesize_audio.assert_called_once()
+
     def test_course_outline_upload_rejects_non_pdf(self):
         client = APIClient()
         course = CourseGroup.objects.create(title="Science 7")

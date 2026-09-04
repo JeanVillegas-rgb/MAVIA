@@ -181,7 +181,13 @@ def generate_material_audio_playlist(material: LearningMaterial, scope: str = "l
     for item in lesson_playlist:
         updated_item = dict(item)
         narration_order = updated_item.get("narration_item_order")
-        text = narration_by_order.get(int(narration_order)) if narration_order is not None else ""
+        if narration_order is None:
+            # Not sourced from this material's narration script (e.g. an
+            # existing practice-question audio track) — keep it untouched
+            # instead of dropping it from the playlist.
+            updated_playlist.append(updated_item)
+            continue
+        text = narration_by_order.get(int(narration_order)) or ""
         if not text:
             continue
         position = len(updated_playlist)
