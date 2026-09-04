@@ -428,13 +428,16 @@ function ReviewQueuePanel({
   }
 
   return (
-    <section className="match-suggestion-panel" aria-labelledby="match-suggestion-title">
-      <div className="match-suggestion-heading">
+    <section className="connection-review-panel" aria-labelledby="match-suggestion-title">
+      <div className="connection-review-heading">
         <div>
           <span className="connection-eyebrow">Review queue</span>
-          <h4 id="match-suggestion-title">Review question pairs</h4>
+          <h3 id="match-suggestion-title">Review question pairs</h3>
+          <p>
+            Review one uncertain question at a time. Accept the suggested concept, change it, or decline it.
+          </p>
         </div>
-        <span>{questionPairings.length} to review</span>
+        <span className="connection-source-count">{questionPairings.length} to review</span>
       </div>
       <div className="review-step-indicator" aria-label="Review progress">
         <span className="is-complete">1</span>
@@ -443,9 +446,6 @@ function ReviewQueuePanel({
         <strong>Question pairs</strong>
       </div>
 
-      <p className="match-suggestion-intro">
-        Review one uncertain question at a time. Accept the suggested concept, change it, or decline it.
-      </p>
       {!questionPairings.length ? (
         <div className="review-queue-empty">No question pairs need review.</div>
       ) : (
@@ -826,7 +826,7 @@ function LearningObjectConnections({
   const [resources, setResources] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState("");
-  const [filter, setFilter] = useState("connected");
+  const [filter, setFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [groupLabel, setGroupLabel] = useState("");
