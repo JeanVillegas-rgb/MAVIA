@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "MAVIA",
+    "slug": "mavia-mobile",
+    "scheme": "mavia",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#0b2a4a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mavia.app"
+    },
+    "android": {
+      "package": "com.mavia.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0b2a4a"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ]
+  }
+}
