@@ -159,6 +159,32 @@ class EnrollmentAndProgressApiTests(APITestCase):
         resp = self.client.post("/api/adaptive/start/", {"course_id": self.course.id})
         self.assertEqual(resp.status_code, 403)
 
+    def test_student_lesson_read_endpoints(self):
+        Enrollment.objects.create(student=self.student, course=self.course)
+        self.client.force_authenticate(self.student)
+
+        courses = self.client.get("/api/adaptive/my-courses/")
+        self.assertEqual(courses.status_code, 200)
+        self.assertEqual(courses.data[0]["id"], self.course.id)
+        self.assertEqual(courses.data[0]["question_count"], 2)
+
+        lessons = self.client.get(
+            f"/api/adaptive/my-courses/{self.course.id}/lessons/"
+        )
+        self.assertEqual(lessons.status_code, 200)
+        lesson_id = lessons.data[0]["id"]
+
+        package = self.client.get(f"/api/adaptive/lessons/{lesson_id}/")
+        self.assertEqual(package.status_code, 200)
+        self.assertTrue(package.data["has_questions"])
+
+    def test_student_lesson_read_requires_enrollment(self):
+        self.client.force_authenticate(self.student)
+        resp = self.client.get(
+            f"/api/adaptive/my-courses/{self.course.id}/lessons/"
+        )
+        self.assertEqual(resp.status_code, 403)
+
     def test_full_student_flow_updates_progress(self):
         Enrollment.objects.create(student=self.student, course=self.course)
         self.client.force_authenticate(self.student)
@@ -232,11 +258,3 @@ class ReviewPackageApiTests(APITestCase):
         self.assertFalse(lesson["tracks"][1]["audio_ready"])
         self.assertEqual(lesson["tracks"][0]["text"], "Intro narration.")
         self.assertTrue(lesson["has_questions"])
-
-    def test_mark_reviewed_toggles(self):
-        self.client.force_authenticate(self.teacher)
-        url = f"/api/courses/{self.course.id}/review/modules/{self.module.id}/mark-reviewed/"
-        first = self.client.post(url)
-        self.assertTrue(first.data["reviewed"])
-        second = self.client.post(url)
-        self.assertFalse(second.data["reviewed"])

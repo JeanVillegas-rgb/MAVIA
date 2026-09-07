@@ -6,6 +6,7 @@ import {
   addEnrollment,
   fetchCourse,
   fetchCourseProgress,
+  fetchModulePackage,
   fetchReviewModules,
   removeEnrollment,
   searchStudents,
@@ -113,6 +114,113 @@ function AddStudent({ courseId, onAdded, existingIds }) {
   );
 }
 
+// A module row that expands to show its packaged lesson content, read-only:
+// the narration tracks and the questions. No playback — that's the mobile app.
+function ModuleRow({ courseId, module }) {
+  const [open, setOpen] = useState(false);
+  const [pkg, setPkg] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !pkg && !loading) {
+      setLoading(true);
+      fetchModulePackage(courseId, module.id)
+        .then(setPkg)
+        .catch((err) => setError(err.message))
+        .finally(() => setLoading(false));
+    }
+  }
+
+  return (
+    <div className={`review-module ${open ? "is-open" : ""}`}>
+      <button type="button" className="review-module__head" onClick={toggle} aria-expanded={open}>
+        <span className="review-module__caret" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        <strong>{module.title}</strong>
+        <span className="mv-muted">
+          {module.lesson_count} lesson{module.lesson_count === 1 ? "" : "s"} ·{" "}
+          {module.track_count} track{module.track_count === 1 ? "" : "s"} ·{" "}
+          {module.question_count} question{module.question_count === 1 ? "" : "s"}
+        </span>
+        {module.question_count === 0 && (
+          <span className="review-tag">Review-only on mobile — no questions</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="review-module__body">
+          {loading && <div className="mv-muted">Loading packaged lesson…</div>}
+          {error && <div className="error-banner">{error}</div>}
+          {pkg &&
+            pkg.lessons.map((lesson) => (
+              <div key={lesson.id} className="review-lesson">
+                <div className="review-lesson__title">{lesson.title}</div>
+
+                <div className="review-lesson__section-label">
+                  Narration tracks ({lesson.tracks.length})
+                </div>
+                {lesson.tracks.length === 0 ? (
+                  <p className="mv-muted">No narration tracks generated yet.</p>
+                ) : (
+                  <ol className="review-track-list">
+                    {lesson.tracks.map((track) => (
+                      <li key={track.id}>
+                        <div className="review-track-list__head">
+                          <span>{track.title}</span>
+                          <span
+                            className={`review-audio-flag ${
+                              track.audio_ready ? "is-ready" : ""
+                            }`}
+                          >
+                            {track.audio_ready ? "audio ready" : "no audio yet"}
+                          </span>
+                        </div>
+                        {track.text && (
+                          <p className="review-track-list__text">{track.text}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+
+                <div className="review-lesson__section-label">
+                  Questions ({lesson.questions.length})
+                </div>
+                {lesson.questions.length === 0 ? (
+                  <p className="mv-muted">
+                    No questions — the mobile app plays this lesson in review-only mode.
+                  </p>
+                ) : (
+                  <ol className="review-question-list">
+                    {lesson.questions.map((question) => (
+                      <li key={question.id}>
+                        <p className="review-question-list__prompt">{question.prompt}</p>
+                        {Array.isArray(question.choices) && question.choices.length > 0 && (
+                          <ul>
+                            {question.choices.map((choice, index) => (
+                              <li key={index}>{choice}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <span className="review-question-list__answer">
+                          Correct answer: {question.correct_answer || "—"}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CourseReviewPage() {
   const { courseId } = useParams();
   const [course, setCourse] = useState(null);
@@ -178,35 +286,20 @@ export default function CourseReviewPage() {
       {!loading && (
         <>
           <section className="mv-card">
-            <h3 className="mv-card__title">Modules</h3>
+            <h3 className="mv-card__title">Packaged lessons</h3>
+            <p className="mv-muted" style={{ marginTop: "-0.4rem", marginBottom: "1rem" }}>
+              What the mobile app delivers to students, per module. Playback happens
+              on mobile — this is the content, read-only.
+            </p>
             {modules.length === 0 ? (
               <div className="empty-state">
                 No modules with generated content yet. Publish topics and generate
                 their lesson audio first.
               </div>
             ) : (
-              <div className="mv-list">
+              <div className="review-module-list">
                 {modules.map((module) => (
-                  <div key={module.id} className="mv-list__item">
-                    <span>
-                      <strong>{module.title}</strong>
-                      <span className="mv-muted">
-                        {" "}
-                        · {module.lesson_count} lesson
-                        {module.lesson_count === 1 ? "" : "s"} · {module.track_count} track
-                        {module.track_count === 1 ? "" : "s"}
-                      </span>
-                      {module.question_count === 0 && (
-                        <span className="review-tag"> Review only — no questions</span>
-                      )}
-                    </span>
-                    <Link
-                      to={`/review/courses/${courseId}/modules/${module.id}`}
-                      className="mv-btn mv-btn--soft"
-                    >
-                      ▶ Play module
-                    </Link>
-                  </div>
+                  <ModuleRow key={module.id} courseId={courseId} module={module} />
                 ))}
               </div>
             )}

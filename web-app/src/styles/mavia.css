@@ -1027,182 +1027,94 @@
   font-size: 0.88rem;
 }
 
-/* -- audiobook player ----------------------------------------------------- */
+/* -- packaged-lesson inspection (read-only; no playback) ----------------- */
 
-.audiobook {
+.review-module-list {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  grid-template-areas:
-    "player side"
-    "questions side";
-  gap: 1rem;
-  align-items: start;
+  gap: 0.6rem;
 }
-.audiobook__player {
-  grid-area: player;
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-  align-items: stretch;
+.review-module {
+  border: 1px solid var(--mv-border);
+  border-radius: var(--mv-radius-sm);
+  background: var(--mv-surface);
+  overflow: hidden;
 }
-.audiobook__side {
-  grid-area: side;
+.review-module.is-open {
+  border-color: var(--mv-brand-300);
 }
-.audiobook__questions {
-  grid-area: questions;
-}
-@media (max-width: 860px) {
-  .audiobook {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "player"
-      "side"
-      "questions";
-  }
-}
-
-.audiobook__art {
-  align-self: center;
-  width: 200px;
-  height: 200px;
-  border-radius: var(--mv-radius);
-  background: linear-gradient(135deg, var(--mv-brand-400), var(--mv-brand-900));
-  color: #fff;
+.review-module__head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 4rem;
-  box-shadow: var(--mv-shadow);
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  padding: 0.8rem 1rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--mv-ink);
+  cursor: pointer;
 }
-.audiobook__now {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  text-align: center;
+.review-module__head:hover {
+  background: var(--mv-brand-50);
 }
-.audiobook__lesson {
-  font-size: 0.78rem;
+.review-module__caret {
+  color: var(--mv-brand-600);
+}
+.review-module__body {
+  padding: 0.4rem 1rem 1rem;
+  border-top: 1px solid var(--mv-border);
+  display: grid;
+  gap: 1.1rem;
+}
+.review-lesson {
+  display: grid;
+  gap: 0.5rem;
+}
+.review-lesson__title {
+  font-weight: 700;
+  color: var(--mv-brand-800);
+}
+.review-lesson__section-label {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--mv-faint);
 }
-.audiobook__track {
-  font-size: 1.15rem;
-  color: var(--mv-ink);
-}
-.audiobook__seek {
-  width: 100%;
-  accent-color: var(--mv-brand-600);
-}
-.audiobook__times {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
-  color: var(--mv-faint);
-  font-variant-numeric: tabular-nums;
-}
-.audiobook__transport {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1.25rem;
-}
-.audiobook__btn {
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  border: 1px solid var(--mv-border-strong);
-  background: var(--mv-surface);
-  color: var(--mv-brand-800);
-  font-size: 1.1rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.audiobook__btn:hover:not(:disabled) {
-  border-color: var(--mv-brand-400);
-  background: var(--mv-brand-50);
-}
-.audiobook__btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.audiobook__btn--primary {
-  width: 62px;
-  height: 62px;
-  font-size: 1.5rem;
-  background: var(--mv-brand-700);
-  border-color: var(--mv-brand-700);
-  color: #fff;
-}
-.audiobook__btn--primary:hover:not(:disabled) {
-  background: var(--mv-brand-800);
-}
-.audiobook__done {
-  text-align: center;
-  color: var(--mv-success);
-  font-weight: 700;
-  font-size: 0.9rem;
-}
-
-.audiobook__playlist {
-  list-style: none;
+.review-track-list {
+  list-style: decimal;
   margin: 0;
-  padding: 0;
+  padding-left: 1.2rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.55rem;
 }
-.audiobook__playlist-group {
-  display: grid;
-  gap: 0.3rem;
-}
-.audiobook__playlist-lesson {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--mv-faint);
-}
-.audiobook__playlist-item {
+.review-track-list__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  width: 100%;
-  text-align: left;
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--mv-border);
-  border-radius: var(--mv-radius-sm);
-  background: var(--mv-surface);
-  font: inherit;
+}
+.review-track-list__text {
+  margin-top: 0.15rem;
   font-size: 0.85rem;
-  color: var(--mv-ink);
-  cursor: pointer;
-}
-.audiobook__playlist-item:hover:not(:disabled) {
-  border-color: var(--mv-brand-300);
-  background: var(--mv-brand-50);
-}
-.audiobook__playlist-item.is-active {
-  border-color: var(--mv-brand-500);
-  background: var(--mv-brand-50);
-  font-weight: 700;
-}
-.audiobook__playlist-item:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.review-only-callout {
-  border: 1px solid var(--mv-brand-100);
-  background: var(--mv-brand-50);
-  border-radius: var(--mv-radius-sm);
-  padding: 1rem;
-}
-.review-only-callout p {
-  margin-top: 0.4rem;
-  font-size: 0.87rem;
   color: var(--mv-muted);
+}
+.review-audio-flag {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mv-warning);
+  background: #fdeede;
+  border-radius: var(--mv-radius-pill);
+  padding: 0.1rem 0.55rem;
+}
+.review-audio-flag.is-ready {
+  color: var(--mv-success);
+  background: #dff3ea;
 }
 
 .review-question-list {

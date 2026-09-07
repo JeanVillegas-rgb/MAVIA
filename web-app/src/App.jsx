@@ -15,7 +15,6 @@ import CourseDetailPage from "./pages/CourseDetailPage";
 import TopicDetailPage from "./pages/TopicDetailPage";
 import ReviewCoursesPage from "./pages/teacher/ReviewCoursesPage";
 import CourseReviewPage from "./pages/teacher/CourseReviewPage";
-import ModulePlayerPage from "./pages/teacher/ModulePlayerPage";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdaptiveWeightsPage from "./pages/admin/AdaptiveWeightsPage";
 
@@ -131,8 +130,9 @@ export default function App() {
           </RequireRole>
         }
       />
-      {/* Course review (teacher + admin): audiobook-style module playback +
-          per-enrolled-student progress. Student learning stays on mobile. */}
+      {/* Course review (teacher + admin): inspect the packaged lesson content
+          and the progress of each enrolled student. The audiobook-style
+          player itself is mobile-only. */}
       <Route
         path="/review"
         element={
@@ -146,14 +146,6 @@ export default function App() {
         element={
           <RequireRole allow={[ROLES.TEACHER, ROLES.ADMIN]}>
             <CourseReviewPage />
-          </RequireRole>
-        }
-      />
-      <Route
-        path="/review/courses/:courseId/modules/:moduleId"
-        element={
-          <RequireRole allow={[ROLES.TEACHER, ROLES.ADMIN]}>
-            <ModulePlayerPage />
           </RequireRole>
         }
       />

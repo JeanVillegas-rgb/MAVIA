@@ -31,7 +31,7 @@ export default function ReviewCoursesPage() {
   return (
     <TeacherShell>
       <div className="mv-page-head">
-        <h1>Review</h1>
+        <h1>Classes</h1>
         <p>
           Listen through a course the way a student hears it, and check how your
           enrolled students are progressing.

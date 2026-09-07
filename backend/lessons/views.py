@@ -105,12 +105,13 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         modules = course.nodes.filter(parent__isnull=True).order_by("order", "id")
         return Response(OutlineNodeSerializer(modules, many=True, context={"request": request}).data)
 
-    # -- teacher review player -------------------------------------------------
+    # -- teacher review section (read-only) ----------------------------------
+    # The web app only inspects the packaged lesson content and student
+    # progress. The audiobook-style player is mobile-only.
 
     @action(detail=True, methods=["get"], url_path=r"review/modules")
     def review_modules(self, request, pk=None):
-        """Module list for the web review section: audiobook-style playback +
-        question counts per module."""
+        """Per-module summary: lesson / track / question counts."""
         course = self.get_object()
         return Response(build_course_module_summaries(course))
 
@@ -120,6 +121,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         url_path=r"review/modules/(?P<module_id>[^/.]+)/package",
     )
     def review_module_package(self, request, pk=None, module_id=None):
+        """The packaged lesson content for one module: narration tracks and
+        questions, read-only."""
         course = self.get_object()
         module_node = self._get_module_node(course, module_id)
         if module_node is None:
@@ -128,28 +131,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(build_module_package(module_node))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"review/modules/(?P<module_id>[^/.]+)/mark-reviewed",
-    )
-    def mark_module_reviewed(self, request, pk=None, module_id=None):
-        """Teacher-side only: stamp when a prof last listened through a module.
-        Does not touch any student LearningState."""
-        course = self.get_object()
-        module_node = self._get_module_node(course, module_id)
-        if module_node is None:
-            return Response(
-                {"detail": "Module not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        related_info = dict(module_node.related_info or {})
-        reviewed = not related_info.get("reviewed_at")
-        related_info["reviewed_at"] = timezone.now().isoformat() if reviewed else None
-        module_node.related_info = related_info
-        module_node.save(update_fields=["related_info"])
-        return Response({"reviewed": reviewed, "reviewed_at": related_info["reviewed_at"]})
 
     def _learning_resources_payload(self, node, request):
         started_at = perf_counter()

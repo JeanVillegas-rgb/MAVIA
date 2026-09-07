@@ -6,9 +6,6 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "splash": {
-      "backgroundColor": "#0b2a4a"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mavia.app"
@@ -21,7 +18,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      "expo-asset"
     ]
   }
 }

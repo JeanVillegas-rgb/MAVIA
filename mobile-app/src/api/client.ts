@@ -24,13 +24,23 @@ async function request(path: string, options: RequestInit = {}) {
   }
 
   let response: Response;
+  // Fail fast if the backend is unreachable — without this a black-holed TCP
+  // connection leaves screens stuck on their loading state forever.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
   } catch {
     throw new Error(
       `Can't reach the MAVIA server at ${API_BASE_URL}. Check that the ` +
         "backend is running and reachable from this device."
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
@@ -166,6 +176,15 @@ export type ApiLesson = {
   track_count: number;
   question_count: number;
 };
+
+// The API returns audio_url as a server-absolute path ("/media/..."). Turn it
+// into a full URL the device can fetch by borrowing API_BASE_URL's origin.
+export function resolveMediaUrl(path: string): string {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const origin = API_BASE_URL.replace(/\/api\/?$/, "");
+  return `${origin}${path.startsWith("/") ? "" : "/"}${path}`;
+}
 
 export function fetchMyCourses(): Promise<ApiCourse[]> {
   return request("/adaptive/my-courses/");

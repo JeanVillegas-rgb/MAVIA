@@ -13,9 +13,9 @@ export default function TeacherDashboard() {
     <>
       <div className="mv-rail__card">
         <div className="mv-profile">
-          <span className="mv-avatar">MJ</span>
+          <span className="mv-avatar">MK</span>
           <span>
-            <span className="mv-profile__name">Maria June Kathleen</span>
+            <span className="mv-profile__name">Maria Katrina Esclamado</span>
             <span className="mv-profile__role">Teacher</span>
           </span>
         </div>

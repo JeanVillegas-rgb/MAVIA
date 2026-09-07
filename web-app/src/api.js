@@ -330,8 +330,8 @@ export function publishTopic(courseId, nodeId) {
 }
 
 // ---------------------------------------------------------------------------
-// Course review section (teacher): audiobook-style module player + per-student
-// progress. Student consumption of these lives in the mobile app.
+// Course review section (teacher): inspect the packaged lesson content + see
+// each enrolled student's progress. Playback is mobile-only.
 // ---------------------------------------------------------------------------
 
 export function fetchReviewModules(courseId) {
@@ -340,13 +340,6 @@ export function fetchReviewModules(courseId) {
 
 export function fetchModulePackage(courseId, moduleId) {
   return request(`/courses/${courseId}/review/modules/${moduleId}/package/`);
-}
-
-export function markModuleReviewed(courseId, moduleId) {
-  return request(
-    `/courses/${courseId}/review/modules/${moduleId}/mark-reviewed/`,
-    { method: "POST" }
-  );
 }
 
 export function fetchCourseProgress(courseId) {
