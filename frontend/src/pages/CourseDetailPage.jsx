@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import CourseHierarchy from "../components/CourseHierarchy";
+import { uploadedMaterialUrl } from "../uploadNavigation";
 import {
   confirmCourseOutline,
   createOutlineNode,
@@ -80,7 +81,9 @@ export default function CourseDetailPage() {
 
       if (updatedCourse.upload_type === "outline") {
         setOutlineMessage(
-          course?.outline
+          updatedCourse.upload_reused
+            ? "This course outline was already uploaded. No duplicate was added and the existing hierarchy was left unchanged."
+            : course?.outline
             ? "Course outline detected and merged automatically. Existing hierarchy nodes were preserved and new topics were added for review."
             : "Course outline detected and extracted. Review the hierarchy before confirming it."
         );
@@ -103,6 +106,8 @@ export default function CourseDetailPage() {
             ? `This lesson PDF was already uploaded. Loaded the existing material.\n${placementMessage}`
             : `Lesson material detected automatically.\n${placementMessage}`
         );
+        const destination = uploadedMaterialUrl(id, uploadedMaterial);
+        if (destination) navigate(destination);
       }
     } catch (err) {
       setError(err.message);

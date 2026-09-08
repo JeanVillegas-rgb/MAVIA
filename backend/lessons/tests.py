@@ -68,6 +68,7 @@ from .services.learning_resource_linker import (
 )
 from .features.pdf_processing.use_cases import (
     PdfProcessingUseCaseError,
+    upload_course_outline,
     upload_course_pdf,
     upload_learning_material,
 )
@@ -94,6 +95,7 @@ class CumulativeCourseOutlineTests(TestCase):
     ):
         course = CourseGroup.objects.create(title="Science")
         uploaded = SimpleUploadedFile("outline.pdf", b"%PDF-1.4 outline")
+        upload_outline.return_value = (course, False)
 
         upload_type, material, reused = upload_course_pdf(course=course, pdf_file=uploaded)
 
@@ -101,6 +103,63 @@ class CumulativeCourseOutlineTests(TestCase):
         self.assertIsNone(material)
         self.assertFalse(reused)
         upload_outline.assert_called_once_with(course=course, outline_file=uploaded)
+
+    @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
+    @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
+    def test_same_outline_bytes_are_reused_without_resetting_approval(
+        self,
+        _validate_outline,
+        build_outline,
+    ):
+        course = CourseGroup.objects.create(title="Science")
+        pdf_bytes = b"%PDF-1.4 identical course outline"
+
+        _course, first_reused = upload_course_outline(
+            course=course,
+            outline_file=SimpleUploadedFile("outline.pdf", pdf_bytes),
+        )
+        saved_outline = course.outlines.get()
+        saved_outline.is_approved = True
+        saved_outline.save(update_fields=["is_approved"])
+
+        _course, second_reused = upload_course_outline(
+            course=course,
+            outline_file=SimpleUploadedFile("renamed-outline.pdf", pdf_bytes),
+        )
+
+        self.assertFalse(first_reused)
+        self.assertTrue(second_reused)
+        self.assertEqual(course.outlines.count(), 1)
+        self.assertTrue(course.outlines.get().is_approved)
+        build_outline.assert_called_once()
+
+        course.outlines.get().outline_file.delete(save=False)
+
+    @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
+    @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
+    def test_identical_outline_can_be_used_in_a_different_course(
+        self,
+        _validate_outline,
+        _build_outline,
+    ):
+        first_course = CourseGroup.objects.create(title="Science A")
+        second_course = CourseGroup.objects.create(title="Science B")
+        pdf_bytes = b"%PDF-1.4 shared course outline"
+
+        upload_course_outline(
+            course=first_course,
+            outline_file=SimpleUploadedFile("outline.pdf", pdf_bytes),
+        )
+        _course, reused = upload_course_outline(
+            course=second_course,
+            outline_file=SimpleUploadedFile("outline.pdf", pdf_bytes),
+        )
+
+        self.assertFalse(reused)
+        self.assertEqual(CourseOutline.objects.count(), 2)
+
+        for outline in CourseOutline.objects.all():
+            outline.outline_file.delete(save=False)
 
     @patch("lessons.features.pdf_processing.use_cases.upload_learning_material")
     @patch("lessons.features.pdf_processing.use_cases.is_course_outline_pdf", return_value=False)
@@ -294,7 +353,14 @@ class MilestoneModelSmokeTests(TestCase):
         self.assertFalse(data["generated_json"]["audio_playlist_generated"])
 
 
+@patch.dict("os.environ", {"SEMANTIC_GROUPING_MODE": "legacy"})
 class LearningResourceRelationshipTests(TestCase):
+    """Regression coverage for the legacy lexical matcher.
+
+    Semantic-mode routing has separate tests in test_semantic_grouping.py. Pinning
+    this class avoids making its expected TF-IDF behavior depend on a developer's
+    local .env rollout setting.
+    """
     def setUp(self):
         self.client = authenticated_api_client()
         self.course = CourseGroup.objects.create(title="Science")
@@ -379,6 +445,81 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(question.correct_answer, "Solid")
         self.assertEqual(question.material.generated_json["document_source"], "manual_questions")
         self.assertTrue(question.learning_object_links.exists())
+
+    def test_manual_question_duplicate_is_rejected_within_topic(self):
+        lesson = self._material("confirmed-lesson")
+        LearningObject.objects.create(
+            material=lesson,
+            title="Matter",
+            content="Matter has mass and occupies space.",
+        )
+        ensure_learning_object_groups(lesson)
+        url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/questions/"
+        payload = {
+            "prompt": "1. What is matter?",
+            "question_type": "true_false",
+            "choices": ["True", "False"],
+            "correct_answer": "True",
+        }
+
+        first = self.client.post(url, payload, format="json")
+        payload["prompt"] = "What is matter"
+        duplicate = self.client.post(url, payload, format="json")
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(duplicate.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(Question.objects.count(), 1)
+
+    def test_uploaded_open_question_is_flagged_and_classified(self):
+        payload = detected_question_payloads([{
+            "block_id": 1,
+            "page": 1,
+            "category": "assessment",
+            "text": "Why does a gas fill its container?",
+        }])[0]
+
+        self.assertEqual(payload["source_type"], Question.SourceType.PDF)
+        self.assertEqual(payload["validation_status"], Question.ValidationStatus.NEEDS_REVIEW)
+        self.assertTrue(payload["validation_issues"])
+        self.assertIn(payload["thinking_order"], {"LOT", "HOT"})
+
+    def test_editing_approved_question_updates_adaptive_bank(self):
+        lesson = self._material("confirmed-lesson")
+        learning_object = LearningObject.objects.create(
+            material=lesson,
+            title="Solid",
+            content="A solid keeps its shape.",
+        )
+        ensure_learning_object_groups(lesson)
+        question = Question.objects.create(
+            material=lesson,
+            prompt="Does a solid keep its shape?",
+            question_type=Question.Type.OPEN_ENDED,
+        )
+        QuestionLearningObjectLink.objects.create(
+            question=question,
+            learning_object=learning_object,
+            is_primary=True,
+            review_status=QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
+        )
+
+        response = self.client.patch(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/questions/{question.id}/",
+            {
+                "prompt": question.prompt,
+                "question_type": "true_false",
+                "choices": ["True", "False"],
+                "correct_answer": "True",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        question.refresh_from_db()
+        self.assertEqual(question.validation_status, Question.ValidationStatus.READY)
+        self.assertEqual(question.source_type, Question.SourceType.PDF)
+        self.assertIsNotNone(question.adaptive_question_id)
+        self.assertEqual(question.adaptive_question.thinking_order, question.thinking_order)
 
     def test_upload_rejects_a_topic_from_another_selected_module(self):
         other_module = OutlineNode.objects.create(
@@ -817,8 +958,10 @@ class LearningResourceRelationshipTests(TestCase):
         )
 
         self.assertEqual(len(payloads), 1)
-        self.assertIn("A. First choice", payloads[0]["prompt"])
-        self.assertIn("B. Second choice", payloads[0]["prompt"])
+        self.assertEqual(payloads[0]["prompt"], "Which description is correct?")
+        self.assertEqual(payloads[0]["question_type"], Question.Type.MULTIPLE_CHOICE)
+        self.assertEqual(payloads[0]["choices"], ["First choice", "Second choice"])
+        self.assertEqual(payloads[0]["correct_answer"], "First choice")
         self.assertNotIn("Answer:", payloads[0]["prompt"])
 
     def test_question_detector_splits_separate_prompts_but_joins_wrapped_lines(self):
@@ -844,7 +987,7 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(payloads[1]["prompt"], "Why does it stay unchanged?")
         self.assertEqual(
             payloads[2]["prompt"],
-            "Q: What happens when the temperature\nbecomes lower?",
+            "Q: What happens when the temperature becomes lower?",
         )
 
     def test_learning_resources_endpoint_exposes_groups_and_question_pairs(self):
@@ -1180,8 +1323,14 @@ class LearningResourceRelationshipTests(TestCase):
         self.node.refresh_from_db()
         self.assertFalse(self.node.published)
 
+    @patch(
+        "lessons.views.generate_standalone_variants",
+        return_value={"generated_count": 2, "cached_count": 0, "errors": []},
+    )
     @patch("lessons.services.audio_generator.synthesize_text_to_audio")
-    def test_publish_topic_generates_audio_and_marks_the_node_published(self, synthesize_audio):
+    def test_publish_topic_generates_audio_and_marks_the_node_published(
+        self, synthesize_audio, generate_variants
+    ):
         from django.conf import settings
         from pathlib import Path
 
@@ -1216,8 +1365,10 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertTrue(self.node.published)
         self.assertIsNotNone(self.node.published_at)
         self.assertEqual(response.data["publish"]["audio_generated_count"], 1)
+        self.assertEqual(response.data["publish"]["adaptive_variants_generated"], 2)
         self.assertTrue(material.generated_json["lesson_audio_generated"])
         synthesize_audio.assert_called_once()
+        generate_variants.assert_called_once_with(self.node)
 
     def test_course_outline_upload_rejects_non_pdf(self):
         client = authenticated_api_client()

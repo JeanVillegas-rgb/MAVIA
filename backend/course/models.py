@@ -72,6 +72,9 @@ class LessonVariant(models.Model):
     variant = models.CharField(max_length=20, choices=VARIANTS)
     narration = models.TextField()
     audio_url = models.CharField(max_length=255, blank=True)
+    source_fingerprint = models.CharField(max_length=64, blank=True)
+    generator_model = models.CharField(max_length=100, blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("learning_object", "variant")

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { uploadedMaterialFromResponse } from "../uploadNavigation";
 import {
   acceptLearningObjectMatchSuggestion,
   confirmLearningObjects,
@@ -12,12 +13,15 @@ import {
   deleteTopicQuestion,
   fetchCourse,
   fetchLearningResources,
+  fetchQuestionGenerationTrace,
   generateAudioPlaylist,
   publishTopic,
   rejectLearningObjectMatchSuggestion,
   reviewQuestionPairing,
   separateLearningObject,
+  startQuestionGeneration,
   updateLearningObject,
+  updateTopicQuestion,
   uploadLearningMaterial,
 } from "../api";
 
@@ -140,7 +144,12 @@ function logLearningObjectMatchDebug(payload) {
       `[Pair ${suggestion.id}] ${suggestion.source_learning_object?.title || "Untitled"} ↔ ${suggestion.candidate_learning_object?.title || "Untitled"}`,
     );
     console.table({
+      method: evidence.method || configuration.method || "unknown",
       overall_score: score,
+      sbert_cosine: Number(evidence.sbert_cosine || 0),
+      cross_encoder_score: Number(evidence.score || 0),
+      members_checked: Number(evidence.members_checked || 0),
+      all_members_checked: Boolean(evidence.all_members_checked),
       title_tfidf: Number(evidence.title_tfidf || 0),
       content_tfidf: Number(evidence.content_tfidf || 0),
       character_ngram: Number(evidence.character_ngram || 0),
@@ -153,42 +162,42 @@ function logLearningObjectMatchDebug(payload) {
       minimum_group_content_support: Number(evidence.minimum_group_content_support || 0),
       exact_normalized_title: Boolean(evidence.exact_normalized_title),
     });
+    const ruleResult = (actual, required) => ({
+      actual,
+      required: required ?? "not enabled",
+      passed: required == null ? false : actual >= Number(required),
+    });
     console.table([
       {
         rule: "Teacher review score",
-        actual: score,
-        required: thresholds.teacher_review,
-        passed: score >= Number(thresholds.teacher_review ?? 0),
+        ...ruleResult(score, thresholds.teacher_review),
       },
       {
         rule: "Automatic connection score",
-        actual: score,
-        required: thresholds.auto_connect,
-        passed: score >= Number(thresholds.auto_connect ?? 0),
+        ...ruleResult(score, thresholds.auto_connect),
+      },
+      {
+        rule: "SBERT group-member similarity",
+        ...ruleResult(
+          Number(evidence.minimum_group_sbert_cosine || 0),
+          thresholds.minimum_sbert_cosine,
+        ),
       },
       {
         rule: "Winner margin",
-        actual: margin,
-        required: thresholds.minimum_winner_margin,
-        passed: margin >= Number(thresholds.minimum_winner_margin ?? 0),
+        ...ruleResult(margin, thresholds.minimum_winner_margin),
       },
       {
         rule: "Every group member",
-        actual: groupMemberScore,
-        required: thresholds.minimum_group_member,
-        passed: groupMemberScore >= Number(thresholds.minimum_group_member ?? 0),
+        ...ruleResult(groupMemberScore, thresholds.minimum_group_member),
       },
       {
         rule: "Content evidence",
-        actual: Number(evidence.content_support || 0),
-        required: thresholds.minimum_content_support,
-        passed: Number(evidence.content_support || 0) >= Number(thresholds.minimum_content_support ?? 0),
+        ...ruleResult(Number(evidence.content_support || 0), thresholds.minimum_content_support),
       },
       {
         rule: "Every member content",
-        actual: Number(evidence.minimum_group_content_support || 0),
-        required: thresholds.minimum_content_support,
-        passed: Number(evidence.minimum_group_content_support || 0) >= Number(thresholds.minimum_content_support ?? 0),
+        ...ruleResult(Number(evidence.minimum_group_content_support || 0), thresholds.minimum_content_support),
       },
     ]);
     console.debug("Raw match suggestion", suggestion);
@@ -289,21 +298,12 @@ function ObjectPairsPanel({
         <span>3</span>
         <strong>Object pairs</strong>
       </div>
-
-      <p className="match-suggestion-intro">
-        Review one pair at a time. Accept if both teach the same concept; decline if they do not.
-      </p>
+      <p className="match-suggestion-intro">Review one pair at a time. Accept if both teach the same concept; decline if they do not.</p>
       {!suggestions.length ? (
         <div className="review-queue-empty">No learning-object pairs need review.</div>
       ) : (
         <>
-          <ReviewQueueNavigator
-            index={objectIndex}
-            count={suggestions.length}
-            onChange={setObjectIndex}
-            disabled={Boolean(busyAction)}
-            itemLabel="Object pair"
-          />
+          <ReviewQueueNavigator index={objectIndex} count={suggestions.length} onChange={setObjectIndex} disabled={Boolean(busyAction)} itemLabel="Object pair" />
           <div className="match-suggestion-list">
             {suggestions.map((suggestion, index) => {
               const source = suggestion.source_learning_object;
@@ -311,12 +311,7 @@ function ObjectPairsPanel({
               const sourceMaterial = materialById.get(Number(source.material));
               const candidateMaterial = materialById.get(Number(candidate.material));
               return (
-                <article
-                  className={`match-suggestion-card ${
-                    index === objectIndex ? "" : "is-hidden"
-                  }`.trim()}
-                  key={suggestion.id}
-                >
+                <article className={`match-suggestion-card ${index === objectIndex ? "" : "is-hidden"}`.trim()} key={suggestion.id}>
                   <div className="match-suggestion-score">
                     <span>Similarity</span>
                     <strong>{Math.round(suggestion.similarity_score * 100)}%</strong>
@@ -324,65 +319,22 @@ function ObjectPairsPanel({
                   </div>
                   <div className="match-suggestion-pair">
                     <div className="match-source-card">
-                      <div className="match-source-label">
-                        <span aria-hidden="true">A</span>
-                        <small>{sourceMaterial?.filename || `PDF ${source.material}`}</small>
-                      </div>
+                      <div className="match-source-label"><span aria-hidden="true">A</span><small>{sourceMaterial?.filename || `PDF ${source.material}`}</small></div>
                       <strong>{source.title}</strong>
-                      {source.image_url && (
-                        <img
-                          className="review-source-image"
-                          src={source.image_url}
-                          alt={source.title || "Source A"}
-                        />
-                      )}
-                      <p className="match-source-content">
-                        {source.content || "No narration content."}
-                      </p>
+                      {source.image_url && <img className="review-source-image" src={source.image_url} alt={source.title || "Source A"} />}
+                      <p className="match-source-content">{source.content || "No narration content."}</p>
                     </div>
-                    <div className="match-pair-connector" aria-hidden="true">
-                      <span>+</span>
-                      <small>possible match</small>
-                    </div>
+                    <div className="match-pair-connector" aria-hidden="true"><span>+</span><small>possible match</small></div>
                     <div className="match-source-card">
-                      <div className="match-source-label">
-                        <span aria-hidden="true">B</span>
-                        <small>{candidateMaterial?.filename || `PDF ${candidate.material}`}</small>
-                      </div>
+                      <div className="match-source-label"><span aria-hidden="true">B</span><small>{candidateMaterial?.filename || `PDF ${candidate.material}`}</small></div>
                       <strong>{candidate.title}</strong>
-                      {candidate.image_url && (
-                        <img
-                          className="review-source-image"
-                          src={candidate.image_url}
-                          alt={candidate.title || "Source B"}
-                        />
-                      )}
-                      <p className="match-source-content">
-                        {candidate.content || "No narration content."}
-                      </p>
+                      {candidate.image_url && <img className="review-source-image" src={candidate.image_url} alt={candidate.title || "Source B"} />}
+                      <p className="match-source-content">{candidate.content || "No narration content."}</p>
                     </div>
                   </div>
                   <div className="match-suggestion-actions">
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      disabled={Boolean(busyAction)}
-                      onClick={() => onReview(suggestion, "reject")}
-                    >
-                      {busyAction === `suggestion-reject-${suggestion.id}`
-                        ? "Declining..."
-                        : "Decline"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-small"
-                      disabled={Boolean(busyAction)}
-                      onClick={() => onReview(suggestion, "accept")}
-                    >
-                      {busyAction === `suggestion-accept-${suggestion.id}`
-                        ? "Accepting..."
-                        : "Accept"}
-                    </button>
+                    <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busyAction)} onClick={() => onReview(suggestion, "reject")}>{busyAction === `suggestion-reject-${suggestion.id}` ? "Declining..." : "Decline"}</button>
+                    <button type="button" className="btn btn-primary btn-small" disabled={Boolean(busyAction)} onClick={() => onReview(suggestion, "accept")}>{busyAction === `suggestion-accept-${suggestion.id}` ? "Accepting..." : "Accept"}</button>
                   </div>
                 </article>
               );
@@ -391,18 +343,12 @@ function ObjectPairsPanel({
         </>
       )}
       <div className="review-step-actions review-step-actions-next">
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={Boolean(busyAction)}
-          onClick={() => onReviewStepChange("questions")}
-        >
-          Next step: Question pairs ({pendingQuestionCount})
-        </button>
+        <button type="button" className="btn btn-primary" disabled={Boolean(busyAction)} onClick={() => onReviewStepChange("questions")}>Next step: Question pairs ({pendingQuestionCount})</button>
       </div>
     </aside>
   );
 }
+
 
 function ReviewQueuePanel({
   questionPairings,
@@ -411,8 +357,10 @@ function ReviewQueuePanel({
   busyAction,
   onReviewStepChange,
   onReviewQuestion,
+  onEditQuestion,
 }) {
   const [editingQuestionId, setEditingQuestionId] = useState(null);
+  const [editingContentId, setEditingContentId] = useState(null);
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [questionIndex, setQuestionIndex] = useState(0);
 
@@ -481,6 +429,8 @@ function ReviewQueuePanel({
           const suggestedMaterial = materialById.get(Number(suggestedObject?.material));
           const isUnmatched = link?.review_status === "unmatched";
           const isEditing = editingQuestionId === question.id;
+          const pairingStatus = link?.review_status || "unmatched";
+          const isApproved = ["auto_confirmed", "teacher_confirmed"].includes(pairingStatus);
           return (
           <article
             className={`question-review-card ${index === questionIndex ? "" : "is-hidden"}`.trim()}
@@ -488,8 +438,12 @@ function ReviewQueuePanel({
           >
             <div className="question-review-meta">
               <span className={`question-review-status ${isUnmatched ? "is-unmatched" : ""}`}>
-                {isUnmatched ? "No confident match" : "Needs review"}
+                {isApproved ? "Approved" : isUnmatched ? "No confident match" : "Needs review"}
               </span>
+              <span className={`question-origin-pill is-${question.source_type || "pdf"}`}>
+                {question.source_type === "manual" ? "Manual" : question.source_type === "generated" ? "Generated" : "PDF"}
+              </span>
+              {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
               <small title={material?.filename || ""}>
                 {material?.filename || material?.title || `PDF ${question.material}`}
               </small>
@@ -498,6 +452,13 @@ function ReviewQueuePanel({
               <span aria-hidden="true">Q</span>
               <strong>{question.prompt}</strong>
             </div>
+            {question.validation_status === "needs_review" && (
+              <div className="question-validation-warning" role="alert"><strong>Question details required</strong><ul>{(question.validation_issues || []).map((issue) => <li key={issue}>{issue}</li>)}</ul></div>
+            )}
+            {question.choices?.length > 0 && editingContentId !== question.id && <ul className="question-review-choices">{question.choices.map((choice, choiceIndex) => <li key={choiceIndex}>{choice}</li>)}</ul>}
+            {editingContentId === question.id && (
+              <QuestionEditForm key={question.id} question={question} busy={Boolean(busyAction)} onCancel={() => setEditingContentId(null)} onSave={async (values) => { const saved = await onEditQuestion(question, values); if (saved) setEditingContentId(null); }} />
+            )}
             <div className="question-review-suggestion">
               <div className="question-review-suggestion-heading">
                 <small>{isUnmatched ? "Best available concept" : "Suggested concept"}</small>
@@ -561,6 +522,8 @@ function ReviewQueuePanel({
 
             {!isEditing && (
               <div className="question-review-actions">
+                <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busyAction)} onClick={() => setEditingContentId(question.id)}>Edit question</button>
+                {!isApproved && (
                 <button
                   type="button"
                   className="btn btn-secondary btn-small"
@@ -571,14 +534,15 @@ function ReviewQueuePanel({
                     ? "Declining..."
                     : "Decline"}
                 </button>
-                <button
+                )}
+                {!isApproved && <button
                   type="button"
                   className="btn btn-secondary btn-small"
                   disabled={Boolean(busyAction)}
                   onClick={() => beginConceptChange(question)}
                 >
                   Change concept
-                </button>
+                </button>}
                 <button
                   type="button"
                   className="btn btn-primary btn-small"
@@ -619,6 +583,23 @@ function ReviewQueuePanel({
   );
 }
 
+function QuestionEditForm({ question, busy, onCancel, onSave }) {
+  const [prompt, setPrompt] = useState(question.prompt || "");
+  const [type, setType] = useState(question.question_type === "open_ended" ? "multiple_choice" : question.question_type);
+  const [choices, setChoices] = useState(() => [...(question.choices || []), "", "", "", ""].slice(0, 4));
+  const [answer, setAnswer] = useState(question.correct_answer || "");
+  function changeType(next) { setType(next); if (next === "true_false") { setChoices(["True", "False", "", ""]); setAnswer(["true", "false"].includes(answer.toLowerCase()) ? answer : "True"); } }
+  return (
+    <form className="question-inline-editor" onSubmit={(event) => { event.preventDefault(); onSave({ prompt: prompt.trim(), question_type: type, choices: type === "true_false" ? ["True", "False"] : choices.filter((choice) => choice.trim()), correct_answer: answer }); }}>
+      <label>Question<textarea required rows="3" value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
+      <label>Type<select value={type} onChange={(event) => changeType(event.target.value)}><option value="true_false">True/False</option><option value="multiple_choice">Multiple choice</option></select></label>
+      {type === "multiple_choice" && choices.map((choice, index) => <label key={index}>Choice {String.fromCharCode(65 + index)}<input required={index < 2} value={choice} onChange={(event) => { const next = [...choices]; if (answer === choice) setAnswer(event.target.value); next[index] = event.target.value; setChoices(next); }} /></label>)}
+      <label>Correct answer<select required value={answer} onChange={(event) => setAnswer(event.target.value)}>{type === "true_false" ? <><option value="True">True</option><option value="False">False</option></> : <><option value="">Select answer</option>{choices.filter((choice) => choice.trim()).map((choice, index) => <option value={choice.trim()} key={index}>{choice}</option>)}</>}</select></label>
+      <div className="question-inline-editor-actions"><button type="button" className="btn btn-secondary btn-small" onClick={onCancel} disabled={busy}>Cancel</button><button type="submit" className="btn btn-primary btn-small" disabled={busy}>Save question</button></div>
+    </form>
+  );
+}
+
 function ManualQuestionPanel({
   courseId,
   topicId,
@@ -627,6 +608,7 @@ function ManualQuestionPanel({
   onCourseChange,
   onError,
   onMessage,
+  lessonMaterials,
 }) {
   const [uploading, setUploading] = useState(false);
   const [questionType, setQuestionType] = useState("true_false");
@@ -635,6 +617,39 @@ function ManualQuestionPanel({
   const [correctAnswer, setCorrectAnswer] = useState("True");
   const [conceptGroupId, setConceptGroupId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [generationMaterialId, setGenerationMaterialId] = useState("");
+  const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    if (!generationMaterialId && lessonMaterials?.length) setGenerationMaterialId(String(lessonMaterials[0].id));
+  }, [generationMaterialId, lessonMaterials]);
+
+  async function handleGenerateQuestions() {
+    if (!generationMaterialId) return;
+    setGenerating(true);
+    onError("");
+    onMessage("Generating and classifying questions. You may continue reviewing while this runs.");
+    try {
+      const started = await startQuestionGeneration(generationMaterialId);
+      let result;
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        result = await fetchQuestionGenerationTrace(started.run_id);
+        if (["finished", "failed"].includes(result.run.status)) break;
+      }
+      if (!result || result.run.status === "running") throw new Error("Question generation is still running. Refresh this page shortly.");
+      if (result.run.status === "failed") {
+        const failure = [...(result.events || [])].reverse().find((event) => event.event_type === "error");
+        throw new Error(failure?.message || "Question generation failed.");
+      }
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
+      onMessage("Questions generated, classified as LOTS/HOTS, and added to the approved question list.");
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   function switchType(type) {
     setQuestionType(type);
@@ -706,6 +721,16 @@ function ManualQuestionPanel({
           <span className="connection-eyebrow">Question tools</span>
           <h4 id="manual-question-panel-title">Add questions</h4>
         </div>
+      </div>
+
+      <div className="question-generation-tool">
+        <strong>Generate questions</strong>
+        <p>Create an editable LOTS/HOTS question set from confirmed lesson content.</p>
+        <select value={generationMaterialId} disabled={generating || !lessonMaterials?.length} onChange={(event) => setGenerationMaterialId(event.target.value)}>
+          {!lessonMaterials?.length && <option value="">Confirm a lesson file first</option>}
+          {(lessonMaterials || []).map((material) => <option value={material.id} key={material.id}>{material.title || material.filename}</option>)}
+        </select>
+        <button type="button" className="btn btn-primary btn-small" disabled={generating || !generationMaterialId} onClick={handleGenerateQuestions}>{generating ? "Generating..." : "Generate questions"}</button>
       </div>
 
       <div className="question-source-upload">
@@ -1289,6 +1314,23 @@ function LearningObjectConnections({
     }
   }
 
+  async function editQuestion(question, values) {
+    setBusyAction(`question-edit-${question.id}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = await updateTopicQuestion(courseId, topicId, question.id, values);
+      setResources(data.resources);
+      onMessage("Question updated and LOTS/HOTS classification refreshed.");
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   return (
     <div className={`connection-review-layout ${reviewStep === "publish" ? "" : "has-recommendations"}`.trim()}>
       {reviewStep === "objects" && (
@@ -1545,12 +1587,13 @@ function LearningObjectConnections({
       {reviewStep === "questions" && (
         <>
           <ReviewQueuePanel
-            questionPairings={questionReviewQueue}
+            questionPairings={allQuestionPairings}
             groups={groups}
             materialById={materialById}
             busyAction={busyAction}
             onReviewStepChange={onReviewStepChange}
             onReviewQuestion={reviewQuestion}
+            onEditQuestion={editQuestion}
           />
           <ManualQuestionPanel
             courseId={courseId}
@@ -1560,6 +1603,7 @@ function LearningObjectConnections({
             onCourseChange={onCourseChange}
             onError={onError}
             onMessage={onMessage}
+            lessonMaterials={materials.filter((material) => material.generated_json?.learning_objects_confirmed && material.learning_objects?.length)}
           />
         </>
       )}
@@ -2305,13 +2349,19 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
 
 export default function TopicDetailPage() {
   const { courseId, topicId } = useParams();
+  const [searchParams] = useSearchParams();
+  const uploadedMaterialId = searchParams.get("material");
   const [course, setCourse] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [activeSource, setActiveSource] = useState("connections");
+  const [activeSource, setActiveSource] = useState(uploadedMaterialId || "connections");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [connectionReviewStep, setConnectionReviewStep] = useState("objects");
+
+  useEffect(() => {
+    setActiveSource(uploadedMaterialId || "connections");
+  }, [courseId, topicId, uploadedMaterialId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2368,6 +2418,7 @@ export default function TopicDetailPage() {
   );
 
   useEffect(() => {
+    if (!course || String(course.id) !== String(courseId)) return;
     if (!materials.length) {
       setActiveSource("connections");
       return;
@@ -2379,7 +2430,7 @@ export default function TopicDetailPage() {
       }
       return "connections";
     });
-  }, [materials]);
+  }, [materials, course, courseId]);
 
   async function handleMaterialUpload(event) {
     const file = event.target.files?.[0];
@@ -2396,9 +2447,7 @@ export default function TopicDetailPage() {
       formData.append("outline_node_id", topic.id);
       const updatedCourse = await uploadLearningMaterial(courseId, formData);
       setCourse(updatedCourse);
-      const uploadedMaterial = [...(updatedCourse.materials || [])]
-        .filter((material) => String(material.outline_node) === String(topic.id))
-        .sort((a, b) => Number(b.id) - Number(a.id))[0];
+      const uploadedMaterial = uploadedMaterialFromResponse(updatedCourse);
       if (uploadedMaterial) {
         setActiveSource(String(uploadedMaterial.id));
       }

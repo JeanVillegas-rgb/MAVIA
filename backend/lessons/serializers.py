@@ -182,6 +182,8 @@ class QuestionSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True,
     )
+    source_filename = serializers.SerializerMethodField()
+    pairing_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Question
@@ -190,15 +192,35 @@ class QuestionSerializer(serializers.ModelSerializer):
             "material",
             "outline_node_id",
             "prompt",
+            "source_type",
+            "source_filename",
+            "content_fingerprint",
             "question_type",
             "choices",
             "correct_answer",
+            "bloom_level",
+            "thinking_order",
+            "difficulty",
+            "category",
+            "validation_status",
+            "validation_issues",
+            "pairing_status",
+            "adaptive_question",
             "order",
             "source_page",
             "source_block_id",
             "source_excerpt",
             "learning_object_links",
         ]
+
+    def get_source_filename(self, obj):
+        if obj.source_type == Question.SourceType.MANUAL:
+            return ""
+        return obj.material.pdf_file.name.split("/")[-1] if obj.material.pdf_file else ""
+
+    def get_pairing_status(self, obj):
+        link = next(iter(obj.learning_object_links.all()), None)
+        return link.review_status if link else "unmatched"
 
 
 class LearningObjectMutationSerializer(serializers.ModelSerializer):

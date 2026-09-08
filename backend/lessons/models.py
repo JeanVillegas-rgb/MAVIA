@@ -25,12 +25,20 @@ class CourseOutline(models.Model):
         on_delete=models.CASCADE,
     )
     outline_file = models.FileField(upload_to="outlines/")
+    file_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     is_approved = models.BooleanField(default=False)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     approved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["uploaded_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course", "file_sha256"],
+                condition=~models.Q(file_sha256=""),
+                name="unique_outline_file_per_course",
+            )
+        ]
 
     def __str__(self):
         return f"Outline for {self.course.title}"
@@ -269,12 +277,28 @@ class Question(models.Model):
         TRUE_FALSE = "true_false", "True/False"
         MULTIPLE_CHOICE = "multiple_choice", "Multiple choice"
 
+    class SourceType(models.TextChoices):
+        PDF = "pdf", "Uploaded PDF"
+        MANUAL = "manual", "Manual"
+        GENERATED = "generated", "Generated"
+
+    class ValidationStatus(models.TextChoices):
+        READY = "ready", "Ready"
+        NEEDS_REVIEW = "needs_review", "Needs review"
+
     material = models.ForeignKey(
         LearningMaterial,
         related_name="questions",
         on_delete=models.CASCADE,
     )
     prompt = models.TextField()
+    source_type = models.CharField(
+        max_length=20,
+        choices=SourceType.choices,
+        default=SourceType.PDF,
+        db_index=True,
+    )
+    content_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
     question_type = models.CharField(
         max_length=30,
         choices=Type.choices,
@@ -282,6 +306,24 @@ class Question(models.Model):
     )
     choices = models.JSONField(default=list, blank=True)
     correct_answer = models.TextField(blank=True)
+    bloom_level = models.CharField(max_length=20, blank=True, db_index=True)
+    thinking_order = models.CharField(max_length=3, blank=True, db_index=True)
+    difficulty = models.CharField(max_length=10, blank=True, db_index=True)
+    category = models.CharField(max_length=30, blank=True)
+    validation_status = models.CharField(
+        max_length=20,
+        choices=ValidationStatus.choices,
+        default=ValidationStatus.NEEDS_REVIEW,
+        db_index=True,
+    )
+    validation_issues = models.JSONField(default=list, blank=True)
+    adaptive_question = models.OneToOneField(
+        "question_generation.GeneratedQuestion",
+        null=True,
+        blank=True,
+        related_name="teacher_question",
+        on_delete=models.SET_NULL,
+    )
     order = models.PositiveIntegerField(default=0)
     source_page = models.PositiveIntegerField(null=True, blank=True)
     source_block_id = models.PositiveIntegerField(null=True, blank=True)

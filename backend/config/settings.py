@@ -147,6 +147,12 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
 OLLAMA_VISION_TIMEOUT = int(os.getenv("OLLAMA_VISION_TIMEOUT", str(OLLAMA_TIMEOUT)))
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 
+ADAPTIVE_VARIANT_GENERATION_ENABLED = os.getenv(
+    "ADAPTIVE_VARIANT_GENERATION_ENABLED", "True"
+).lower() in ("1", "true", "yes")
+ADAPTIVE_VARIANT_LLM_MODEL = os.getenv("ADAPTIVE_VARIANT_LLM_MODEL", OLLAMA_MODEL)
+ADAPTIVE_VARIANT_TIMEOUT = int(os.getenv("ADAPTIVE_VARIANT_TIMEOUT", str(OLLAMA_TIMEOUT)))
+
 # Model for question generation (separate from the content generation model)
 QUESTION_LLM_MODEL = os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
 

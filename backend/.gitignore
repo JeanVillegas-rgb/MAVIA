@@ -9,3 +9,5 @@ env/
 staticfiles/
 media/
 *.log
+semantic_cache/
+semantic_evaluation/

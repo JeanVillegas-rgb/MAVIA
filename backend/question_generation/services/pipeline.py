@@ -264,6 +264,11 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
             material.generated_json = generated_json
             material.save(update_fields=["generated_json"])
 
+    # Keep the teacher's Step 2 list and the learner-facing adaptive bank in
+    # one visible workflow. The adaptive rows remain authoritative for play.
+    from lessons.services.question_workflow import mirror_generated_questions
+    mirror_generated_questions(node, keep)
+
     if replaced:
         print(f"Replaced {replaced} existing rows for node {node.id}")
     print(f"Saved {len(keep)} questions for node {node.id}")

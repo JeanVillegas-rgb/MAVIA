@@ -10,6 +10,9 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from user.permissions import IsTeacherOrAdmin
 
+from course.services import sync_course_outline
+from course.variant_generator import generate_standalone_variants
+
 from .models import (
     CourseGroup,
     LearningMaterial,
@@ -62,6 +65,13 @@ from .services.learning_resource_linker import (
     record_teacher_match_decision,
     refresh_material_learning_relationships,
     refresh_question_learning_object_links,
+)
+from .services.question_workflow import (
+    duplicate_for_topic,
+    duplicate_in_topic,
+    enriched_question_values,
+    question_fingerprint,
+    sync_question_to_adaptive,
 )
 
 
@@ -403,13 +413,16 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         if old_group and not old_group.learning_objects.exists():
             old_group.delete()
 
-        self._refresh_relationship_snapshots({learning_object.material})
         for old_member in old_group_members:
             record_teacher_match_decision(
                 learning_object,
                 old_member,
                 accepted=False,
             )
+        self._refresh_relationship_snapshots(
+            {learning_object.material, *(member.material for member in old_group_members)},
+            recompute=False,
+        )
         return Response(self._learning_resources_payload(node, request))
 
     def _get_node_match_suggestion(self, course, node, suggestion_id):
@@ -578,6 +591,26 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        values = enriched_question_values(
+            prompt,
+            question_type,
+            choices,
+            correct_answer,
+        )
+        duplicate = duplicate_for_topic(
+            course.id,
+            node.id,
+            values["content_fingerprint"],
+        )
+        if duplicate is not None:
+            return Response(
+                {
+                    "detail": "This question already exists in this topic.",
+                    "duplicate_question_id": duplicate.id,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         raw_group_id = request.data.get("learning_object_group_id")
         target_group = None
         if raw_group_id not in (None, ""):
@@ -615,12 +648,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         next_order = (manual_material.questions.aggregate(Max("order"))["order__max"] or -1) + 1
         question = Question.objects.create(
             material=manual_material,
-            prompt=prompt,
-            question_type=question_type,
-            choices=choices,
-            correct_answer=correct_answer,
+            source_type=Question.SourceType.MANUAL,
             order=next_order,
             source_excerpt="Manually added by the teacher.",
+            **values,
         )
         if target_group is not None:
             representative = (
@@ -645,6 +676,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 reviewed_at=timezone.now(),
             )
         refresh_question_learning_object_links(manual_material)
+        question.refresh_from_db()
+        sync_question_to_adaptive(question)
         generated_json = manual_material.generated_json or {}
         generated_json["questions"] = question_snapshots(manual_material)
         manual_material.generated_json = generated_json
@@ -660,7 +693,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["delete"],
+        methods=["patch", "delete"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/questions/(?P<question_id>[^/.]+)",
     )
     def delete_topic_question(self, request, pk=None, node_id=None, question_id=None):
@@ -687,7 +720,56 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             )
 
         material = question.material
+        if request.method == "PATCH":
+            prompt = str(request.data.get("prompt", question.prompt) or "").strip()
+            question_type = str(request.data.get("question_type", question.question_type) or "").strip()
+            choices = request.data.get("choices", question.choices)
+            correct_answer = str(request.data.get("correct_answer", question.correct_answer) or "").strip()
+            if not prompt:
+                return Response({"detail": "Enter the question text."}, status=status.HTTP_400_BAD_REQUEST)
+            if question_type not in {Question.Type.TRUE_FALSE, Question.Type.MULTIPLE_CHOICE}:
+                return Response(
+                    {"detail": "Question type must be true_false or multiple_choice."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if question_type == Question.Type.TRUE_FALSE:
+                choices = ["True", "False"]
+                correct_answer = correct_answer.title()
+            elif not isinstance(choices, list):
+                return Response({"detail": "Multiple-choice options must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                choices = [str(choice).strip() for choice in choices if str(choice).strip()]
+
+            values = enriched_question_values(prompt, question_type, choices, correct_answer)
+            if values["validation_issues"]:
+                return Response(
+                    {"detail": " ".join(values["validation_issues"]), "validation_issues": values["validation_issues"]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            duplicate = duplicate_in_topic(material, values["content_fingerprint"], exclude_id=question.id)
+            if duplicate is not None:
+                return Response(
+                    {"detail": "This question already exists in this topic.", "duplicate_question_id": duplicate.id},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            for field, value in values.items():
+                setattr(question, field, value)
+            question.save(update_fields=list(values))
+            sync_question_to_adaptive(question)
+            generated_json = material.generated_json or {}
+            generated_json["questions"] = question_snapshots(material)
+            material.generated_json = generated_json
+            material.save(update_fields=["generated_json"])
+            return Response({
+                "question": QuestionSerializer(question, context={"request": request}).data,
+                "resources": self._learning_resources_payload(node, request),
+            })
+
+        adaptive_id = question.adaptive_question_id
         question.delete()
+        if adaptive_id:
+            from question_generation.models import GeneratedQuestion
+            GeneratedQuestion.objects.filter(pk=adaptive_id).delete()
 
         generated_json = material.generated_json or {}
         generated_json["questions"] = question_snapshots(material)
@@ -776,6 +858,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # LessonVariant requires the student-facing lesson package wrapper.
+        sync_course_outline(course.id)
+        variant_result = generate_standalone_variants(node)
+
         audio_generated_count = 0
         audio_errors = []
         for material in confirmed_materials:
@@ -796,6 +882,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "audio_generated_count": audio_generated_count,
             "materials_processed": confirmed_materials.count(),
             "audio_errors": audio_errors,
+            "adaptive_variants_generated": variant_result["generated_count"],
+            "adaptive_variants_cached": variant_result["cached_count"],
+            "adaptive_variant_errors": variant_result["errors"],
         }
         refreshed_course = self.get_queryset().get(pk=course.pk)
         payload["course"] = CourseDetailSerializer(refreshed_course, context={"request": request}).data
@@ -897,6 +986,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             existing.reviewed_at = now
             existing.save(update_fields=["is_primary", "review_status", "reviewed_at"])
 
+        question.refresh_from_db()
+        sync_question_to_adaptive(question)
         # Preserve the explicit teacher decision without rescoring every question.
         self._refresh_relationship_snapshots({question.material}, recompute=False)
         return Response(self._learning_resources_payload(node, request))
@@ -1011,12 +1102,17 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            upload_course_outline(course=course, **input_serializer.validated_data)
+            _course, reused = upload_course_outline(
+                course=course,
+                **input_serializer.validated_data,
+            )
         except PdfProcessingUseCaseError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         response = self._serialize_course_detail(course, request)
-        response.status_code = status.HTTP_201_CREATED
+        response.data["upload_type"] = "outline"
+        response.data["upload_reused"] = reused
+        response.status_code = status.HTTP_200_OK if reused else status.HTTP_201_CREATED
         return response
 
     @action(detail=True, methods=["post"], url_path="upload-pdf")
@@ -1040,9 +1136,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
         response = self._serialize_course_detail(course, request)
         response.data["upload_type"] = upload_type
+        response.data["upload_reused"] = reused
         if material is not None:
             response.data["uploaded_material_id"] = material.id
-            response.data["upload_reused"] = reused
         response.status_code = status.HTTP_200_OK if reused else status.HTTP_201_CREATED
         return response
 

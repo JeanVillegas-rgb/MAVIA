@@ -43,16 +43,63 @@ def _temporary_pdf_copy(uploaded_file):
             temporary_path.unlink(missing_ok=True)
 
 
+def _find_existing_outline(
+    course: CourseGroup,
+    fingerprint: str,
+) -> CourseOutline | None:
+    existing = course.outlines.filter(file_sha256=fingerprint).first()
+    if existing:
+        return existing
+
+    # Files saved before outline fingerprints were introduced are checked once
+    # and backfilled lazily. This lets duplicate detection work immediately
+    # without requiring teachers to upload their existing outlines again.
+    for outline in course.outlines.filter(file_sha256="").exclude(outline_file=""):
+        try:
+            outline.outline_file.open("rb")
+            existing_fingerprint = _file_sha256(outline.outline_file)
+        except (OSError, ValueError):
+            continue
+        finally:
+            try:
+                outline.outline_file.close()
+            except Exception:
+                pass
+
+        fingerprint_owner = course.outlines.filter(
+            file_sha256=existing_fingerprint
+        ).first()
+        if fingerprint_owner is None:
+            outline.file_sha256 = existing_fingerprint
+            outline.save(update_fields=["file_sha256"])
+            fingerprint_owner = outline
+        if existing_fingerprint == fingerprint:
+            return fingerprint_owner
+    return None
+
+
 @transaction.atomic
-def upload_course_outline(*, course: CourseGroup, outline_file) -> CourseGroup:
+def upload_course_outline(
+    *,
+    course: CourseGroup,
+    outline_file,
+) -> tuple[CourseGroup, bool]:
     """Store an outline source and merge its hierarchy into the course."""
+    fingerprint = _file_sha256(outline_file)
+    if _find_existing_outline(course, fingerprint) is not None:
+        return course, True
+
     try:
         with _temporary_pdf_copy(outline_file) as temporary_path:
             validate_course_outline_pdf(str(temporary_path))
     except Exception as exc:
         raise PdfProcessingUseCaseError(str(exc)) from exc
 
-    outline = CourseOutline.objects.create(course=course, outline_file=outline_file)
+    outline = CourseOutline.objects.create(
+        course=course,
+        outline_file=outline_file,
+        file_sha256=fingerprint,
+    )
     try:
         build_dag_from_outline(
             course,
@@ -64,7 +111,7 @@ def upload_course_outline(*, course: CourseGroup, outline_file) -> CourseGroup:
         outline.outline_file.delete(save=False)
         outline.delete()
         raise PdfProcessingUseCaseError(str(exc)) from exc
-    return course
+    return course, False
 
 
 def confirm_course_outline(*, course: CourseGroup) -> CourseGroup:
@@ -94,8 +141,8 @@ def upload_course_pdf(
         raise PdfProcessingUseCaseError(f"The uploaded PDF could not be read: {exc}") from exc
 
     if is_outline:
-        upload_course_outline(course=course, outline_file=pdf_file)
-        return "outline", None, False
+        _course, reused = upload_course_outline(course=course, outline_file=pdf_file)
+        return "outline", None, reused
 
     material, reused = upload_learning_material(
         course=course,

@@ -316,6 +316,25 @@ export function deleteTopicQuestion(courseId, nodeId, questionId) {
   );
 }
 
+export function updateTopicQuestion(courseId, nodeId, questionId, data) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/questions/${questionId}/`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export function startQuestionGeneration(materialId) {
+  return request(`/generation/materials/${materialId}/start/`, { method: "POST" });
+}
+
+export function fetchQuestionGenerationTrace(runId) {
+  return request(`/generation/runs/${runId}/events/`);
+}
+
 export function deleteTopicLearningObject(courseId, nodeId, objectId) {
   return request(
     `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${objectId}/`,
