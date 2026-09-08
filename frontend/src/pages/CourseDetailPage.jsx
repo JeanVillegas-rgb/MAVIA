@@ -178,7 +178,7 @@ export default function CourseDetailPage() {
     return (
       <div className="card">
         <div className="error-banner">{error}</div>
-        <Link to="/" className="btn btn-secondary" style={{ display: "inline-block", marginTop: "1rem" }}>
+        <Link to="/courses" className="btn btn-secondary" style={{ display: "inline-block", marginTop: "1rem" }}>
           Back home
         </Link>
       </div>
@@ -190,7 +190,7 @@ export default function CourseDetailPage() {
   return (
     <>
       <section className="card" style={{ marginBottom: "1.25rem" }}>
-        <Link to="/" style={{ color: "var(--muted)" }}>
+        <Link to="/courses" style={{ color: "var(--muted)" }}>
           Back to courses
         </Link>
         <div className="course-header-row">

@@ -1,5 +1,13 @@
 const API_BASE = "/api";
 
+export function fetchReviewModules(courseId) {
+  return request(`/courses/${courseId}/review/modules/`);
+}
+
+export function fetchModulePackage(courseId, moduleId) {
+  return request(`/courses/${courseId}/review/modules/${moduleId}/package/`);
+}
+
 async function request(path, options = {}) {
   const token = localStorage.getItem("authToken");
   const headers = new Headers(options.headers || {});

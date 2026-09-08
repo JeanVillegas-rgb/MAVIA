@@ -1990,33 +1990,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
             <p className="muted-text">No learning objects extracted yet.</p>
           ) : (
             <>
-              {canEditLearningObjects && (
-                <div className="learning-object-toolbar">
-                  <div>
-                    <span className="object-kind">Selected</span>
-                    <strong>{selectedObject?.title || "Choose a learning object"}</strong>
-                  </div>
-                  <div className="generated-item-actions">
-                    <button
-                      className="btn btn-secondary btn-small"
-                      type="button"
-                      disabled={!selectedObject || Boolean(busyAction)}
-                      onClick={() => setEditingId(selectedObject.id)}
-                    >
-                      Edit selected
-                    </button>
-                    <button
-                      className="btn btn-danger btn-small"
-                      type="button"
-                      disabled={!selectedObject || Boolean(busyAction)}
-                      onClick={() => setLearningObjectToDelete(selectedObject)}
-                    >
-                      {selectedObject && busyAction === `delete-${selectedObject.id}` ? "Deleting..." : "Delete selected"}
-                    </button>
-                  </div>
-                </div>
-              )}
-
+              <div className={`learning-object-layout ${canEditLearningObjects ? "has-side-panel" : ""}`.trim()}>
               <div className="generated-list learning-object-list">
                 {material.learning_objects.map((item, index) => {
                   const isImage = isImageLearningObject(item);
@@ -2107,6 +2081,34 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
                     </Fragment>
                   );
                 })}
+              </div>
+
+              {canEditLearningObjects && (
+                <div className="learning-object-toolbar">
+                  <div>
+                    <span className="object-kind">Selected</span>
+                    <strong>{selectedObject?.title || "Choose a learning object"}</strong>
+                  </div>
+                  <div className="generated-item-actions">
+                    <button
+                      className="btn btn-secondary btn-small"
+                      type="button"
+                      disabled={!selectedObject || Boolean(busyAction)}
+                      onClick={() => setEditingId(selectedObject.id)}
+                    >
+                      Edit selected
+                    </button>
+                    <button
+                      className="btn btn-danger btn-small"
+                      type="button"
+                      disabled={!selectedObject || Boolean(busyAction)}
+                      onClick={() => setLearningObjectToDelete(selectedObject)}
+                    >
+                      {selectedObject && busyAction === `delete-${selectedObject.id}` ? "Deleting..." : "Delete selected"}
+                    </button>
+                  </div>
+                </div>
+              )}
               </div>
 
               {canEditLearningObjects && (
@@ -2449,7 +2451,7 @@ export default function TopicDetailPage() {
     <section className={`topic-workspace-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}`}>
       <aside className="card lesson-pdf-sidebar" aria-label="Uploaded PDF navigation">
         <div className="lesson-sidebar-brand-row">
-          <Link to="/" className="lesson-sidebar-brand" title="Mavia home">
+          <Link to="/courses" className="lesson-sidebar-brand" title="Mavia home">
             <span className="lesson-sidebar-brand-mark" aria-hidden="true">M</span>
             <span className="lesson-sidebar-brand-copy">
               <strong>Mavia</strong>

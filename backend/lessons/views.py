@@ -4,7 +4,7 @@ from time import perf_counter
 
 from django.db.models import Max, Prefetch
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
@@ -82,6 +82,23 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         if self.action == "create":
             return CourseCreateSerializer
         return CourseDetailSerializer
+
+    @action(detail=True, methods=["get"], url_path="review/modules", permission_classes=[permissions.IsAuthenticated])
+    def review_modules(self, request, pk=None):
+        if request.user.role not in {"TEACHER", "ADMIN"}:
+            return Response({"detail": "Teacher or admin access required."}, status=403)
+        from .services.lesson_package import build_course_module_summaries
+        return Response(build_course_module_summaries(self.get_object()))
+
+    @action(detail=True, methods=["get"], url_path=r"review/modules/(?P<module_id>[^/.]+)/package", permission_classes=[permissions.IsAuthenticated])
+    def review_module_package(self, request, pk=None, module_id=None):
+        if request.user.role not in {"TEACHER", "ADMIN"}:
+            return Response({"detail": "Teacher or admin access required."}, status=403)
+        from .services.lesson_package import build_module_package
+        module = self._get_module_node(self.get_object(), module_id)
+        if module is None:
+            return Response({"detail": "Module not found in this course."}, status=404)
+        return Response(build_module_package(module))
 
     def _get_module_node(self, course, module_id):
         try:
