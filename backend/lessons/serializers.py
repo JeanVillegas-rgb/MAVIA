@@ -114,6 +114,7 @@ class LearningObjectSerializer(serializers.ModelSerializer):
         model = LearningObject
         fields = [
             "id",
+            "metadata_id",
             "material",
             "outline_node_id",
             "group",
@@ -235,6 +236,7 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
         model = LearningMaterial
         fields = [
             "id",
+            "metadata_id",
             "title",
             "filename",
             "outline_node",
@@ -310,6 +312,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         all_approved = all(outline.is_approved for outline in outlines)
         return {
             "id": latest.id,
+            "metadata_id": str(latest.metadata_id),
             "filename": latest.outline_file.name.split("/")[-1],
             "is_approved": all_approved,
             "uploaded_at": latest.uploaded_at,
@@ -318,6 +321,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             "files": [
                 {
                     "id": outline.id,
+                    "metadata_id": str(outline.metadata_id),
                     "filename": outline.outline_file.name.split("/")[-1],
                     "is_approved": outline.is_approved,
                     "uploaded_at": outline.uploaded_at,

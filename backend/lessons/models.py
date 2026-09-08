@@ -1,3 +1,5 @@
+import uuid
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -16,6 +18,7 @@ class CourseGroup(models.Model):
 
 
 class CourseOutline(models.Model):
+    metadata_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     course = models.ForeignKey(
         CourseGroup,
         related_name="outlines",
@@ -62,6 +65,7 @@ class OutlineNode(models.Model):
 
 
 class LearningMaterial(models.Model):
+    metadata_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     class Status(models.TextChoices):
         PROCESSING = "processing", "Processing"
         COMPLETED = "completed", "Completed"
@@ -146,6 +150,7 @@ class LearningObjectGroup(models.Model):
 
 
 class LearningObject(models.Model):
+    metadata_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     class Kind(models.TextChoices):
         TEXT = "text", "Text"
         IMAGE = "image", "Image"

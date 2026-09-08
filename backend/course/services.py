@@ -251,6 +251,7 @@ def _build_chunk(learning_object):
 
     return {
         "id": learning_object.id,
+        "metadata_id": str(learning_object.metadata_id),
         "order": learning_object.order,
         "title": learning_object.title,
         "variants": variants,
