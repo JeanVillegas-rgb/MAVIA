@@ -12,7 +12,7 @@ from lessons.models import LearningMaterial, OutlineNode, Question
 from .audio_generator import _playlist_text_by_order
 
 
-def _module_lesson_nodes(module_node):
+def _module_lesson_nodes(module_node, *, published_only=False):
     """Child topics of a module that have at least one completed material,
     in outline order."""
     descendant_ids = []
@@ -27,6 +27,8 @@ def _module_lesson_nodes(module_node):
         OutlineNode.objects.filter(id__in=descendant_ids)
         .order_by("depth", "order", "id")
     )
+    if published_only:
+        nodes = nodes.filter(published=True)
     return [
         node
         for node in nodes
@@ -102,8 +104,8 @@ def build_lesson_payload(lesson_node):
     }
 
 
-def build_module_package(module_node):
-    lesson_nodes = _module_lesson_nodes(module_node)
+def build_module_package(module_node, *, published_only=False):
+    lesson_nodes = _module_lesson_nodes(module_node, published_only=published_only)
     lessons = [build_lesson_payload(node) for node in lesson_nodes]
     return {
         "module": {
@@ -118,11 +120,11 @@ def build_module_package(module_node):
     }
 
 
-def build_course_module_summaries(course):
+def build_course_module_summaries(course, *, published_only=False):
     modules = course.nodes.filter(parent__isnull=True).order_by("order", "id")
     summaries = []
     for module_node in modules:
-        lesson_nodes = _module_lesson_nodes(module_node)
+        lesson_nodes = _module_lesson_nodes(module_node, published_only=published_only)
         track_count = 0
         question_count = 0
         for node in lesson_nodes:

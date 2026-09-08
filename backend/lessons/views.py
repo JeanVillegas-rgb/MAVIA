@@ -8,6 +8,7 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
+from user.permissions import IsTeacherOrAdmin
 
 from .models import (
     CourseGroup,
@@ -68,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 
 class CourseGroupViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsTeacherOrAdmin]
     queryset = CourseGroup.objects.prefetch_related(
         "nodes",
         "outlines",

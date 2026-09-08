@@ -1,8 +1,26 @@
+from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 from unittest.mock import patch
+
+
+def authenticated_api_client():
+    """The course-authoring API is teacher/admin only. Every test that hits it
+    needs a signed-in teacher; this returns one force-authenticated client."""
+    User = get_user_model()
+    user, _ = User.objects.get_or_create(
+        username="lessons_test_teacher",
+        defaults={
+            "email": "lessons_test_teacher@example.com",
+            "role": User.Role.TEACHER,
+            "is_verified": True,
+        },
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
 
 from .models import (
     CourseGroup,
@@ -278,7 +296,7 @@ class MilestoneModelSmokeTests(TestCase):
 
 class LearningResourceRelationshipTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = authenticated_api_client()
         self.course = CourseGroup.objects.create(title="Science")
         self.node = OutlineNode.objects.create(
             course=self.course,
@@ -1202,7 +1220,7 @@ class LearningResourceRelationshipTests(TestCase):
         synthesize_audio.assert_called_once()
 
     def test_course_outline_upload_rejects_non_pdf(self):
-        client = APIClient()
+        client = authenticated_api_client()
         course = CourseGroup.objects.create(title="Science 7")
         response = client.post(
             f"/api/courses/{course.id}/upload-outline/",
@@ -1216,7 +1234,7 @@ class LearningResourceRelationshipTests(TestCase):
 
 class ConfirmLearningObjectsTests(TestCase):
     def test_learning_object_edit_updates_database_and_material_snapshot(self):
-        client = APIClient()
+        client = authenticated_api_client()
         course = CourseGroup.objects.create(title="Science 7")
         material = LearningMaterial.objects.create(
             course=course,
@@ -1268,7 +1286,7 @@ class ConfirmLearningObjectsTests(TestCase):
         self.assertNotIn("audio_url", material.generated_json["lesson_playlist"][0])
 
     def test_learning_object_delete_updates_database_and_material_snapshot(self):
-        client = APIClient()
+        client = authenticated_api_client()
         course = CourseGroup.objects.create(title="Science 7")
         material = LearningMaterial.objects.create(
             course=course,
@@ -1307,7 +1325,7 @@ class ConfirmLearningObjectsTests(TestCase):
         self.assertFalse(material.generated_json["learning_objects_confirmed"])
 
     def test_image_learning_object_keeps_type_and_image_url_after_edit_and_confirm(self):
-        client = APIClient()
+        client = authenticated_api_client()
         course = CourseGroup.objects.create(title="Science 7")
         material = LearningMaterial.objects.create(
             course=course,
@@ -1350,7 +1368,7 @@ class ConfirmLearningObjectsTests(TestCase):
         self.assertEqual(snapshot["image_url"], "/media/extracted_images/water-cycle.png")
 
     def test_confirm_learning_objects_saves_reviewed_content_only(self):
-        client = APIClient()
+        client = authenticated_api_client()
         course = CourseGroup.objects.create(title="Science 7")
         material = LearningMaterial.objects.create(
             course=course,
@@ -3685,7 +3703,7 @@ class FinalReviewDeletionTests(TestCase):
     """Step 3 (Publish) lets a teacher drop stale questions and content."""
 
     def setUp(self):
-        self.client = APIClient()
+        self.client = authenticated_api_client()
         self.course = CourseGroup.objects.create(title="Science")
         self.node = OutlineNode.objects.create(
             course=self.course,

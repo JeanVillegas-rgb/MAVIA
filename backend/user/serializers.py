@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
@@ -8,7 +9,15 @@ from .models import User
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name", "role"]
+        fields = [
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+            "is_verified",
+        ]
         read_only_fields = fields
 
 
@@ -45,5 +54,9 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid username or password.")
         if not user.is_active:
             raise serializers.ValidationError("This account is inactive.")
+        if settings.EMAIL_VERIFICATION_REQUIRED and not user.is_verified:
+            raise serializers.ValidationError(
+                "Please verify your email before logging in."
+            )
         attrs["user"] = user
         return attrs

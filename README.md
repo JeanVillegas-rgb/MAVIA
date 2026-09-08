@@ -1,5 +1,10 @@
 # MAVIA
 
+The local `mavia-latest` merge includes `web-app`, `mobile-app`, and a compatible
+enrollment-based backend alongside the original system. See
+[INTEGRATION_NOTES.md](INTEGRATION_NOTES.md) for startup commands, API separation,
+database backup details, and validation limits.
+
 Course-outline and lesson-PDF processing for accessible science content.
 
 ## Current scope

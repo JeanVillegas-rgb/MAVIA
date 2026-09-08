@@ -15,6 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 
+from .image_describer import describe_image_for_lesson
 from .instructional_content_classifier import (
     classify_instructional_blocks,
     detect_instructional_document_role,
@@ -872,12 +873,38 @@ def refine_learning_object_titles(
     return learning_objects
 
 
-def describe_pdf_images(images: list[dict], lesson_title: str = "", nearby_text: str = "") -> list[dict]:
+def describe_pdf_images(
+    images: list[dict],
+    lesson_title: str = "",
+    nearby_text: str = "",
+    *,
+    use_model: bool = True,
+) -> list[dict]:
+    """Attach a spoken explanation to each extracted figure.
+
+    When a local vision model is available (see services.image_describer) each
+    figure is explained by what it *teaches*, for blind learners. When it
+    isn't, we fall back to whatever the figure already carried — its caption,
+    or the text printed inside it — exactly as before. `use_model=False`
+    forces that fallback (used in tests and for fast dry runs).
+    """
     descriptions = []
     for image in images:
-        description = image.get("description") or ""
+        caption = image.get("caption") or ""
         visible_text = image.get("visible_text") or ""
-        content = description
+        existing = image.get("description") or ""
+
+        model_description = ""
+        if use_model:
+            model_description = describe_image_for_lesson(
+                image.get("image_bytes"),
+                lesson_title=lesson_title,
+                nearby_text=nearby_text,
+                caption=caption,
+                visible_text=visible_text,
+            )
+
+        description = model_description or existing or caption
         descriptions.append(
             {
                 "page": image["page_number"],
@@ -888,12 +915,14 @@ def describe_pdf_images(images: list[dict], lesson_title: str = "", nearby_text:
                 "height": image["height"],
                 "extension": image["extension"],
                 "description": description,
-                "content": content,
+                "content": description,
                 "image_url": image.get("image_url", ""),
-                "educational_purpose": "",
+                # The "what it teaches" line, only when the model produced one.
+                "educational_purpose": model_description,
+                "description_source": "vision_model" if model_description else "caption_or_visible_text",
                 "contains_text": bool(visible_text),
                 "visible_text": visible_text,
-                "caption": image.get("caption") or "",
+                "caption": caption,
                 "title": image.get("title") or "",
                 "bbox": image.get("bbox"),
                 "is_table": bool(image.get("is_table")),
