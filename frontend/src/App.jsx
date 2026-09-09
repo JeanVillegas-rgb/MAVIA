@@ -18,6 +18,7 @@ import CourseReviewPage from "./pages/teacher/CourseReviewPage";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdaptiveWeightsPage from "./pages/admin/AdaptiveWeightsPage";
 
+import LearningPathPage from "./pages/LearningPathPage";
 import { RequireAuth, RequireRole } from "./components/RouteGuards";
 import { ROLES, homePathForRole } from "./roles";
 import { useAuth } from "./auth";
@@ -126,6 +127,16 @@ export default function App() {
           <RequireRole allow={[ROLES.TEACHER, ROLES.ADMIN]}>
             <div className="app-shell">
               <TopicDetailPage />
+            </div>
+          </RequireRole>
+        }
+      />
+      <Route
+        path="/courses/:courseId/topics/:topicId/path"
+        element={
+          <RequireRole allow={[ROLES.TEACHER, ROLES.ADMIN]}>
+            <div className="app-shell">
+              <LearningPathPage />
             </div>
           </RequireRole>
         }

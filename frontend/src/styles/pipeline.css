@@ -5383,3 +5383,182 @@ button {
   max-height: 12rem;
   overflow-y: auto;
 }
+
+/* --- Learning path review ---------------------------------------------- */
+
+.learning-path-page {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.learning-path-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.learning-path-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.topic-path-link {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.path-material {
+  border: 1px solid var(--line, #e2e6ee);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  background: #fff;
+}
+
+.path-material-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.path-material-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.path-material-stats {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.path-material-stats .is-warning {
+  color: #8a6d3b;
+  font-weight: 600;
+}
+
+/* A layer is the unit the ordering actually asserts: everything inside one is
+   a peer, so it is grouped rather than listed flat. */
+.path-layer {
+  border-left: 3px solid #dfe4ec;
+  padding-left: 0.8rem;
+  margin-bottom: 0.9rem;
+}
+
+.path-layer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+
+.path-layer-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #35405a;
+}
+
+.path-layer-head small {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+.path-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.path-step {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.path-step.is-floating {
+  border-color: #e6dfcf;
+  background: #fdfaf3;
+}
+
+.path-step-position {
+  flex: none;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #eef1f6;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #35405a;
+}
+
+.path-step-body { flex: 1; min-width: 0; }
+
+.path-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.path-step-section {
+  display: block;
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+.path-step-meta {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  margin-top: 0.2rem;
+}
+
+.path-chip {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.path-chip.is-image { background: #e6ecf7; color: #29406b; }
+.path-chip.is-floating { background: #f1ece0; color: #6a5326; }
+.path-chip.is-moved { background: #e2f2e8; color: #1f5c39; }
+
+.path-edge-log summary {
+  cursor: pointer;
+  font-size: 0.83rem;
+  color: #6b7280;
+}
+
+.path-edge-log ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  max-height: 18rem;
+  overflow-y: auto;
+}

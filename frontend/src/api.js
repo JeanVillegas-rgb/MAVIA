@@ -425,3 +425,9 @@ export function editVersionText(courseId, nodeId, variantId, narration) {
 export function fetchGenerationRunEvents(runId, after = 0) {
   return request(`/generation/runs/${runId}/events/?after=${after}`);
 }
+
+// Every learning path under one topic, one per uploaded PDF. Derives the edges
+// on first call, so the first request for a topic is slower than later ones.
+export function fetchTopicLearningPath(nodeId) {
+  return request(`/learning-path/topics/${nodeId}/`);
+}

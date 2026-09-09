@@ -3336,6 +3336,9 @@ export default function TopicDetailPage() {
               <p className="muted-text">
                 Selected module/topic: {selectedModule?.title || topic.title} / {topic.title}
               </p>
+              <Link className="topic-path-link" to={`/courses/${courseId}/topics/${topic.id}/path`}>
+                View learning path
+              </Link>
             </div>
             {!(activeSource === "connections" && ["versions", "questions"].includes(connectionReviewStep)) && (
               <label className="btn btn-primary">
