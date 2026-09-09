@@ -610,9 +610,12 @@ class VersionAssignmentTests(TestCase):
     def test_slot_collision_keeps_the_larger_margin_and_stores_an_extra(self):
         first = self._object(self._material("PDF one", 0), SHORT)
         bigger = self._object(self._material("PDF two", 5), LONG)
+        # Also confidently "elaborated", but by a narrower Flesch-Kincaid
+        # margin than LONG, so it loses the slot and becomes an extra.
         smaller = self._object(
             self._material("PDF three", 10),
-            "A solid is a state of matter that keeps a fixed shape and a fixed volume overall.",
+            "A solid keeps a fixed shape at all times. The particles inside it are packed "
+            "together very closely. It cannot flow the way that water does.",
         )
 
         result = assign_group_versions(self.group)
