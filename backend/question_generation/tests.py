@@ -95,7 +95,7 @@ class QuestionGenerationScopeTests(TestCase):
         generated[0].save()
 
         with patch(
-            "question_generation.services.pipeline._get_classifier",
+            "question_generation.services.pipeline.get_classifier",
             return_value=Mock(),
         ), patch(
             "question_generation.services.pipeline.generate_questions_for_node",
@@ -166,8 +166,8 @@ class QuestionGenerationScopeTests(TestCase):
         classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
         finalize_node_questions(self.first_node, classifier)
 
-        # QUESTION_DISTRIBUTION caps LOT at 5
-        self.assertEqual(self.first_node.generated_questions.count(), 5)
+        # QUESTION_DISTRIBUTION caps each band at 3
+        self.assertEqual(self.first_node.generated_questions.count(), 3)
 
     def test_finalize_replaces_the_previous_runs_questions(self):
         old = GeneratedQuestion.objects.create(

@@ -1754,12 +1754,6 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
     classified_blocks = _split_embedded_heading_blocks(classified_blocks)
     learning_objects = []
     has_section_headings = any(_learning_object_heading_title(block) for block in classified_blocks)
-    figure_titles = [
-        _image_caption_title(block.get("text", ""))
-        for block in classified_blocks
-        if _image_caption_title(block.get("text", ""))
-    ]
-
     for index, image in enumerate(image_descriptions):
         # This is the teacher/input contract: an image object has a narrative
         # description that the teacher can author. Therefore the title must come

@@ -10,6 +10,7 @@ urlpatterns = [
     path("api/", include("question_generation.urls")),
     path("api/course/", include("course.urls")),
     path("api/adaptive/", include("adaptive.urls")),
+    path("api/learning-path/", include("learning_path.urls")),
 ]
 
 if settings.DEBUG:

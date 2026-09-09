@@ -283,7 +283,6 @@ def _parse_outline_lines(lines: list[str]) -> list[ParsedOutlineNode]:
             continue
 
         depth = _leading_depth(raw_line)
-        parent_key = stack[-1].title if stack else None
         count_key = (id(stack[-1]) if stack else None, depth)
         order = sibling_counts.get(count_key, 0)
         sibling_counts[count_key] = order + 1

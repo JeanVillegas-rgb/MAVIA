@@ -5,11 +5,18 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from lessons.models import LearningMaterial
+from lessons.models import LearningMaterial, LearningObject
 from lessons.services.audio_generator import mark_material_audio_stale
 
 from .models import GeneratedQuestion, GenerationEvent, GenerationRun, LearnerResponse
 from .serializers import QuestionSerializer
+from .services.bloom_classifier import BLOOM_TO_DIFFICULTY
+from .services.pipeline import (
+    UNASSESSABLE_BLOOM_LEVELS,
+    get_classifier,
+    is_node_complete,
+    node_question_status,
+)
 
 
 class GetQuestionView(APIView):
@@ -28,6 +35,20 @@ class GetQuestionView(APIView):
             return Response(
                 {"error": "node_id and learner_id required"},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # A node whose pools are short is withheld: there would be no alternate
+        # question to offer after a wrong answer, so the checkpoint could not be
+        # retried without repeating the question the learner just saw.
+        try:
+            node = LearningObject.objects.get(id=node_id)
+        except LearningObject.DoesNotExist:
+            return Response({"error": "Content node not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+        if not is_node_complete(node):
+            return Response(
+                {"message": "This lesson is not ready yet — its question pool is incomplete."},
+                status=status.HTTP_409_CONFLICT,
             )
 
         answered_ids = LearnerResponse.objects.filter(
@@ -279,6 +300,119 @@ class MaterialQuestionsView(APIView):
                 ],
             })
         return Response(payload)
+
+
+class NodeQuestionsView(APIView):
+    """
+    GET  /api/generation/nodes/<node_id>/questions/
+        Pool status for one content node: how full each band is, whether the
+        node may be delivered to a learner, and the questions it holds.
+
+    POST /api/generation/nodes/<node_id>/questions/
+        Body: {"question_text", "question_format": "MCQ"|"TF",
+               "choices": {...}, "correct_answer", "explanation"?}
+
+        Teacher-authored question. This is how a node whose pools came up short
+        is repaired: the pipeline never regenerates to fill a gap, so without
+        this the node would stay incomplete and withheld forever.
+
+        The Bloom level is NOT taken from the request. It is assigned by the
+        classifier, exactly as it is for generated questions — the classifier
+        stays the single authority on what a question actually is.
+    """
+
+    def _node_or_404(self, node_id):
+        try:
+            return LearningObject.objects.get(id=node_id), None
+        except LearningObject.DoesNotExist:
+            return None, Response(
+                {"error": "Content node not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+    def get(self, request, node_id):
+        node, error = self._node_or_404(node_id)
+        if error:
+            return error
+
+        questions = GeneratedQuestion.objects.filter(
+            node=node, status="final"
+        ).order_by("thinking_order", "id")
+        payload = node_question_status(node)
+        payload["questions"] = QuestionSerializer(questions, many=True).data
+        return Response(payload)
+
+    def post(self, request, node_id):
+        node, error = self._node_or_404(node_id)
+        if error:
+            return error
+
+        data = request.data
+        question_text = str(data.get("question_text", "")).strip()
+        question_format = str(data.get("question_format", "")).strip().upper()
+        correct_answer = str(data.get("correct_answer", "")).strip()
+
+        if not question_text:
+            return Response({"error": "question_text is required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if question_format not in {"MCQ", "TF"}:
+            return Response({"error": "question_format must be MCQ or TF"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not correct_answer:
+            return Response({"error": "correct_answer is required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        choices = data.get("choices")
+        if question_format == "MCQ":
+            if not isinstance(choices, dict) or len(choices) < 2:
+                return Response({"error": "MCQ questions need a choices object"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if correct_answer not in choices:
+                return Response({"error": "correct_answer must be one of the choice keys"},
+                                status=status.HTTP_400_BAD_REQUEST)
+        else:
+            choices = None
+            if correct_answer.lower() not in {"true", "false"}:
+                return Response({"error": "correct_answer must be True or False"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            correct_answer = correct_answer.capitalize()
+
+        classification = get_classifier().classify(question_text)
+        bloom_level = classification["bloom_level"]
+        thinking_order = classification["thinking_order"]
+
+        if bloom_level in UNASSESSABLE_BLOOM_LEVELS or thinking_order is None:
+            return Response(
+                {
+                    "error": (
+                        f"This reads as a {bloom_level}-level question, which cannot be "
+                        f"assessed by multiple choice or true/false. Rephrase it to ask "
+                        f"for a single defensible answer."
+                    ),
+                    "bloom_level": bloom_level,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        question = GeneratedQuestion.objects.create(
+            node=node,
+            question_text=question_text,
+            question_format=question_format,
+            choices=choices,
+            correct_answer=correct_answer,
+            explanation=str(data.get("explanation", "")).strip(),
+            bloom_level=bloom_level,
+            thinking_order=thinking_order,
+            difficulty=classification.get("difficulty")
+            or BLOOM_TO_DIFFICULTY.get(bloom_level, ""),
+            category=classification["category"],
+            status="final",
+        )
+        mark_material_audio_stale(node.material)
+
+        payload = node_question_status(node)
+        payload["question"] = QuestionSerializer(question).data
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class QuestionDetailView(APIView):

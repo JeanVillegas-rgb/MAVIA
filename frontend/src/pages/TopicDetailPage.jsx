@@ -20,6 +20,7 @@ import {
   updateLearningObject,
   uploadLearningMaterial,
 } from "../api";
+import LearningPathPanel from "../components/LearningPathPanel";
 
 function flattenNodes(nodes = []) {
   return nodes.flatMap((node) => [node, ...flattenNodes(node.children || [])]);
@@ -281,12 +282,14 @@ function ObjectPairsPanel({
         </div>
         <span>{suggestions.length} to review</span>
       </div>
-      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-active">1</span>
         <div aria-hidden="true" />
         <span>2</span>
         <div aria-hidden="true" />
         <span>3</span>
+        <div aria-hidden="true" />
+        <span>4</span>
         <strong>Object pairs</strong>
       </div>
 
@@ -444,12 +447,14 @@ function ReviewQueuePanel({
         </div>
         <span className="connection-source-count">{questionPairings.length} to review</span>
       </div>
-      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
         <div aria-hidden="true" />
         <span className="is-active">2</span>
         <div aria-hidden="true" />
         <span>3</span>
+        <div aria-hidden="true" />
+        <span>4</span>
         <strong>Question pairs</strong>
       </div>
 
@@ -610,9 +615,9 @@ function ReviewQueuePanel({
           type="button"
           className="btn btn-primary"
           disabled={Boolean(busyAction)}
-          onClick={() => onReviewStepChange("publish")}
+          onClick={() => onReviewStepChange("learning-path")}
         >
-          Next step: Publish
+          Next step: Learning path
         </button>
       </div>
     </section>
@@ -916,12 +921,14 @@ ${question.prompt}`,
           {groups.length} concept{groups.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
         <div aria-hidden="true" />
         <span className="is-complete">2</span>
         <div aria-hidden="true" />
-        <span className="is-active">3</span>
+        <span className="is-complete">3</span>
+        <div aria-hidden="true" />
+        <span className="is-active">4</span>
         <strong>Publish</strong>
       </div>
 
@@ -1017,9 +1024,9 @@ ${question.prompt}`,
           type="button"
           className="btn btn-secondary"
           disabled={publishing || Boolean(busyAction)}
-          onClick={() => onReviewStepChange("questions")}
+          onClick={() => onReviewStepChange("learning-path")}
         >
-          Back to question pairs
+          Back to learning path
         </button>
         <div className="publish-status">
           {topic?.published_at && (
@@ -1290,7 +1297,9 @@ function LearningObjectConnections({
   }
 
   return (
-    <div className={`connection-review-layout ${reviewStep === "publish" ? "" : "has-recommendations"}`.trim()}>
+    <div className={`connection-review-layout ${
+      reviewStep === "publish" || reviewStep === "learning-path" ? "" : "has-recommendations"
+    }`.trim()}>
       {reviewStep === "objects" && (
       <section
         className="connection-review-panel"
@@ -1562,6 +1571,16 @@ function LearningObjectConnections({
             onMessage={onMessage}
           />
         </>
+      )}
+      {reviewStep === "learning-path" && (
+        <LearningPathPanel
+          topicId={topicId}
+          topic={topic}
+          busyAction={busyAction}
+          onReviewStepChange={onReviewStepChange}
+          onError={onError}
+          onMessage={onMessage}
+        />
       )}
       {reviewStep === "publish" && (
         <PublishPanel

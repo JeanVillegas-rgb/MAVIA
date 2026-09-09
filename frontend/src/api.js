@@ -270,3 +270,26 @@ export function deleteCourseOutline(courseId) {
 export function deleteCourse(id) {
   return request(`/courses/${id}/`, { method: "DELETE" });
 }
+
+export function fetchTopicLearningPath(nodeId) {
+  return request(`/learning-path/topics/${nodeId}/`);
+}
+
+export function rebuildMaterialLearningPath(materialId) {
+  return request(`/learning-path/materials/${materialId}/`, { method: "POST" });
+}
+
+export function createPrerequisiteEdge(prerequisiteId, dependentId) {
+  return request(`/learning-path/edges/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prerequisite_id: prerequisiteId,
+      dependent_id: dependentId,
+    }),
+  });
+}
+
+export function deletePrerequisiteEdge(edgeId) {
+  return request(`/learning-path/edges/${edgeId}/`, { method: "DELETE" });
+}

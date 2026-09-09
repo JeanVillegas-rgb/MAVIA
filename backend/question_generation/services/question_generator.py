@@ -6,65 +6,113 @@ from django.conf import settings
 
 # ── Prompt templates ──
 # Intentionally SHORT to minimize token usage.
-# Keyed by thinking order, and deliberately phrased in terms of the cognitive
-# work each question demands rather than how "hard" it is. The LLM is never
-# told about Bloom's taxonomy — the classifier assigns the actual level after
-# generation, and these prompts only steer the model toward the right region.
 #
-#   LOT covers remember / understand / apply
-#   HOT covers analyze / evaluate
+# One prompt per Bloom's level the system actually delivers. Steering per level
+# rather than per band (LOT/HOT) is what makes per-level coverage achievable at
+# all: a prompt that merely asks for "lower-order" questions has no reason to
+# ever produce an *apply* question, so that level would simply never fill.
 #
-# There are no "strict" retry variants any more. LOT and HOT are wide enough
-# that ordinary prompt drift stays inside the intended bucket, so the pipeline
-# no longer regenerates to correct it.
+# The LLM is still never told about Bloom's taxonomy by name, and the prompt
+# never decides the stored label — the classifier assigns that afterwards and
+# remains authoritative. These prompts only aim the model at a region.
+#
+# "create" has no prompt on purpose. MAVIA delivers MCQ and True/False only,
+# and a create-level task ("design a…", "compose a…") has no single gradeable
+# answer, so it is never generated and never delivered.
 
-PROMPT_TEMPLATES = {
-    "LOT": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "Each question must be answerable DIRECTLY from the content. Ask the learner to "
-        "recall a stated fact, show they understand what a concept means, or use a stated "
-        "rule in a straightforward case.\n"
-        "Do NOT ask the learner to compare two things, weigh trade-offs, judge which "
-        "option is better, or justify a choice.\n\n"
-        "{examples}\n\n"
-        "Format: {format_type}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
+GENERATION_LEVELS = ("remember", "understand", "apply", "analyze", "evaluate")
+
+# Formats each level can sensibly take. True/False cannot carry a genuine
+# analyse-or-evaluate task — it collapses into a recall check — so the higher
+# levels are MCQ only.
+LEVEL_FORMATS = {
+    "remember": ("MCQ", "TF"),
+    "understand": ("MCQ", "TF"),
+    "apply": ("MCQ",),
+    "analyze": ("MCQ",),
+    "evaluate": ("MCQ",),
+}
+
+_LEVEL_INSTRUCTIONS = {
+    "remember": (
+        "Ask the learner to recall a single fact that is stated in the content. "
+        "The answer must appear almost word-for-word in the text.\n"
+        "Do NOT ask the learner to explain, apply, compare or judge anything."
     ),
-    "HOT": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        "Each question must require reasoning BEYOND recall or direct application. Ask the "
-        "learner to break an idea into parts, compare or differentiate two concepts, work "
-        "out a cause-and-effect relationship, or judge and justify which option is more "
-        "appropriate and why.\n"
-        "Do NOT ask for a fact that is stated word-for-word in the content.\n"
-        "The question must still have ONE defensible correct answer.\n\n"
-        "{examples}\n\n"
-        "Format: {format_type}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
+    "understand": (
+        "Ask the learner to show they grasp what a concept MEANS — to restate it in "
+        "different words, interpret it, or say why something described in the content "
+        "happens.\n"
+        "Do NOT ask for a fact quoted word-for-word, and do NOT ask them to compare or "
+        "judge two things."
+    ),
+    "apply": (
+        "Describe a short, concrete, everyday situation NOT mentioned in the content, then "
+        "ask the learner to use a rule or idea from the content to decide what happens in "
+        "it.\n"
+        "The situation must be new; the rule must come from the content.\n"
+        "Do NOT ask them to compare two concepts or judge which is better."
+    ),
+    "analyze": (
+        "Ask the learner to take an idea apart: compare or differentiate two things "
+        "described in the content, or work out a cause-and-effect relationship between "
+        "them.\n"
+        "Do NOT ask for a fact stated word-for-word, and do NOT ask which option is better."
+    ),
+    "evaluate": (
+        "Ask the learner to judge, critique or justify — which option is more appropriate "
+        "for a stated purpose, and on what grounds.\n"
+        "The judgement must be settleable using only the content, with ONE defensible "
+        "correct answer.\n"
+        "Do NOT ask a question whose answer is a matter of personal opinion."
     ),
 }
+
+PROMPT_TEMPLATE = (
+    "You are a quiz maker. Given the content below, generate {count} questions.\n"
+    "{level_instructions}\n"
+    "Every fact you use must come from the content below. Do not introduce facts, "
+    "numbers or names that are not in it.\n\n"
+    "{examples}\n\n"
+    "Format: {format_type}\n\n"
+    "Content:\n{content}\n\n"
+    "{format_instructions}\n\n"
+    "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
+    '{{"questions": [{question_schema}]}}'
+)
 
 # ── Few-shot style examples — small local models drift far less when shown
 # the target cognitive level instead of only being told about it ──
 FEW_SHOT_EXAMPLES = {
-    "LOT": (
+    "remember": (
         "Examples of the style (different topic — do NOT reuse these):\n"
         "- What is evaporation?\n"
-        "- Why does a puddle shrink on a sunny day?\n"
-        "- A pot of water is left boiling. Which process is turning the water into steam?"
+        "- Which part of a plant takes in water from the soil?"
     ),
-    "HOT": (
+    "understand": (
+        "Examples of the style (different topic — do NOT reuse these):\n"
+        "- Why does a puddle shrink on a sunny day?\n"
+        "- What does it mean to say that water vapour is a gas?"
+    ),
+    "apply": (
+        "Examples of the style (different topic — do NOT reuse these):\n"
+        "- A pot of water is left boiling on a stove. Which process turns the water "
+        "into steam?\n"
+        "- Wet clothes are hung outside on a hot, windy day. What will most likely "
+        "happen to the water in them?"
+    ),
+    "analyze": (
         "Examples of the style (different topic — do NOT reuse these):\n"
         "- How does evaporation differ from condensation in the water cycle?\n"
+        "- Clouds form high in the sky rather than at ground level. What causes that "
+        "difference?"
+    ),
+    "evaluate": (
+        "Examples of the style (different topic — do NOT reuse these):\n"
+        "- Which process matters more for forming clouds: evaporation or condensation, "
+        "and why?\n"
         "- A farmer waters crops daily but they still die. Which explanation best "
-        "justifies why too much water can harm plants?\n"
-        "- Which process matters more for forming clouds: evaporation or condensation? Why?"
+        "justifies why too much water can harm plants?"
     ),
 }
 
@@ -91,14 +139,20 @@ QUESTION_SCHEMA = {
 }
 
 
-def _build_prompt(content, thinking_order, format_type, count=1):
-    return PROMPT_TEMPLATES[thinking_order].format(
+def _build_prompt(content, bloom_level, format_type, count=1):
+    if bloom_level not in _LEVEL_INSTRUCTIONS:
+        raise ValueError(
+            f"No prompt for Bloom level {bloom_level!r}. "
+            f"Generatable levels are: {', '.join(GENERATION_LEVELS)}."
+        )
+    return PROMPT_TEMPLATE.format(
         count=count,
         content=content,
         format_type=format_type,
+        level_instructions=_LEVEL_INSTRUCTIONS[bloom_level],
         format_instructions=FORMAT_INSTRUCTIONS[format_type],
         question_schema=QUESTION_SCHEMA[format_type],
-        examples=FEW_SHOT_EXAMPLES[thinking_order],
+        examples=FEW_SHOT_EXAMPLES[bloom_level],
     )
 
 
@@ -218,7 +272,16 @@ def _ollama_generate(prompt):
             "stream": False,
             "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {
-                "temperature": 0.7,
+                # Deliberately NOT 0.0. Greedy decoding is the right setting for
+                # the one-output-per-input content variations, but this pipeline
+                # asks for several DISTINCT questions per level and then
+                # deduplicates: at temperature 0 repeated calls return identical
+                # text, so overgeneration would collect duplicates and the dedup
+                # pass would delete them. Educational question-generation studies
+                # commonly run 0.7-0.9; this sits below that because MAVIA's
+                # grounding requirements are stricter. Grounding is enforced by
+                # the prompt ceiling and the validation pass, not by temperature.
+                "temperature": settings.QUESTION_LLM_TEMPERATURE,
                 # generous ceiling — a batch of 5 MCQs (4 choices + explanation
                 # each) can run past 1000 tokens and get cut off mid-JSON
                 "num_predict": 2048,
@@ -230,17 +293,19 @@ def _ollama_generate(prompt):
     return response.json()["response"]
 
 
-def generate_questions(content, thinking_order, format_type, count=1, max_retries=3):
+def generate_questions(content, bloom_level, format_type, count=1, max_retries=3):
     """
     Generate questions using the local LLM.
 
     The returned questions carry no classification — the prompt only steers
-    toward a thinking order, it does not decide one. The Bloom classifier
-    assigns the authoritative label later, in the post-generation pass.
+    toward a Bloom level, it does not decide one. The classifier assigns the
+    authoritative label later, in the post-generation pass, and a question that
+    lands on a different level than the prompt aimed at keeps the classifier's
+    answer.
 
     Args:
         content:        text content to generate questions from
-        thinking_order: "LOT" or "HOT" — which prompt to steer with
+        bloom_level:    one of GENERATION_LEVELS — which prompt to steer with
         format_type:    "MCQ" or "TF"
         count:          number of questions to generate
         max_retries:    retry on JSON parse failures
@@ -248,7 +313,7 @@ def generate_questions(content, thinking_order, format_type, count=1, max_retrie
     Returns:
         list of question dicts
     """
-    prompt = _build_prompt(content, thinking_order, format_type, count)
+    prompt = _build_prompt(content, bloom_level, format_type, count)
 
     for attempt in range(max_retries):
         try:

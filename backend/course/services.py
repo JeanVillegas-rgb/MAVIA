@@ -1,12 +1,10 @@
 from django.db import transaction
 
-from lessons.models import CourseGroup, LearningObject, OutlineNode, LearningMaterial
+from lessons.models import CourseGroup, LearningObject, LearningMaterial
 from question_generation.models import GeneratedQuestion
+from question_generation.services.pipeline import complete_node_ids
 
-from .models import CourseModule, LessonNode, LessonVariant, ModuleQuestion, normal_variant_for
-
-
-VARIANT_KEYS = ("normal", "elaborated", "simplified")
+from .models import CourseModule, LessonNode, ModuleQuestion, normal_variant_for
 
 
 def _material_outline_order(material):
@@ -50,30 +48,6 @@ def _lesson_sources_for_module(module_node):
     return [module_node]
 
 
-def _material_text_for_source(source):
-    """
-    Fallback concatenated text for a lesson source, used only when a chunk
-    has no NORMAL narration yet (her audio/narration pipeline hasn't run).
-    Accepts either a LearningMaterial instance or an OutlineNode (legacy).
-    """
-    if isinstance(source, LearningMaterial):
-        objects = LearningObject.objects.filter(
-            material=source,
-            kind=LearningObject.Kind.TEXT,
-        ).order_by("material_id", "order", "id")
-    else:
-        objects = LearningObject.objects.filter(
-            kind=LearningObject.Kind.TEXT,
-            material__outline_node=source,
-            material__status="completed",
-        ).order_by("material_id", "order", "id")
-
-    lines = []
-    for obj in objects:
-        lines.append(f"{obj.title}\n{obj.content}".strip())
-    return "\n\n".join(line for line in lines if line)
-
-
 def sync_course_outline(course_id):
     course = CourseGroup.objects.get(id=course_id)
     roots = course.nodes.filter(parent__isnull=True).order_by("order", "id")
@@ -109,9 +83,22 @@ def sync_module_questions(lesson_node):
             kind=LearningObject.Kind.TEXT,
         )
 
+    # Two gates before a question may reach a learner:
+    #   status="final" — drafts are unclassified raw LLM output
+    #   complete pools — a node whose LOT/HOT pool is short cannot satisfy the
+    #                    checkpoint rule (one of each to advance, plus an
+    #                    alternate to offer on a retry), so it is withheld
+    deliverable_node_ids = complete_node_ids(learning_objects)
     questions = GeneratedQuestion.objects.filter(
-        node__in=learning_objects,
+        node__in=deliverable_node_ids,
+        status="final",
     ).order_by("node__order", "id")
+
+    # Drop rows for questions that no longer qualify — a node can lose its
+    # complete status when it is regenerated.
+    ModuleQuestion.objects.filter(lesson_node=lesson_node).exclude(
+        question__in=questions
+    ).delete()
 
     for index, question in enumerate(questions, start=1):
         ModuleQuestion.objects.update_or_create(

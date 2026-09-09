@@ -5,8 +5,12 @@ from math import ceil
 
 from django.db import transaction
 
-from .bloom_classifier import BLOOM_TO_DIFFICULTY, BloomClassifier
-from .question_generator import generate_questions
+from .bloom_classifier import (
+    BLOOM_TO_DIFFICULTY,
+    BLOOM_TO_THINKING_ORDER,
+    BloomClassifier,
+)
+from .question_generator import GENERATION_LEVELS, LEVEL_FORMATS, generate_questions
 
 # Windows consoles often default to a legacy codepage (e.g. cp1252) that
 # can't encode the ✓/✗/⊘/→/─/═ trace symbols below, which would otherwise
@@ -19,17 +23,32 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 # ── Configuration ──
-# How many questions per thinking order per content node (LearningObject).
-# LOT and HOT are cognitive categories, not difficulty tiers — the counts are
-# equal because neither is "the harder half" of the bank.
+# Per content node (LearningObject): a pool of 3 lower-order and 3 higher-order
+# questions. LOT and HOT are cognitive categories, not difficulty tiers — the
+# counts are equal because neither is "the harder half" of the bank.
+#
+# Three per band is what the checkpoint rule needs: a learner answers one LOT
+# and one HOT to advance, and on a retry must be given a question they have not
+# just seen, so each band needs alternates to draw from.
 QUESTION_DISTRIBUTION = {
-    "LOT": {"count": 5, "formats": ["MCQ", "TF"]},
-    "HOT": {"count": 5, "formats": ["MCQ"]},
+    "LOT": {"count": 3},
+    "HOT": {"count": 3},
 }
-# Per node: 5 LOT + 5 HOT = 10 questions
+
+# Which Bloom levels feed each band. Generation aims at every level here, one
+# prompt each; acceptance happens at the band level (see finalize), so a level
+# the classifier under-fills is covered by its band partners rather than
+# leaving the pool short.
+LEVELS_BY_BAND = {
+    band: tuple(
+        level for level in GENERATION_LEVELS
+        if BLOOM_TO_THINKING_ORDER.get(level) == band
+    )
+    for band in QUESTION_DISTRIBUTION
+}
 
 # Ask for more than the target in the one generation pass, so classification
-# drift still leaves enough in each bucket. This is what replaced the old
+# drift still leaves enough in each band. This is what replaced the old
 # multi-round rebalancing: overgenerating inside the SAME set of LLM calls is
 # far cheaper than issuing extra calls to correct a shortfall afterwards.
 OVERGENERATION_FACTOR = 1.5
@@ -38,14 +57,15 @@ OVERGENERATION_FACTOR = 1.5
 # "create" questions (design/construct/compose a novel artifact) have no
 # single gradeable answer, so they are dropped during post-processing.
 # The trained model still predicts "create" — the exclusion is ours, applied
-# at the application level, and the model is deliberately left alone.
+# at the application level, and the model is deliberately left alone. No prompt
+# aims at it either, so a create-level row only ever arrives by classifier drift.
 UNASSESSABLE_BLOOM_LEVELS = {"create"}
 
 # loaded once per process — reloading RoBERTa on every run costs ~10s
 _classifier_cache = None
 
 
-def _get_classifier():
+def get_classifier():
     global _classifier_cache
     if _classifier_cache is None:
         _classifier_cache = BloomClassifier()
@@ -79,12 +99,64 @@ def _print_node_summary(node, kept, rejected):
     print(f'Node: "{node.title}"')
     print(f"Questions saved: {len(kept)} ({breakdown})")
     print(f"Drafts discarded: {len(rejected)}")
+    levels = Counter(q.bloom_level for q in kept)
     for order, config in QUESTION_DISTRIBUTION.items():
         have = counts.get(order, 0)
-        status = "OK" if have >= config["count"] else "SHORT (accepted)"
+        status = "OK" if have >= config["count"] else "SHORT → node withheld from learners"
+        covered = ", ".join(
+            f"{level} x{levels[level]}"
+            for level in LEVELS_BY_BAND[order] if levels.get(level)
+        )
         print(f"  {order + ':':<6}{have} / {config['count']} needed  → {status}")
+        if covered:
+            print(f"         levels: {covered}")
     print(divider)
     print()
+
+
+def node_question_status(node):
+    """Report whether one node's question pools are complete.
+
+    Completeness is defined at the BAND level, not per Bloom level: the
+    classifier decides what each generated question actually is, so demanding a
+    specific level in a specific slot would leave nodes permanently unfillable
+    without a regeneration loop. A band is what the checkpoint rule consumes,
+    so a band is what has to be full.
+    """
+    from question_generation.models import GeneratedQuestion
+
+    counts = Counter(
+        GeneratedQuestion.objects.filter(node=node, status="final")
+        .values_list("thinking_order", flat=True)
+    )
+    bands = {
+        band: {
+            "have": counts.get(band, 0),
+            "needed": config["count"],
+            "short": max(0, config["count"] - counts.get(band, 0)),
+        }
+        for band, config in QUESTION_DISTRIBUTION.items()
+    }
+    return {
+        "node_id": node.id,
+        "bands": bands,
+        "is_complete": all(band["short"] == 0 for band in bands.values()),
+    }
+
+
+def is_node_complete(node):
+    """True when this node may be delivered to a learner."""
+    return node_question_status(node)["is_complete"]
+
+
+def complete_node_ids(nodes):
+    """Filter an iterable of nodes down to the ids safe to deliver.
+
+    Read paths that serve learners should go through this. A node whose pools
+    are short would break the checkpoint rule — there would be no alternate
+    question to offer after a wrong answer.
+    """
+    return {node.id for node in nodes if is_node_complete(node)}
 
 
 def _print_material_summary(material, node_count, all_questions, stats):
@@ -120,41 +192,44 @@ def _draft_questions_for_node(node, on_event=None):
     GeneratedQuestion.objects.filter(node=node, status="draft").delete()
 
     drafted = 0
-    for thinking_order, config in QUESTION_DISTRIBUTION.items():
-        formats = config["formats"]
-        # distribute the padded count across formats
-        per_format = max(1, ceil(config["count"] * OVERGENERATION_FACTOR / len(formats)))
+    for band, levels in LEVELS_BY_BAND.items():
+        target = QUESTION_DISTRIBUTION[band]["count"]
+        # Spread the padded band target across the levels that feed it, so each
+        # level gets its own prompt and no level is silently never asked for.
+        per_level = max(1, ceil(target * OVERGENERATION_FACTOR / len(levels)))
 
-        for fmt in formats:
-            print(f"Generating {per_format} {thinking_order} {fmt} question(s) for: {node.title}")
-            questions = generate_questions(
-                content=node.content,
-                thinking_order=thinking_order,
-                format_type=fmt,
-                count=per_format,
-            )
-            batch = [
-                GeneratedQuestion(
-                    node=node,
-                    question_text=q["question"],
-                    question_format=q["format"],
-                    choices=q.get("choices"),
-                    correct_answer=q["correct_answer"],
-                    explanation=q.get("explanation", ""),
-                    status="draft",
+        for level in levels:
+            for fmt in LEVEL_FORMATS[level]:
+                print(f"Generating {per_level} {level} ({band}) {fmt} question(s) for: {node.title}")
+                questions = generate_questions(
+                    content=node.content,
+                    bloom_level=level,
+                    format_type=fmt,
+                    count=per_level,
                 )
-                for q in questions
-            ]
-            GeneratedQuestion.objects.bulk_create(batch)
-            drafted += len(batch)
-            for q in batch:
-                print(f'  Q: "{q.question_text}" [{fmt}, drafted]')
-            _emit(
-                on_event, "questions_drafted",
-                f"Saved {len(batch)} {thinking_order} {fmt} draft(s)",
-                node_id=node.id, count=len(batch),
-                requested=per_format, thinking_order=thinking_order, format=fmt,
-            )
+                batch = [
+                    GeneratedQuestion(
+                        node=node,
+                        question_text=q["question"],
+                        question_format=q["format"],
+                        choices=q.get("choices"),
+                        correct_answer=q["correct_answer"],
+                        explanation=q.get("explanation", ""),
+                        status="draft",
+                    )
+                    for q in questions
+                ]
+                GeneratedQuestion.objects.bulk_create(batch)
+                drafted += len(batch)
+                for q in batch:
+                    print(f'  Q: "{q.question_text}" [{level}/{fmt}, drafted]')
+                _emit(
+                    on_event, "questions_drafted",
+                    f"Saved {len(batch)} {level} {fmt} draft(s)",
+                    node_id=node.id, count=len(batch),
+                    requested=per_level, bloom_level=level,
+                    thinking_order=band, format=fmt,
+                )
     print()
     return drafted
 
@@ -181,12 +256,12 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
         GeneratedQuestion.objects.filter(node=node, status="draft").order_by("id")
     )
 
-    keep = []
     reject_ids = []
-    counts = Counter()
     seen = set()
     duplicates = excluded_create = trimmed = 0
 
+    # ── Pass 1: deduplicate, then classify every survivor ──
+    candidates = []
     for draft in drafts:
         key = _dedup_key(draft.question_text)
         if key in seen:
@@ -215,35 +290,69 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
             )
             continue
 
-        if counts[thinking_order] >= QUESTION_DISTRIBUTION[thinking_order]["count"]:
-            trimmed += 1
-            reject_ids.append(draft.id)
-            print(f'  ⊘ Surplus {thinking_order} — "{draft.question_text}"')
-            continue
+        candidates.append((draft, classification))
 
-        draft.bloom_level = bloom_level
-        draft.thinking_order = thinking_order
-        # A different axis from thinking_order, kept for the adaptive
-        # engine's difficulty-based remediation — see GeneratedQuestion.
-        # Derived straight from bloom_level rather than trusted from the
-        # classifier's return value, so a classifier/stub that only returns
-        # bloom_level/thinking_order/category still works.
-        draft.difficulty = classification.get("difficulty") or BLOOM_TO_DIFFICULTY.get(bloom_level, "")
-        draft.category = classification["category"]
-        draft.status = "final"
-        counts[thinking_order] += 1
-        keep.append(draft)
-        print(f'  ✓ {thinking_order} ({bloom_level}) — "{draft.question_text}"')
+    # ── Pass 2: fill each band, preferring level coverage ──
+    # The classifier is authoritative, so a band is filled with whatever it
+    # actually produced rather than with fixed per-level slots. Taking one
+    # question per distinct level first means a band of 3 spreads across the
+    # levels available before it doubles up on any one of them.
+    keep = []
+    counts = Counter()
+    for band, config in QUESTION_DISTRIBUTION.items():
+        in_band = [c for c in candidates if c[1]["thinking_order"] == band]
+
+        chosen, covered = [], set()
+        for draft, classification in in_band:
+            level = classification["bloom_level"]
+            if level not in covered and len(chosen) < config["count"]:
+                covered.add(level)
+                chosen.append((draft, classification))
+        for draft, classification in in_band:
+            if len(chosen) >= config["count"]:
+                break
+            if not any(draft.id == d.id for d, _ in chosen):
+                chosen.append((draft, classification))
+
+        chosen_ids = {d.id for d, _ in chosen}
+        for draft, _ in in_band:
+            if draft.id not in chosen_ids:
+                trimmed += 1
+                reject_ids.append(draft.id)
+                print(f'  ⊘ Surplus {band} — "{draft.question_text}"')
+
+        for draft, classification in chosen:
+            bloom_level = classification["bloom_level"]
+            draft.bloom_level = bloom_level
+            draft.thinking_order = band
+            # A different axis from thinking_order, kept for the adaptive
+            # engine's difficulty-based remediation — see GeneratedQuestion.
+            draft.difficulty = (
+                classification.get("difficulty")
+                or BLOOM_TO_DIFFICULTY.get(bloom_level, "")
+            )
+            draft.category = classification["category"]
+            draft.status = "final"
+            counts[band] += 1
+            keep.append(draft)
+            print(f'  ✓ {band} ({bloom_level}) — "{draft.question_text}"')
 
     print()
 
-    for thinking_order, config in QUESTION_DISTRIBUTION.items():
-        short = config["count"] - counts.get(thinking_order, 0)
+    # A band that came up short is NOT accepted as-is. The questions are still
+    # saved so the teacher can see what did generate and author the missing
+    # ones, but the node is incomplete and is withheld from learners until its
+    # pools are full — see is_node_complete(). Silently shipping a short pool
+    # would break the checkpoint rule, which needs one LOT and one HOT to
+    # advance plus alternates to draw from on a retry.
+    for band, config in QUESTION_DISTRIBUTION.items():
+        short = config["count"] - counts.get(band, 0)
         if short > 0:
             _emit(
-                on_event, "shortfall_warning",
-                f"{thinking_order} came up {short} question(s) short — accepting as is",
-                node_id=node.id, thinking_order=thinking_order, short=short,
+                on_event, "incomplete_node",
+                f"{band} pool is {short} question(s) short — this node is withheld "
+                f"from learners until a teacher adds them",
+                node_id=node.id, thinking_order=band, short=short,
             )
 
     with transaction.atomic():
@@ -314,7 +423,7 @@ def generate_questions_for_material(material, on_event=None, node_ids=None):
 
     if _classifier_cache is None:
         _emit(on_event, "classifier_loading", "Loading Bloom's classifier model")
-    classifier = _get_classifier()
+    classifier = get_classifier()
 
     nodes_qs = (
         material.learning_objects

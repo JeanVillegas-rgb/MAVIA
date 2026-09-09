@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "question_generation",
     "course",
     "adaptive",
+    "learning_path",
 ]
 
 AUTH_USER_MODEL = "user.User"
@@ -133,6 +134,19 @@ OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 
 # Model for question generation (separate from the content generation model)
 QUESTION_LLM_MODEL = os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
+
+# Sampling temperature for question generation only. Deliberately above zero:
+# the pipeline asks for several DISTINCT questions per Bloom level and then
+# deduplicates, and greedy decoding (0.0) returns identical text for identical
+# prompts, so overgeneration would produce duplicates that the dedup pass then
+# deletes. Educational question-generation research commonly uses 0.7-0.9; this
+# sits below that because MAVIA's grounding bar is stricter.
+QUESTION_LLM_TEMPERATURE = float(os.getenv("QUESTION_LLM_TEMPERATURE", "0.4"))
+
+# Sampling temperature for generating the Simplified and Elaborated content
+# variations. Near-greedy on purpose: one output per input, correctness matters
+# more than variety, and low temperature keeps runs reproducible.
+CONTENT_LLM_TEMPERATURE = float(os.getenv("CONTENT_LLM_TEMPERATURE", "0.1"))
 
 
 # Quiet the dev server's per-request access log (e.g. the frontend's

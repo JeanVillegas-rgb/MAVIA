@@ -4102,6 +4102,11 @@ button {
   grid-template-columns: auto minmax(1rem, 1fr) auto minmax(1rem, 1fr) auto;
 }
 
+.review-step-indicator.has-four-steps {
+  grid-template-columns:
+    auto minmax(1rem, 1fr) auto minmax(1rem, 1fr) auto minmax(1rem, 1fr) auto;
+}
+
 .review-step-indicator > span {
   display: inline-grid;
   width: 1.65rem;
@@ -4896,3 +4901,353 @@ button {
   }
 }
 
+
+
+/* ── Learning path review (step 3) ──────────────────────────────────────── */
+
+.learning-path-material {
+  margin-top: 1rem;
+  border: 1px solid #e6dfcf;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.learning-path-material-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #efe9dc;
+}
+
+.learning-path-material-header h4 {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+}
+
+.learning-path-diagnostics {
+  margin: 0;
+  color: #6b7580;
+  font-size: 0.78rem;
+}
+
+.learning-path-diagnostics em {
+  color: #0f766e;
+  font-style: normal;
+}
+
+.learning-path-steps {
+  margin: 0;
+  padding: 0.4rem 0;
+  list-style: none;
+}
+
+.learning-path-step + .learning-path-step {
+  border-top: 1px solid #f3eee3;
+}
+
+.learning-path-step-main {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+}
+
+.learning-path-step-position {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 1.7rem;
+  height: 1.7rem;
+  place-items: center;
+  border-radius: 999px;
+  background: #0f766e;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.learning-path-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.learning-path-step-meta {
+  color: #8a929b;
+  font-size: 0.73rem;
+}
+
+.learning-path-no-prereq {
+  margin: 0.15rem 0 0;
+  color: #0f766e;
+  font-size: 0.78rem;
+}
+
+.learning-path-prereqs {
+  margin: 0.2rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.learning-path-prereqs li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.79rem;
+}
+
+.learning-path-prereq-title {
+  font-weight: 650;
+}
+
+.learning-path-signal {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #f1ede3;
+  color: #6b7580;
+  font-size: 0.7rem;
+}
+
+.learning-path-signal.is-teacher {
+  background: #dff7f1;
+  color: #0f766e;
+}
+
+.learning-path-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.learning-path-add-row select {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.learning-path-verify {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #d8d0bf;
+  border-radius: 10px;
+  background: #f7f4ed;
+  font-size: 0.85rem;
+}
+
+.learning-path-problem {
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #f0c6c6;
+  border-radius: 10px;
+  background: #fdf1f1;
+  color: #96393a;
+  font-size: 0.85rem;
+}
+
+.learning-path-problem p {
+  margin: 0.35rem 0 0;
+}
+
+/* ── Learning path: layered DAG view ────────────────────────────────────── */
+
+.learning-path-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.learning-path-view-toggle {
+  display: inline-flex;
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.learning-path-view-toggle button {
+  padding: 0.35rem 0.7rem;
+  border: 0;
+  background: transparent;
+  color: #6b7580;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.learning-path-view-toggle button + button {
+  border-left: 1px solid #e6dfcf;
+}
+
+.learning-path-view-toggle button.is-active {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.learning-path-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  margin-top: 0.9rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #e6dfcf;
+  border-radius: 10px;
+  background: #fbf9f4;
+  color: #6b7580;
+  font-size: 0.76rem;
+}
+
+.learning-path-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.learning-path-legend strong {
+  color: #29323a;
+}
+
+.lp-key {
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.lp-key-layer {
+  width: 1.1rem;
+  height: 0.7rem;
+  border-radius: 3px;
+  background: #f1ede3;
+  border: 1px solid #e6dfcf;
+}
+
+.lp-key-strong {
+  width: 1.1rem;
+  height: 0;
+  border-top: 3px solid #9aa4ad;
+}
+
+.lp-key-teacher {
+  width: 1.1rem;
+  height: 0;
+  border-top: 2px dashed #0f766e;
+}
+
+.learning-path-graph-scroll {
+  overflow-x: auto;
+  padding: 0.5rem 0.25rem 0.75rem;
+  border-bottom: 1px solid #efe9dc;
+}
+
+.learning-path-graph {
+  display: block;
+  min-width: 100%;
+}
+
+.lp-band {
+  fill: #faf8f3;
+}
+
+.lp-band.is-alt {
+  fill: #f3efe6;
+}
+
+.lp-layer-label {
+  fill: #8a929b;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lp-layer-sub {
+  fill: #a8b0b8;
+  font-size: 0.62rem;
+}
+
+.lp-edge {
+  fill: none;
+  stroke: #9aa4ad;
+  transition: stroke-opacity 0.15s ease;
+}
+
+.lp-edge.is-teacher {
+  stroke: #0f766e;
+  stroke-dasharray: 5 3;
+}
+
+.lp-node {
+  cursor: pointer;
+}
+
+.lp-node:focus {
+  outline: none;
+}
+
+.lp-node-box {
+  fill: #ffffff;
+  stroke: #d8d0bf;
+  stroke-width: 1;
+  transition: stroke 0.15s ease, fill 0.15s ease;
+}
+
+.lp-node.is-root .lp-node-box {
+  stroke: #0f766e;
+  stroke-width: 1.6;
+}
+
+.lp-node:hover .lp-node-box,
+.lp-node:focus-visible .lp-node-box {
+  stroke: #0f766e;
+  fill: #f4fbf9;
+}
+
+.lp-node.is-selected .lp-node-box {
+  stroke: #0f766e;
+  stroke-width: 2.2;
+  fill: #eef9f6;
+}
+
+.lp-node.is-dim {
+  opacity: 0.3;
+}
+
+.lp-node-badge {
+  fill: #0f766e;
+}
+
+.lp-node-position {
+  fill: #ffffff;
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-anchor: middle;
+}
+
+.lp-node-title {
+  fill: #29323a;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.lp-node-meta {
+  fill: #8a929b;
+  font-size: 0.63rem;
+}
+
+.learning-path-selection {
+  padding: 0.35rem 0 0.75rem;
+}
+
+.learning-path-selection-hint {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  color: #8a929b;
+  font-size: 0.8rem;
+}
