@@ -57,7 +57,7 @@ This also matches how the component already describes itself: the document
 "informs the graph but does not dictate the path", and its sequence is used to
 orient an edge and as the lowest-priority tie-breaker.
 
-### The three voting criteria
+### The four voting criteria
 
 Each is evaluated in **both** directions for a candidate pair (A earlier, B
 later) and contributes at most one vote.
@@ -90,11 +90,11 @@ calibrated ones, and are documented as such.
 ```
 votes_forward  = number of criteria voting A → B
 votes_backward = number of criteria voting B → A
-score = (votes_forward - votes_backward) / 3        # in [-1, 1]
+score = (votes_forward - votes_backward) / 4        # in [-1, 1]
 ```
 
-An edge is created when `score >= VOTE_THRESHOLD`. The default is **0.33**, one
-net vote out of three. Raising it to 0.66 requires two net votes and is the
+An edge is created when `score >= VOTE_THRESHOLD`. The default is **0.25**, one
+net vote out of four. Raising it to 0.5 requires two net votes and is the
 precision-first setting; it is a single constant, documented as a chosen
 operating value.
 
@@ -116,13 +116,25 @@ relation.
 **Teacher-authored edges.** Unchanged: weight 1.0, never overwritten by
 re-derivation. A person who knows the subject outranks every criterion here.
 
+**C4 — Definition scope.** The material's opening definition votes for every
+later definition. Added back during implementation after measuring the cost of
+removing it: on the Grade 1 Science course it left 8 of 10 passages in one PDF
+as unconnected roots, because "A solid has a definite shape" never says the word
+"matter" and so no reference criterion can reach it.
+
+The relation it reaches for — a general concept containing the specific ones
+that follow — is recognised in the literature as **category containment**, which
+the multi-criteria work detects from an external knowledge base. MAVIA has none,
+so this is a local proxy for a legitimate criterion, and is described as one.
+That is why it is worth exactly one vote rather than the 0.8 weight it used to
+carry. It only ever votes forward, since the opening definition is by
+construction the earliest.
+
 ### What is removed
 
-`DEFINITION_SCOPE` is deleted. It asserted that a material's opening definition
-grounds every later definition, which is a plausible instructional intuition
-with no support in the prerequisite-relation literature and no evaluation behind
-it. Its useful effect — stopping the opening concept floating unconnected — is
-partly covered by C3, which exists to rescue otherwise unreached passages.
+Nothing is deleted outright. `TITLE_REFERENCE`, `SECTION_REFERENCE`,
+`TERM_COOCCURRENCE` and `DEFINITION_SCOPE` stop being *signals* with weights of
+their own and become *criteria* that vote.
 
 The co-definer rule is retained: no edge is drawn between two takes on the same
 concept, chunk continuation excepted.
@@ -137,9 +149,8 @@ concept, chunk continuation excepted.
 | `CHUNK_CONTINUATION` | Structural, from the chunker's part markers |
 | `TEACHER_AUTHORED` | Added by a person during review |
 
-`TITLE_REFERENCE`, `SECTION_REFERENCE`, `TERM_COOCCURRENCE` and
-`DEFINITION_SCOPE` stop being edge signals and become criteria recorded inside
-`evidence`. One pair therefore yields **one** row rather than one row per signal.
+The four criteria are recorded inside `evidence` instead. One pair therefore
+yields **one** row rather than one row per signal.
 
 `evidence` for a voted edge records, at minimum: the criteria that voted each
 way, the score, the threshold in force, and the terms behind C1/C2/C3 — so a
@@ -155,7 +166,7 @@ No changes needed downstream, verified against the current code:
 - `path_builder._edges_and_weights` already collapses several rows per pair by
   taking `max(weight)`. With one row per pair that becomes a no-op.
 - `weight` feeds `mean_incoming_confidence`, which is a tie-breaker in the sort.
-  Voted scores fall in `[0.33, 1.0]`, a comparable range to today's
+  Voted scores fall in `[0.25, 1.0]`, a comparable range to the previous
   `[0.4, 1.0]`, so ordering behaviour does not shift meaningfully.
 - `signal` is passed through for display only.
 
@@ -193,7 +204,7 @@ no hyperlinks; C1 tests whether one passage's text mentions another's concept
 term. Describe it as reference asymmetry adapted to passage-level mentions —
 claiming an implementation of RefD would not survive scrutiny.
 
-**`VOTE_THRESHOLD` is still a chosen number.** Voting removes three hand-picked
+**`VOTE_THRESHOLD` is still a chosen number.** Voting removes four hand-picked
 weights and replaces them with one hand-picked threshold. That is a real
 reduction, not an elimination. The comparable published value is 0.28 over ten
 criteria, tuned empirically for that domain.

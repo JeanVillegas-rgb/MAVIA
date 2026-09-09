@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "adaptive",
     "adaptive_portal",
     "adaptive_config",
+    "learning_path",
 ]
 
 AUTH_USER_MODEL = "user.User"

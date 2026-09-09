@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/adaptive/", include("adaptive.urls")),
     path("api/adaptive-portal/", include("adaptive_portal.urls")),
     path("api/adaptive-config/", include("adaptive_config.urls")),
+    path("api/learning-path/", include("learning_path.urls")),
 ]
 
 if settings.DEBUG:
