@@ -419,3 +419,9 @@ export function editVersionText(courseId, nodeId, variantId, narration) {
     body: JSON.stringify({ narration }),
   });
 }
+
+// Publishing runs in the background; this is how its progress is followed.
+// Pass the highest seq already seen so each poll returns only what is new.
+export function fetchGenerationRunEvents(runId, after = 0) {
+  return request(`/generation/runs/${runId}/events/?after=${after}`);
+}

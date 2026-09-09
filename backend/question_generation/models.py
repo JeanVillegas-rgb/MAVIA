@@ -126,6 +126,8 @@ class GenerationRun(models.Model):
 
     material = models.ForeignKey(
         LearningMaterial,
+        null=True,
+        blank=True,
         related_name="question_generation_runs",
         on_delete=models.CASCADE,
     )
@@ -136,13 +138,26 @@ class GenerationRun(models.Model):
         related_name="question_generation_runs",
         on_delete=models.SET_NULL,
     )
+    # A publish run covers a whole topic rather than one material, so it sets
+    # outline_node instead. One run model serves both so the teacher-facing
+    # trace endpoint and its polling client stay shared.
+    outline_node = models.ForeignKey(
+        "lessons.OutlineNode",
+        null=True,
+        blank=True,
+        related_name="publish_runs",
+        on_delete=models.CASCADE,
+    )
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="running")
     started_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
+        if self.outline_node_id:
+            return f"Publish {self.id} [{self.status}] {self.outline_node.title}"
         scope = self.node.title if self.node else "all nodes"
-        return f"Run {self.id} [{self.status}] {self.material.title} ({scope})"
+        title = self.material.title if self.material_id else "(no material)"
+        return f"Run {self.id} [{self.status}] {title} ({scope})"
 
 
 class GenerationEvent(models.Model):

@@ -395,7 +395,9 @@ class GenerationTraceView(APIView):
     """
     def get(self, request, run_id):
         try:
-            run = GenerationRun.objects.select_related("material", "node").get(id=run_id)
+            run = GenerationRun.objects.select_related(
+                "material", "node", "outline_node"
+            ).get(id=run_id)
         except GenerationRun.DoesNotExist:
             return Response({"error": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -409,9 +411,12 @@ class GenerationTraceView(APIView):
             "run": {
                 "id": run.id,
                 "material_id": run.material_id,
-                "material_title": run.material.title,
+                # A publish run covers a topic and has no material.
+                "material_title": run.material.title if run.material_id else None,
                 "node_id": run.node_id,
                 "node_title": run.node.title if run.node else None,
+                "outline_node_id": run.outline_node_id,
+                "outline_node_title": run.outline_node.title if run.outline_node_id else None,
                 "status": run.status,
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,

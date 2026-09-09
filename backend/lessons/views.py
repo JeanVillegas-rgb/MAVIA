@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+import threading
 from time import perf_counter
 
 from django.db.models import Max, Prefetch
@@ -13,6 +14,8 @@ from user.permissions import IsTeacherOrAdmin
 from course.models import LessonVariant
 from course.services import sync_course_outline
 from course.variant_generator import fill_missing_slots, generate_standalone_variants
+from question_generation.models import GenerationRun
+from .services.topic_publish import confirmed_materials_for, run_topic_publish
 from course.version_assignment import assign_group_versions, settle_group
 
 from .models import (
@@ -79,6 +82,37 @@ from .services.question_workflow import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
+    """Thread entry point. Owns the run's lifecycle and nothing else."""
+    from question_generation.models import GenerationEvent
+
+    run = GenerationRun.objects.get(id=run_id)
+    seq = {"n": 0}
+
+    def record(event_type, message, **data):
+        seq["n"] += 1
+        GenerationEvent.objects.create(
+            run=run, seq=seq["n"], event_type=event_type, message=message, data=data or None
+        )
+
+    try:
+        course = CourseGroup.objects.get(id=course_id)
+        node = OutlineNode.objects.get(id=node_id)
+        run_topic_publish(
+            course, node,
+            set_confirmed=lambda material: set_confirmed(material, True),
+            on_event=record,
+        )
+        run.status = "finished"
+    except Exception as exc:  # a failed publish must not leave the run "running" forever
+        logger.exception("Publish run %s failed", run_id)
+        record("publish_failed", str(exc))
+        run.status = "failed"
+    finally:
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "finished_at"])
 
 
 class CourseGroupViewSet(viewsets.ModelViewSet):
@@ -864,7 +898,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/publish",
     )
     def publish_topic(self, request, pk=None, node_id=None):
-        """Generate lesson audio for every confirmed material and mark the topic published."""
+        """Start a publish run for one topic and return its id.
+
+        Publishing runs image narration, version settling and audio synthesis
+        across every confirmed material, each of which calls a local model.
+        Doing that inside the request would hold the connection open for
+        minutes with nothing to show, so the work moves to a background thread
+        and the teacher follows it through the run's event stream -- the same
+        mechanism question generation already uses.
+        """
         course = self.get_object()
         try:
             node = course.nodes.get(pk=node_id)
@@ -874,84 +916,34 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        confirmed_materials = (
-            LearningMaterial.objects.filter(
-                course=course,
-                outline_node=node,
-                generated_json__learning_objects_confirmed=True,
-            )
-            .exclude(learning_objects__isnull=True)
-            .distinct()
-        )
-        if not confirmed_materials.exists():
+        if not confirmed_materials_for(course, node).exists():
             return Response(
                 {"detail": "Confirm at least one lesson file's learning objects before publishing."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        image_description_generated_count = 0
-        image_description_errors = []
-        for material in confirmed_materials:
-            image_result = populate_missing_image_descriptions(material)
-            image_description_generated_count += image_result["generated_count"]
-            image_description_errors.extend(image_result["errors"])
-            if image_result["generated_count"]:
-                self._set_learning_objects_confirmed(material, True)
+        active = GenerationRun.objects.filter(
+            outline_node=node, status="running"
+        ).order_by("-id").first()
+        if active is not None:
+            return Response(
+                {"detail": "This topic is already publishing.", "run_id": active.id},
+                status=status.HTTP_409_CONFLICT,
+            )
 
-        # LessonVariant requires the student-facing lesson package wrapper.
-        # Assignment normally happened at review; this is a backstop for
-        # content edited afterwards. Settled groups generate nothing.
-        sync_course_outline(course.id)
-        variant_generated = []
-        variant_errors = []
-        for group in node.learning_object_groups.all():
-            outcome = settle_group(group)
-            variant_generated.extend(outcome["generated"])
-            variant_errors.extend(outcome["errors"])
-
-        # Checked in Python rather than with a queryset: "has both slots" needs
-        # two independent joins on the same reverse relation, which a single
-        # exclude() cannot express correctly.
-        incomplete_versions = []
-        for candidate in LearningObject.objects.filter(
-            material__outline_node=node,
-            represented_by__isnull=True,
-        ).prefetch_related("variants"):
-            if not (candidate.content or "").strip():
-                continue
-            slots = {row.variant for row in candidate.variants.all()}
-            if not {"SIMPLIFIED", "ELABORATED"}.issubset(slots):
-                incomplete_versions.append(candidate.id)
-
-        audio_generated_count = 0
-        audio_errors = []
-        for material in confirmed_materials:
-            try:
-                result = generate_material_audio_playlist(material, scope="lessons")
-                audio_generated_count += result["generated_count"]
-            except AudioGenerationError as exc:
-                audio_errors.append(f"{material.title or material.pdf_file.name}: {exc}")
-
-        node.published = True
-        node.published_at = timezone.now()
-        node.save(update_fields=["published", "published_at"])
-
-        payload = self._learning_resources_payload(node, request)
-        payload["publish"] = {
-            "published": True,
-            "published_at": node.published_at.isoformat(),
-            "audio_generated_count": audio_generated_count,
-            "materials_processed": confirmed_materials.count(),
-            "audio_errors": audio_errors,
-            "adaptive_variants_generated": len(variant_generated),
-            "adaptive_variant_errors": variant_errors,
-            "incomplete_versions": incomplete_versions,
-            "image_descriptions_generated": image_description_generated_count,
-            "image_description_errors": image_description_errors,
-        }
-        refreshed_course = self.get_queryset().get(pk=course.pk)
-        payload["course"] = CourseDetailSerializer(refreshed_course, context={"request": request}).data
-        return Response(payload)
+        run = GenerationRun.objects.create(outline_node=node)
+        threading.Thread(
+            target=_run_topic_publish_in_background,
+            # The confirmation helper lives on the viewset and does not touch
+            # the request, so the bound method travels to the thread rather
+            # than being extracted into a module function for one caller.
+            args=(run.id, course.id, node.id, self._set_learning_objects_confirmed),
+            daemon=True,
+        ).start()
+        return Response(
+            {"run_id": run.id, "node_id": node.id},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(
         detail=True,

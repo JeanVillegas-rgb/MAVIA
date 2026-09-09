@@ -15,6 +15,7 @@ import {
   fetchLearningResources,
   fetchQuestionGenerationTrace,
   generateAudioPlaylist,
+  fetchGenerationRunEvents,
   publishTopic,
   regenerateImageNarrations,
   rejectLearningObjectMatchSuggestion,
@@ -1348,6 +1349,45 @@ function ManualQuestionPanel({
   );
 }
 
+// Publishing can run for many minutes. Showing which stage is working, and
+// how far through it is, is the difference between "slow" and "hung".
+function PublishTrace({ events, running }) {
+  const latest = events[events.length - 1];
+  const progress = [...events].reverse().find((e) => e.data?.total);
+  const failures = events.filter(
+    (e) => e.event_type === "audio_failed" || e.event_type === "publish_failed",
+  );
+
+  return (
+    <div className="publish-trace" role="status" aria-live="polite">
+      <div className="publish-trace-head">
+        <strong>{running ? "Publishing" : "Publish finished"}</strong>
+        {progress?.data && (
+          <span className="publish-trace-count">
+            step {progress.data.index} of {progress.data.total}
+          </span>
+        )}
+      </div>
+      {latest && <p className="publish-trace-current">{latest.message}</p>}
+      {failures.length > 0 && (
+        <ul className="publish-trace-failures">
+          {failures.map((e) => (
+            <li key={e.seq}>{e.message}</li>
+          ))}
+        </ul>
+      )}
+      <details className="publish-trace-log">
+        <summary>Full trace ({events.length})</summary>
+        <ol>
+          {events.map((e) => (
+            <li key={e.seq}>{e.message}</li>
+          ))}
+        </ol>
+      </details>
+    </div>
+  );
+}
+
 function PublishPanel({
   courseId,
   topicId,
@@ -1362,6 +1402,7 @@ function PublishPanel({
   onMessage,
 }) {
   const [publishing, setPublishing] = useState(false);
+  const [publishEvents, setPublishEvents] = useState([]);
   const [deletingKey, setDeletingKey] = useState("");
 
   async function runDeletion(key, confirmText, successText, action) {
@@ -1400,25 +1441,70 @@ ${question.prompt}`,
     );
   }
 
+  // Publishing narrates images, settles versions and synthesises audio, each
+  // of which calls a local model. The request only starts the run; progress
+  // arrives by polling the run's event stream so the teacher can see which
+  // stage is working rather than watching a spinner for several minutes.
   async function handlePublish() {
     setPublishing(true);
+    setPublishEvents([]);
     onError("");
     onMessage("");
     try {
-      const data = await publishTopic(courseId, topicId);
-      onResourcesChange(data);
-      if (data.course) onCourseChange(data.course);
-      const info = data.publish || {};
-      const audioCount = info.audio_generated_count || 0;
-      const materialCount = info.materials_processed || 0;
-      onMessage(
-        `Course published. ${audioCount} audio file${audioCount === 1 ? "" : "s"} generated across `
-        + `${materialCount} lesson file${materialCount === 1 ? "" : "s"}.`,
-      );
+      const started = await publishTopic(courseId, topicId);
+      await followPublishRun(started.run_id);
     } catch (err) {
       onError(err.message);
-    } finally {
       setPublishing(false);
+    }
+  }
+
+  async function followPublishRun(runId) {
+    let after = 0;
+    while (true) {
+      let payload;
+      try {
+        payload = await fetchGenerationRunEvents(runId, after);
+      } catch (err) {
+        onError(`Lost contact with the publish run: ${err.message}`);
+        setPublishing(false);
+        return;
+      }
+
+      const incoming = payload.events || [];
+      if (incoming.length) {
+        after = incoming[incoming.length - 1].seq;
+        setPublishEvents((current) => [...current, ...incoming]);
+      }
+
+      const status = payload.run?.status;
+      if (status === "finished" || status === "failed") {
+        setPublishing(false);
+        const summary = incoming.find((e) => e.event_type === "publish_finished")?.data?.summary;
+        if (status === "failed") {
+          onError("Publishing stopped before it finished. The trace below shows how far it got.");
+        } else if (summary) {
+          const audio = summary.audio_generated_count || 0;
+          const materials = summary.materials_processed || 0;
+          const incomplete = (summary.incomplete_versions || []).length;
+          onMessage(
+            `Published. ${audio} audio file${audio === 1 ? "" : "s"} across `
+            + `${materials} lesson file${materials === 1 ? "" : "s"}.`
+            + (incomplete ? ` ${incomplete} concept${incomplete === 1 ? "" : "s"} still missing a version.` : ""),
+          );
+        } else {
+          onMessage("Published.");
+        }
+        try {
+          const refreshed = await fetchLearningResources(courseId, topicId);
+          onResourcesChange(refreshed);
+        } catch {
+          // The run is what matters; a stale panel is recoverable by reloading.
+        }
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 
@@ -1543,6 +1629,9 @@ ${question.prompt}`,
         >
           Back to question pairs
         </button>
+        {(publishing || publishEvents.length > 0) && (
+          <PublishTrace events={publishEvents} running={publishing} />
+        )}
         <div className="publish-status">
           {topic?.published_at && (
             <small>Last published {new Date(topic.published_at).toLocaleString()}</small>

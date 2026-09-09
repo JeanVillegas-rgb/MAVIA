@@ -286,13 +286,12 @@ class SemanticIntegrationTests(TestCase):
         pending = LearningObjectMatchSuggestion.objects.create(
             outline_node=self.topic, source_learning_object=self.source,
             candidate_learning_object=self.candidate, confidence="medium", status="pending")
-        with patch("lessons.views.generate_material_audio_playlist", return_value={"generated_count": 0}), patch(
-            "lessons.views.generate_standalone_variants",
-            return_value={"generated_count": 0, "cached_count": 0, "errors": []},
-        ):
+        # Publishing is a background run now, so the request only has to be
+        # accepted -- the pending suggestion must not stop it being started.
+        with patch("lessons.views.threading.Thread"):
             response = authenticated_api_client().post(
                 f"/api/courses/{self.course.id}/outline-nodes/{self.topic.id}/publish/", format="json")
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 202)
         pending.refresh_from_db()
         self.assertEqual(pending.status, "pending")
         self.source.refresh_from_db()

@@ -1324,7 +1324,7 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertFalse(self.node.published)
 
     @patch(
-        "lessons.views.settle_group",
+        "lessons.services.topic_publish.settle_group",
         return_value={
             "representative_id": None,
             "assigned": [],
@@ -1360,22 +1360,23 @@ class LearningResourceRelationshipTests(TestCase):
         ensure_learning_object_groups(material)
         synthesize_audio.return_value = Path(settings.MEDIA_ROOT) / "audio_lessons" / "matter.mp3"
 
-        response = self.client.post(
-            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/publish/",
-            {},
-            format="json",
+        # Publishing is a background run now, so the work is exercised through
+        # the service the thread calls rather than through the request.
+        from .services.topic_publish import run_topic_publish
+
+        summary = run_topic_publish(
+            self.course, self.node, set_confirmed=lambda item: None
         )
 
         self.node.refresh_from_db()
         material.refresh_from_db()
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(self.node.published)
         self.assertIsNotNone(self.node.published_at)
-        self.assertEqual(response.data["publish"]["audio_generated_count"], 1)
-        self.assertEqual(response.data["publish"]["adaptive_variants_generated"], 2)
+        self.assertEqual(summary["audio_generated_count"], 1)
+        self.assertEqual(summary["adaptive_variants_generated"], 2)
         self.assertTrue(material.generated_json["lesson_audio_generated"])
         synthesize_audio.assert_called_once()
-        # Publish now settles each group in the topic rather than calling the
+        # Publish settles each group in the topic rather than calling the
         # standalone generator once for the node.
         settle_group_mock.assert_called_once()
 
