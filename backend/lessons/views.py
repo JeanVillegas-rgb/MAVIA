@@ -891,8 +891,29 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 self._set_learning_objects_confirmed(material, True)
 
         # LessonVariant requires the student-facing lesson package wrapper.
+        # Assignment normally happened at review; this is a backstop for
+        # content edited afterwards. Settled groups generate nothing.
         sync_course_outline(course.id)
-        variant_result = generate_standalone_variants(node)
+        variant_generated = []
+        variant_errors = []
+        for group in node.learning_object_groups.all():
+            outcome = settle_group(group)
+            variant_generated.extend(outcome["generated"])
+            variant_errors.extend(outcome["errors"])
+
+        # Checked in Python rather than with a queryset: "has both slots" needs
+        # two independent joins on the same reverse relation, which a single
+        # exclude() cannot express correctly.
+        incomplete_versions = []
+        for candidate in LearningObject.objects.filter(
+            material__outline_node=node,
+            represented_by__isnull=True,
+        ).prefetch_related("variants"):
+            if not (candidate.content or "").strip():
+                continue
+            slots = {row.variant for row in candidate.variants.all()}
+            if not {"SIMPLIFIED", "ELABORATED"}.issubset(slots):
+                incomplete_versions.append(candidate.id)
 
         audio_generated_count = 0
         audio_errors = []
@@ -914,9 +935,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "audio_generated_count": audio_generated_count,
             "materials_processed": confirmed_materials.count(),
             "audio_errors": audio_errors,
-            "adaptive_variants_generated": variant_result["generated_count"],
-            "adaptive_variants_cached": variant_result["cached_count"],
-            "adaptive_variant_errors": variant_result["errors"],
+            "adaptive_variants_generated": len(variant_generated),
+            "adaptive_variant_errors": variant_errors,
+            "incomplete_versions": incomplete_versions,
             "image_descriptions_generated": image_description_generated_count,
             "image_description_errors": image_description_errors,
         }

@@ -1324,12 +1324,19 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertFalse(self.node.published)
 
     @patch(
-        "lessons.views.generate_standalone_variants",
-        return_value={"generated_count": 2, "cached_count": 0, "errors": []},
+        "lessons.views.settle_group",
+        return_value={
+            "representative_id": None,
+            "assigned": [],
+            "needs_confirmation": [],
+            "extras": 0,
+            "generated": ["SIMPLIFIED", "ELABORATED"],
+            "errors": [],
+        },
     )
     @patch("lessons.services.audio_generator.synthesize_text_to_audio")
     def test_publish_topic_generates_audio_and_marks_the_node_published(
-        self, synthesize_audio, generate_variants
+        self, synthesize_audio, settle_group_mock
     ):
         from django.conf import settings
         from pathlib import Path
@@ -1368,7 +1375,9 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(response.data["publish"]["adaptive_variants_generated"], 2)
         self.assertTrue(material.generated_json["lesson_audio_generated"])
         synthesize_audio.assert_called_once()
-        generate_variants.assert_called_once_with(self.node)
+        # Publish now settles each group in the topic rather than calling the
+        # standalone generator once for the node.
+        settle_group_mock.assert_called_once()
 
     def test_course_outline_upload_rejects_non_pdf(self):
         client = authenticated_api_client()
