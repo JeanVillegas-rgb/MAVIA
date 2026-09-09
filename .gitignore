@@ -33,3 +33,9 @@ frontend/node_modules/
 
 # Bloom classifier weights (~500MB, shared out-of-band)
 backend/question_generation/classifier/trained_model/
+
+*.pdf
+
+# Local database snapshots taken before risky migrations. Several megabytes
+# each, and a broad `git add` will otherwise sweep them into a commit.
+backend/db.sqlite3.pre-*
