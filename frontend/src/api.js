@@ -212,6 +212,13 @@ export function confirmLearningObjects(courseId, materialId) {
   );
 }
 
+export function regenerateImageNarrations(courseId, materialId) {
+  return request(
+    `/courses/${courseId}/materials/${materialId}/regenerate-image-narrations/`,
+    { method: "POST" }
+  );
+}
+
 export function generateAudioPlaylist(courseId, materialId, scope = "all") {
   return request(
     `/courses/${courseId}/materials/${materialId}/generate-audio-playlist/`,

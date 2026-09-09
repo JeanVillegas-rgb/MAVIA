@@ -1379,6 +1379,34 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
+        url_path=r"materials/(?P<material_id>[^/.]+)/regenerate-image-narrations",
+    )
+    def regenerate_image_narrations(self, request, pk=None, material_id=None):
+        """Repair blank narration on saved image objects without re-uploading the PDF."""
+        course = self.get_object()
+        material = self._get_course_material(course, material_id)
+        if material is None:
+            return Response(
+                {"detail": "Learning material not found for this course."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_result = populate_missing_image_descriptions(material)
+        if image_result["generated_count"]:
+            # Refresh narration and playlist snapshots while preserving whether
+            # this material was already confirmed.
+            confirmed = bool(
+                (material.generated_json or {}).get("learning_objects_confirmed")
+            )
+            self._set_learning_objects_confirmed(material, confirmed)
+
+        response = self._serialize_course_detail(course, request)
+        response.data["image_description_generation"] = image_result
+        return response
+
+    @action(
+        detail=True,
+        methods=["post"],
         url_path=r"materials/(?P<material_id>[^/.]+)/generate-audio-playlist",
     )
     def generate_audio_playlist(self, request, pk=None, material_id=None):

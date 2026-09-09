@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { uploadedMaterialFromResponse } from "../uploadNavigation";
 import {
@@ -16,6 +16,7 @@ import {
   fetchQuestionGenerationTrace,
   generateAudioPlaylist,
   publishTopic,
+  regenerateImageNarrations,
   rejectLearningObjectMatchSuggestion,
   reviewQuestionPairing,
   separateLearningObject,
@@ -1805,6 +1806,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
   const [showAudioWarning, setShowAudioWarning] = useState(false);
   const [showDeleteMaterialConfirm, setShowDeleteMaterialConfirm] = useState(false);
   const [learningObjectToDelete, setLearningObjectToDelete] = useState(null);
+  const imageNarrationRepairAttempts = useRef(new Set());
 
   const generatedJson = material.generated_json || {};
   const isAssessmentDocument = isQuestionMaterial(material);
@@ -1817,6 +1819,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
   const imagesMissingDescription = material.learning_objects.filter(
     (item) => isImageLearningObject(item) && !item.content?.trim()
   );
+  const missingImageNarrationKey = imagesMissingDescription.map((item) => item.id).join(",");
 
   useEffect(() => {
     if (!material.learning_objects.some((item) => item.id === editingId)) {
@@ -1838,6 +1841,30 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
       setEditingId(null);
     }
   }, [learningObjectsConfirmed]);
+
+  useEffect(() => {
+    if (!learningObjectsConfirmed || !missingImageNarrationKey) return;
+
+    const attemptKey = `${material.id}:${missingImageNarrationKey}`;
+    if (imageNarrationRepairAttempts.current.has(attemptKey)) return;
+    imageNarrationRepairAttempts.current.add(attemptKey);
+
+    setBusyAction("image-narration");
+    regenerateImageNarrations(courseId, material.id)
+      .then((updatedCourse) => {
+        onCourseChange(updatedCourse);
+        const result = updatedCourse.image_description_generation;
+        if (result?.generated_count) {
+          onMessage(
+            `Generated ${result.generated_count} missing picture narration${result.generated_count === 1 ? "" : "s"} with Gemma.`
+          );
+        } else if (result?.errors?.length) {
+          onError(result.errors[0].detail || "Gemma could not generate the picture narration.");
+        }
+      })
+      .catch((err) => onError(err.message))
+      .finally(() => setBusyAction(""));
+  }, [courseId, learningObjectsConfirmed, material.id, missingImageNarrationKey, onCourseChange, onError, onMessage]);
 
   async function saveNewLearningObject(data) {
     setBusyAction("create");
