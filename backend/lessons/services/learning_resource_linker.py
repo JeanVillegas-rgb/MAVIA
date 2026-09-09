@@ -693,8 +693,75 @@ def record_teacher_match_decision(
     return suggestion
 
 
+def _nominated_candidate(matcher, learning_object, cache):
+    """The single object this one picks as its own cross-PDF equivalent.
+
+    Memoised per refresh: in a lopsided pair of PDFs many objects nominate the
+    same partner, so the reciprocal lookup is asked about far fewer objects
+    than there are pairs.
+    """
+    if learning_object.id not in cache:
+        try:
+            cache[learning_object.id] = matcher(
+                learning_object.material,
+                learning_object.title,
+                learning_object.content,
+                learning_object.kind,
+                learning_object.order,
+                section_title=learning_object.section_title,
+                source_object_id=learning_object.id,
+            )
+        except Exception:
+            # A failed lookup is not evidence against the pair. Record the
+            # failure and let the pair through rather than silently emptying
+            # the teacher's queue on a transient model error.
+            logger.exception(
+                "Reciprocal match lookup failed for learning object %s",
+                learning_object.id,
+            )
+            cache[learning_object.id] = "unavailable"
+    return cache[learning_object.id]
+
+
+def _is_mutual_best_match(matcher, candidate_object, source_object, cache):
+    """True when the candidate nominates the source back.
+
+    "Both teach the same concept" is a symmetric claim, but the matcher only
+    ever asks one direction: every object picks its own closest partner in the
+    other PDF, and nothing stops a dozen objects picking the same one. Those
+    nominations are mutually exclusive -- at most one of them can be the same
+    concept -- so proposing all of them turns one real question into a dozen
+    declines. Requiring the nomination to run both ways makes the pair a claim
+    about the two objects rather than about one of them.
+    """
+    decision = _nominated_candidate(matcher, candidate_object, cache)
+    if decision == "unavailable":
+        return True
+    if not decision:
+        return False
+
+    reciprocal = decision.get("candidate")
+    if reciprocal and reciprocal.id == source_object.id:
+        return True
+
+    # Only a DECISIVE rival nomination is evidence against the pair. When the
+    # candidate is torn between equally good partners -- three PDFs each
+    # carrying the same concept, say -- its pick is arbitrary, and vetoing on
+    # it would hide a real duplicate the teacher needs to resolve. Ambiguity is
+    # a reason to ask, not a reason to stay silent.
+    margin = (decision.get("evidence") or {}).get("winner_margin")
+    if margin is not None and margin <= 0:
+        return True
+    return False
+
+
 def refresh_learning_object_match_suggestions(material: LearningMaterial) -> None:
-    """Persist the best explainable cross-PDF candidate for each local object."""
+    """Persist mutually-best explainable cross-PDF candidates for this material.
+
+    A pair reaches the teacher's review queue only when both objects nominate
+    each other -- see :func:`_is_mutual_best_match` for why one-directional
+    nomination floods the queue with mutually exclusive suggestions.
+    """
     if material.outline_node_id is None:
         return
     from . import semantic_grouping
@@ -713,6 +780,7 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
         ).delete()
         return
     retained_ids = []
+    reciprocal_cache = {}
     learning_objects = list(
         material.learning_objects.select_related("material", "group").order_by("order", "id")
     )
@@ -754,6 +822,10 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
         ).first()
         if existing and (existing.evidence or {}).get("teacher_reviewed"):
             retained_ids.append(existing.id)
+            continue
+        if not _is_mutual_best_match(
+            matcher, candidate_object, source_object, reciprocal_cache
+        ):
             continue
         if (
             decision["confidence"] == LearningObjectMatchSuggestion.Confidence.HIGH
