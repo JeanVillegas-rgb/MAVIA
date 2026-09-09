@@ -12,7 +12,7 @@ from user.permissions import IsTeacherOrAdmin
 
 from course.models import LessonVariant
 from course.services import sync_course_outline
-from course.variant_generator import generate_standalone_variants
+from course.variant_generator import fill_missing_slots, generate_standalone_variants
 from course.version_assignment import assign_group_versions, settle_group
 
 from .models import (
@@ -184,18 +184,25 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 continue
             version_state = assign_group_versions(group)
             slot_rows = {}
+            extra_rows = []
             if version_state["representative_id"] is not None:
-                slot_rows = {
-                    row.variant.lower(): {
+                for row in LessonVariant.objects.filter(
+                    learning_object_id=version_state["representative_id"],
+                ):
+                    entry = {
+                        "id": row.id,
                         "text": row.narration,
                         "origin": row.origin,
                         "assigned_by": row.assigned_by,
                         "source_learning_object_id": row.source_learning_object_id,
                     }
-                    for row in LessonVariant.objects.filter(
-                        learning_object_id=version_state["representative_id"],
-                    ).exclude(variant="EXTRA")
-                }
+                    # Extras are kept for the learning-path component to rule on;
+                    # they are not one of the three slots a student is offered, so
+                    # they travel as their own list rather than as a slot.
+                    if row.variant == "EXTRA":
+                        extra_rows.append(entry)
+                    else:
+                        slot_rows[row.variant.lower()] = entry
             groups.append(
                 {
                     "id": group.id,
@@ -204,6 +211,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     "versions": {
                         "representative_id": version_state["representative_id"],
                         "slots": slot_rows,
+                        "extras": extra_rows,
                         "needs_confirmation": version_state["needs_confirmation"],
                         "complete": {"simplified", "elaborated"}.issubset(slot_rows.keys()),
                     },
@@ -944,6 +952,91 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         refreshed_course = self.get_queryset().get(pk=course.pk)
         payload["course"] = CourseDetailSerializer(refreshed_course, context={"request": request}).data
         return Response(payload)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)/generate-versions",
+    )
+    def generate_object_versions(self, request, pk=None, node_id=None, object_id=None):
+        """Fill one teaching step's missing version slots so a teacher can read them.
+
+        Deliberately one object at a time: a single Gemma call takes minutes, so
+        a bulk request would block for hours with nothing to show. Failures are
+        reported in the payload rather than raised -- an unreachable model must
+        not look like a broken endpoint.
+        """
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            learning_object = LearningObject.objects.select_related("material").get(
+                pk=object_id,
+                material__outline_node=node,
+            )
+        except (LearningObject.DoesNotExist, TypeError, ValueError):
+            return Response(
+                {"detail": "Learning object not found in this topic."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if learning_object.represented_by_id is not None:
+            return Response(
+                {"detail": "This object is taught through another one; generate versions there."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = fill_missing_slots(learning_object)
+        payload = self._learning_resources_payload(node, request)
+        payload["version_generation"] = {
+            "learning_object_id": learning_object.id,
+            "generated": result["generated"],
+            "skipped": result["skipped"],
+            "errors": result["errors"],
+        }
+        return Response(payload)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/versions/(?P<variant_id>[^/.]+)",
+    )
+    def edit_version_text(self, request, pk=None, node_id=None, variant_id=None):
+        """Reword one version. Where the text came from is preserved."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            variant = LessonVariant.objects.select_related("learning_object__material").get(
+                pk=variant_id,
+                learning_object__material__outline_node=node,
+            )
+        except (LessonVariant.DoesNotExist, TypeError, ValueError):
+            return Response(
+                {"detail": "Version not found in this topic."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        narration = str(request.data.get("narration") or "").strip()
+        if not narration:
+            return Response(
+                {"detail": "Version text cannot be empty."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        variant.narration = narration
+        # origin records where the wording came from and stays put; assigned_by
+        # is what records that a teacher has since had a hand in it.
+        variant.assigned_by = LessonVariant.AssignedBy.TEACHER
+        variant.save(update_fields=["narration", "assigned_by"])
+
+        return Response(self._learning_resources_payload(node, request))
 
     @action(
         detail=True,
