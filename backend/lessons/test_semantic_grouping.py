@@ -36,6 +36,10 @@ class FakeRuntime:
 
 
 class SemanticPureTests(SimpleTestCase):
+    def test_semantic_mode_is_enabled_by_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(semantic.mode(), "auto")
+
     def test_every_member_checked_and_titles_never_sent(self):
         a = SimpleNamespace(id=1, group_id=4, content="definition", title="TITLE ONLY")
         b = SimpleNamespace(id=2, group_id=4, content="examples", title="TITLE ONLY")
@@ -59,9 +63,20 @@ class SemanticPureTests(SimpleTestCase):
             self.assertEqual(semantic.rank_groups(text, [a], {4: [a]}, runtime_instance=engine), [])
             self.assertEqual(engine.inputs, [])
 
-    @patch.dict(os.environ, {"SEMANTIC_GROUPING_CALIBRATION": "", "SEMANTIC_GROUPING_AUTO_THRESHOLD": ""})
-    def test_no_default_auto_threshold(self):
-        self.assertIsNone(semantic.policy()["auto_threshold"])
+    @patch.dict(os.environ, {
+        "SEMANTIC_GROUPING_CALIBRATION": "",
+        "SEMANTIC_GROUPING_AUTO_THRESHOLD": "",
+        "SEMANTIC_GROUPING_REVIEW_THRESHOLD": "",
+        "SEMANTIC_GROUPING_MINIMUM_SBERT_COSINE": "",
+        "SEMANTIC_GROUPING_MINIMUM_MARGIN": "",
+    })
+    def test_configured_default_thresholds(self):
+        config = semantic.policy()
+        self.assertEqual(config["auto_threshold"], .60)
+        self.assertEqual(config["review_threshold"], .30)
+        self.assertEqual(config["minimum_sbert_cosine"], .60)
+        self.assertEqual(config["minimum_margin"], .05)
+        self.assertEqual(config["auto_threshold_source"], "configured_default")
 
     @patch.dict(os.environ, {"SEMANTIC_GROUPING_CALIBRATION": "", "SEMANTIC_GROUPING_AUTO_THRESHOLD": ".70"})
     def test_explicit_auto_threshold_is_marked_unvalidated(self):
@@ -79,7 +94,7 @@ class SemanticPureTests(SimpleTestCase):
                 "SEMANTIC_GROUPING_CALIBRATION": str(path),
                 "SEMANTIC_GROUPING_AUTO_THRESHOLD": "",
             }):
-                self.assertIsNone(semantic.policy()["auto_threshold"])
+                self.assertEqual(semantic.policy()["auto_threshold"], .60)
                 data.update(approved_for_auto=True, dataset_sha256="test-only", validation={"auto_predictions": 40, "false_auto": 0, "negative_pairs": 20})
                 path.write_text(json.dumps(data), encoding="utf-8")
                 self.assertEqual(semantic.policy()["auto_threshold"], .9)
@@ -158,9 +173,9 @@ class SemanticIntegrationTests(TestCase):
         self.assertEqual(LearningObjectMatchSuggestion.objects.get().confidence, "high")
 
     @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "auto", "SEMANTIC_GROUPING_CALIBRATION": "", "SEMANTIC_GROUPING_AUTO_THRESHOLD": ""})
-    def test_auto_without_calibration_stays_review(self):
+    def test_auto_uses_configured_default_without_calibration(self):
         with patch.object(semantic, "runtime", return_value=FakeRuntime()):
-            self.assertEqual(self.decision()["confidence"], "medium")
+            self.assertEqual(self.decision()["confidence"], "high")
 
     @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "review"})
     def test_missing_models_preserve_existing_queue(self):

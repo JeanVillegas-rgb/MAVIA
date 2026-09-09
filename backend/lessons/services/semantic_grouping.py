@@ -1,6 +1,7 @@
 """Content-only semantic grouping. Scores are similarities, not probabilities.
 
-Models are optional, pinned, CPU-backed, and local-only during normal requests.
+Models are pinned and CPU-backed. After their public weights are downloaded,
+all learning-object inference is local.
 The STS cross-encoder is a baseline to evaluate, not proof of interchangeability.
 """
 from collections import defaultdict
@@ -40,23 +41,33 @@ def content_hash(text):
 
 
 def mode():
-    value = os.getenv("SEMANTIC_GROUPING_MODE", "legacy").lower()
+    value = os.getenv("SEMANTIC_GROUPING_MODE", "auto").lower()
     if value not in {"legacy", "review", "auto"}:
         raise SemanticUnavailable("SEMANTIC_GROUPING_MODE must be legacy, review, or auto.")
     return value
 
 
 def policy():
-    # Automatic grouping has no implicit cutoff. A deployment must either set an
-    # explicit threshold or provide a teacher-validated calibration artifact.
+    # These rollout defaults implement the teacher workflow requested for MAVIA:
+    # high -> automatic, medium -> confirmation, low -> ignored. They are
+    # configured operating thresholds, not calibrated probabilities.
     result = {
-        "review_threshold": 0.5,
-        "auto_threshold": None,
-        "minimum_sbert_cosine": 0.8,
+        "review_threshold": 0.3,
+        "auto_threshold": 0.6,
+        "minimum_sbert_cosine": 0.6,
         "minimum_margin": 0.05,
         "top_k": 10,
-        "auto_threshold_source": "disabled",
+        "auto_threshold_source": "configured_default",
     }
+    explicit_review = os.getenv("SEMANTIC_GROUPING_REVIEW_THRESHOLD", "").strip()
+    if explicit_review:
+        try:
+            review = float(explicit_review)
+            if not 0 <= review <= 1:
+                raise ValueError("must be between 0 and 1")
+            result["review_threshold"] = review
+        except ValueError as exc:
+            raise SemanticUnavailable(f"Invalid SEMANTIC_GROUPING_REVIEW_THRESHOLD: {exc}") from exc
     explicit_auto = os.getenv("SEMANTIC_GROUPING_AUTO_THRESHOLD", "").strip()
     if explicit_auto:
         try:
@@ -243,7 +254,17 @@ class SemanticRuntime:
 
 @lru_cache(maxsize=1)
 def runtime():
-    return SemanticRuntime()
+    allow_download = os.getenv(
+        "SEMANTIC_GROUPING_ALLOW_MODEL_DOWNLOAD", "True"
+    ).lower() in {"1", "true", "yes"}
+    try:
+        # Cached installations must remain fully offline and must not perform a
+        # Hugging Face metadata request merely to discover that weights exist.
+        return SemanticRuntime(download=False)
+    except SemanticUnavailable:
+        if not allow_download:
+            raise
+        return SemanticRuntime(download=True)
 
 
 def rank_groups(content, candidates, members_by_group, *, runtime_instance=None, thresholds=None):

@@ -1,4 +1,4 @@
-# Optional, evaluated separately from the core PDF pipeline.
+# Required by the default semantic learning-object grouping pipeline.
 sentence-transformers==5.6.0
 transformers==5.13.1
 torch==2.13.0

@@ -23,12 +23,11 @@ snapshots and does not run model inference. Subsequent matching respects that
 rejection. These protections apply to the existing object records; regeneration
 that replaces records is a separate workflow.
 
-The optional semantic matcher is implemented, but `SEMANTIC_GROUPING_MODE=legacy`
-remains the repository default. Existing grouping is not silently replaced. No
-universally valid automatic threshold is supplied: the routing requirement is not
-a labeled dataset. A local deployment may explicitly opt into a conservative
-threshold while it collects labels, and the evidence records that it is unvalidated.
-Model scores are similarities, not probabilities or percentages of identical words.
+The semantic matcher is the repository default. It uses the configured MAVIA
+teacher-workflow cutoffs: `0.60` for automatic grouping and `0.30` for teacher
+review. These are operating thresholds, not calibrated probabilities or
+percentages of identical words. Evidence identifies configured thresholds as
+unvalidated until a teacher-labeled evaluation replaces them.
 
 After validation, the routing is:
 
@@ -51,13 +50,16 @@ interchangeable content; teacher evaluation must specifically test that case.
    pinned `stsb-roberta-base` cross-encoder, in both directions.
 4. Use the lowest pair score and lowest group-member score. A strong match to one
    member must not hide a weak match to another.
-5. Apply the validated thresholds and winner-margin check.
+5. Apply the configured or teacher-validated thresholds and winner-margin check.
 
 Embeddings and pair scores are cached by content hash and model version in
 `backend/semantic_cache/`. This derived cache is separate from the application
 database and excluded from Git. First-time CPU inference is slower than cached
 comparisons. Models are loaded once per process, so a server restart adds warmup
-time. Normal requests never download models.
+time. When public weights are missing, the default development configuration
+downloads them once; learning-object content is not sent during that download.
+For an offline deployment, set `SEMANTIC_GROUPING_ALLOW_MODEL_DOWNLOAD=False`
+and prepare the cache before starting the server.
 
 Empty or over-length content is not silently truncated or automatically grouped.
 The current implementation skips unsupported sources/pairs; it does not create a
@@ -67,13 +69,14 @@ requiring manual inspection. Image-only objects have no semantic image matching.
 ## Preparation (PowerShell, from backend)
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-semantic.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe manage.py prepare_semantic_grouping --download
 ```
 
 Preparation downloads pinned model weights into the Hugging Face cache and
-precomputes supported content embeddings. It does not change groups. If the
-download fails or stalls, finish preparation before enabling semantic mode.
+precomputes supported content embeddings. It does not change groups. Explicit
+preparation is optional in development, but it avoids making the first upload
+wait while missing model weights are downloaded.
 The cross-encoder is a substantial download. For an Xet transfer issue, retry in
 a new shell with `$env:HF_HUB_DISABLE_XET='1'` before running preparation.
 
@@ -116,11 +119,11 @@ It refuses unlabeled data and cross-split content leakage. The audit is read-onl
 inspect actual candidate groups, retrieval misses and definition-versus-example
 errors. Pair metrics alone do not validate retrieval or whole-group behavior.
 
-## Enable in stages
+## Validate and tune
 
-Set `SEMANTIC_GROUPING_MODE=review` in the backend environment and restart only
-after model preparation. This mode never automatically groups semantic matches.
-Its default review cutoff of 0.50 is provisional, not a validated accuracy claim.
+Set `SEMANTIC_GROUPING_MODE=review` when collecting labels without allowing
+automatic grouping. Its default review cutoff of `0.30` is provisional, not a
+validated accuracy claim.
 
 For automatic mode, first inspect the evaluation and group audit. The generated
 artifact deliberately has `approved_for_auto: false`. A responsible reviewer may
@@ -130,17 +133,16 @@ held-out automatic predictions, zero observed false automatic matches, at least
 These are minimum rollout gates, not statistical proof of accuracy. More diverse
 examples and a stronger precision bound may be necessary.
 
-Then set `SEMANTIC_GROUPING_CALIBRATION` to that reviewed artifact's absolute path
-and `SEMANTIC_GROUPING_MODE=auto`, and restart. This is the recommended production
-route.
+Set `SEMANTIC_GROUPING_CALIBRATION` to that reviewed artifact's absolute path and
+restart to replace the configured defaults with teacher-validated thresholds.
+This remains the recommended production route.
 
-For a cautious pre-validation rollout, a deployment can instead set
-`SEMANTIC_GROUPING_AUTO_THRESHOLD` explicitly. This is recorded as
-`environment_unvalidated` in diagnostic evidence. A high decision must also clear
-`SEMANTIC_GROUPING_MINIMUM_SBERT_COSINE`, the winner margin, and every group-member
-check. The current local rollout uses cross-encoder `0.60`, SBERT `0.80`,
-and margin `0.10`; these values must be re-evaluated as teachers accept and reject
-more pairs. An environment change does not rebuild existing groups automatically.
+Before calibration, the repository runs in `auto` mode with cross-encoder `0.60`,
+review `0.30`, SBERT `0.60`, and winner margin `0.05`. Explicit environment
+overrides are recorded as `environment_unvalidated` in diagnostic evidence. A
+high decision must also clear the SBERT gate, winner margin, and every group-member
+check. These values must be re-evaluated as teachers accept and reject more pairs.
+An environment change does not rebuild existing groups automatically.
 Previously incorrect groups need their own teacher cleanup; this feature does not
 silently split them.
 
