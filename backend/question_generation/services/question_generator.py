@@ -27,10 +27,11 @@ PROMPT_TEMPLATES = {
         "Do NOT ask the learner to compare two things, weigh trade-offs, judge which "
         "option is better, or justify a choice.\n\n"
         "{examples}\n\n"
-        "Format: {format_type}\n\n"
+        "{format_request}\n\n"
         "Content:\n{content}\n\n"
         "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
+        "Respond ONLY with valid JSON, no other text. Every question object must\n"
+        "carry a \"format\" field saying which kind it is. Use this exact structure:\n"
         '{{"questions": [{question_schema}]}}'
     ),
     "HOT": (
@@ -42,10 +43,11 @@ PROMPT_TEMPLATES = {
         "Do NOT ask for a fact that is stated word-for-word in the content.\n"
         "The question must still have ONE defensible correct answer.\n\n"
         "{examples}\n\n"
-        "Format: {format_type}\n\n"
+        "{format_request}\n\n"
         "Content:\n{content}\n\n"
         "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Use this exact structure:\n"
+        "Respond ONLY with valid JSON, no other text. Every question object must\n"
+        "carry a \"format\" field saying which kind it is. Use this exact structure:\n"
         '{{"questions": [{question_schema}]}}'
     ),
 }
@@ -81,23 +83,77 @@ FORMAT_INSTRUCTIONS = {
 
 QUESTION_SCHEMA = {
     "MCQ": (
-        '{"question": "...", "choices": {"A": "...", "B": "...", "C": "...", "D": "..."}, '
+        '{"question": "...", "format": "MCQ", '
+        '"choices": {"A": "...", "B": "...", "C": "...", "D": "..."}, '
         '"correct_answer": "A or B or C or D", "explanation": "brief explanation"}'
     ),
     "TF": (
-        '{"question": "statement here", "correct_answer": "True or False", '
-        '"explanation": "brief explanation"}'
+        '{"question": "statement here", "format": "TF", '
+        '"correct_answer": "True or False", "explanation": "brief explanation"}'
     ),
 }
 
+# Formats the pipeline can actually assess. An item claiming anything else is
+# dropped rather than coerced -- guessing at what the model meant would put an
+# ungradeable question into the bank.
+SUPPORTED_FORMATS = ("MCQ", "TF")
 
-def _build_prompt(content, thinking_order, format_type, count=1):
+
+def build_response_schema(format_split):
+    """JSON schema handed to Ollama so the response cannot be malformed.
+
+    Constraining the shape at decode time is what makes a single call able to
+    return a mix of multiple-choice and true/false questions: the parser no
+    longer has to gamble on the model closing its JSON correctly.
+
+    ``choices`` is deliberately optional -- a true/false item has none, and
+    requiring it would make every one of them violate the schema.
+    """
+    formats = [fmt for fmt in SUPPORTED_FORMATS if format_split.get(fmt)]
+    letter = {"type": "string"}
+    return {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                        "format": {"type": "string", "enum": formats or list(SUPPORTED_FORMATS)},
+                        "choices": {
+                            "type": "object",
+                            "properties": {k: letter for k in ("A", "B", "C", "D")},
+                        },
+                        "correct_answer": {"type": "string"},
+                        "explanation": {"type": "string"},
+                    },
+                    "required": ["question", "format", "correct_answer"],
+                },
+            },
+        },
+        "required": ["questions"],
+    }
+
+
+def _format_request(format_split):
+    """The human-readable half of the same instruction the schema encodes."""
+    parts = [
+        f"{count} {fmt}" for fmt, count in format_split.items() if count
+    ]
+    if len(parts) == 1:
+        return f"Format: {parts[0]} question(s)."
+    return "Formats: " + ", ".join(parts) + " question(s), in that mix."
+
+
+def _build_prompt(content, thinking_order, format_split):
+    formats = [fmt for fmt in SUPPORTED_FORMATS if format_split.get(fmt)]
     return PROMPT_TEMPLATES[thinking_order].format(
-        count=count,
+        count=sum(format_split.values()),
         content=content,
-        format_type=format_type,
-        format_instructions=FORMAT_INSTRUCTIONS[format_type],
-        question_schema=QUESTION_SCHEMA[format_type],
+        format_request=_format_request(format_split),
+        format_instructions="\n".join(FORMAT_INSTRUCTIONS[fmt] for fmt in formats),
+        question_schema=", ".join(QUESTION_SCHEMA[fmt] for fmt in formats),
         examples=FEW_SHOT_EXAMPLES[thinking_order],
     )
 
@@ -208,31 +264,39 @@ def _parse_llm_response(response_text):
         return [parsed]
 
 
-def _ollama_generate(prompt):
-    """Call Ollama over HTTP using the project's existing settings."""
+def _ollama_generate(prompt, schema=None):
+    """Call Ollama over HTTP using the project's existing settings.
+
+    ``schema`` constrains the reply at decode time. Temperature stays where it
+    was: the schema governs shape, not wording, so lowering it would cost
+    question variety without preventing a single malformed response.
+    """
+    payload = {
+        "model": settings.QUESTION_LLM_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+        "options": {
+            "temperature": 0.7,
+            # generous ceiling — a batch of MCQs (4 choices + explanation
+            # each) can run past 1000 tokens and get cut off mid-JSON
+            "num_predict": 2048,
+        },
+    }
+    if schema is not None:
+        payload["format"] = schema
     response = requests.post(
         f"{settings.OLLAMA_BASE_URL}/api/generate",
-        json={
-            "model": settings.QUESTION_LLM_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
-            "options": {
-                "temperature": 0.7,
-                # generous ceiling — a batch of 5 MCQs (4 choices + explanation
-                # each) can run past 1000 tokens and get cut off mid-JSON
-                "num_predict": 2048,
-            },
-        },
+        json=payload,
         timeout=settings.OLLAMA_TIMEOUT,
     )
     response.raise_for_status()
     return response.json()["response"]
 
 
-def generate_questions(content, thinking_order, format_type, count=1, max_retries=3):
+def generate_questions(content, thinking_order, format_split, max_retries=3):
     """
-    Generate questions using the local LLM.
+    Generate one thinking order's questions in a single LLM call.
 
     The returned questions carry no classification — the prompt only steers
     toward a thinking order, it does not decide one. The Bloom classifier
@@ -241,25 +305,31 @@ def generate_questions(content, thinking_order, format_type, count=1, max_retrie
     Args:
         content:        text content to generate questions from
         thinking_order: "LOT" or "HOT" — which prompt to steer with
-        format_type:    "MCQ" or "TF"
-        count:          number of questions to generate
+        format_split:   {"MCQ": 2, "TF": 1} — how many of each kind to ask for
         max_retries:    retry on JSON parse failures
 
     Returns:
-        list of question dicts
+        list of question dicts, each labelled with the format it actually is
     """
-    prompt = _build_prompt(content, thinking_order, format_type, count)
+    prompt = _build_prompt(content, thinking_order, format_split)
+    schema = build_response_schema(format_split)
 
     for attempt in range(max_retries):
         try:
-            raw_text = _ollama_generate(prompt)
+            raw_text = _ollama_generate(prompt, schema=schema)
             questions = _parse_llm_response(raw_text)
 
             validated = []
             for q in questions:
-                if not _validate_question(q, format_type):
+                # The item's own format decides how it is validated. Asking for
+                # two MCQs and being handed a usable true/false question is not
+                # a failure -- the split is a request, not a contract.
+                fmt = str(q.get("format") or "").upper()
+                if fmt not in SUPPORTED_FORMATS:
                     continue
-                q["format"] = format_type
+                if not _validate_question(q, fmt):
+                    continue
+                q["format"] = fmt
                 validated.append(q)
 
             if validated:

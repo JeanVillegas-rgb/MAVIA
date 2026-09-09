@@ -3,6 +3,7 @@ import sys
 from collections import Counter
 from math import ceil
 
+from django.conf import settings
 from django.db import transaction
 
 from .bloom_classifier import BLOOM_TO_DIFFICULTY, BloomClassifier
@@ -22,11 +23,51 @@ for _stream in (sys.stdout, sys.stderr):
 # How many questions per thinking order per content node (LearningObject).
 # LOT and HOT are cognitive categories, not difficulty tiers — the counts are
 # equal because neither is "the harder half" of the bank.
+def thinking_order_counts():
+    """Target questions per thinking order, overridable per deployment.
+
+    Read at call time rather than import time so a settings override in a test
+    or a changed .env takes effect without reloading the module.
+    """
+    return {
+        "LOT": int(getattr(settings, "QUESTION_COUNT_LOT", 3)),
+        "HOT": int(getattr(settings, "QUESTION_COUNT_HOT", 3)),
+    }
+
+
+def _split(count, weights):
+    """Divide ``count`` across formats by weight, giving the remainder to the
+    first format so the split always sums back to ``count``."""
+    total = sum(weights.values())
+    split = {fmt: count * weight // total for fmt, weight in weights.items()}
+    first = next(iter(weights))
+    split[first] += count - sum(split.values())
+    return {fmt: n for fmt, n in split.items() if n}
+
+
+# How many questions per thinking order per content node (LearningObject).
+# LOT and HOT are cognitive categories, not difficulty tiers -- the counts are
+# equal because neither is "the harder half" of the bank.
+#
+# Each thinking order is ONE LLM call. The format split is requested inside
+# that call rather than split across calls: multiple-choice and true/false
+# questions come back in the same structured response, so LOT no longer costs
+# two round trips. The split is stated explicitly because true/false is much
+# cheaper for the model to produce, and left to itself the bank drifts toward
+# it -- and a true/false question a learner can guess right half the time is
+# weak evidence of mastery.
+_COUNTS = thinking_order_counts()
 QUESTION_DISTRIBUTION = {
-    "LOT": {"count": 5, "formats": ["MCQ", "TF"]},
-    "HOT": {"count": 5, "formats": ["MCQ"]},
+    "LOT": {
+        "count": _COUNTS["LOT"],
+        "format_split": _split(_COUNTS["LOT"], {"MCQ": 2, "TF": 1}),
+    },
+    "HOT": {
+        "count": _COUNTS["HOT"],
+        "format_split": _split(_COUNTS["HOT"], {"MCQ": 1}),
+    },
 }
-# Per node: 5 LOT + 5 HOT = 10 questions
+# Per node: one call per thinking order, 3 LOT + 3 HOT = 6 questions
 
 # Ask for more than the target in the one generation pass, so classification
 # drift still leaves enough in each bucket. This is what replaced the old
@@ -121,40 +162,42 @@ def _draft_questions_for_node(node, on_event=None):
 
     drafted = 0
     for thinking_order, config in QUESTION_DISTRIBUTION.items():
-        formats = config["formats"]
-        # distribute the padded count across formats
-        per_format = max(1, ceil(config["count"] * OVERGENERATION_FACTOR / len(formats)))
-
-        for fmt in formats:
-            print(f"Generating {per_format} {thinking_order} {fmt} question(s) for: {node.title}")
-            questions = generate_questions(
-                content=node.content,
-                thinking_order=thinking_order,
-                format_type=fmt,
-                count=per_format,
+        # Pad each format so classification drift still leaves enough in the
+        # bucket, then ask for the whole mix in one call.
+        padded = {
+            fmt: max(1, ceil(n * OVERGENERATION_FACTOR))
+            for fmt, n in config["format_split"].items()
+        }
+        summary = " + ".join(f"{n} {fmt}" for fmt, n in padded.items())
+        print(f"Generating {summary} {thinking_order} question(s) for: {node.title}")
+        questions = generate_questions(
+            content=node.content,
+            thinking_order=thinking_order,
+            format_split=padded,
+        )
+        batch = [
+            GeneratedQuestion(
+                node=node,
+                question_text=q["question"],
+                question_format=q["format"],
+                choices=q.get("choices"),
+                correct_answer=q["correct_answer"],
+                explanation=q.get("explanation", ""),
+                status="draft",
             )
-            batch = [
-                GeneratedQuestion(
-                    node=node,
-                    question_text=q["question"],
-                    question_format=q["format"],
-                    choices=q.get("choices"),
-                    correct_answer=q["correct_answer"],
-                    explanation=q.get("explanation", ""),
-                    status="draft",
-                )
-                for q in questions
-            ]
-            GeneratedQuestion.objects.bulk_create(batch)
-            drafted += len(batch)
-            for q in batch:
-                print(f'  Q: "{q.question_text}" [{fmt}, drafted]')
-            _emit(
-                on_event, "questions_drafted",
-                f"Saved {len(batch)} {thinking_order} {fmt} draft(s)",
-                node_id=node.id, count=len(batch),
-                requested=per_format, thinking_order=thinking_order, format=fmt,
-            )
+            for q in questions
+        ]
+        GeneratedQuestion.objects.bulk_create(batch)
+        drafted += len(batch)
+        for q in batch:
+            print(f'  Q: "{q.question_text}" [{q.question_format}, drafted]')
+        _emit(
+            on_event, "questions_drafted",
+            f"Saved {len(batch)} {thinking_order} draft(s)",
+            node_id=node.id, count=len(batch),
+            requested=sum(padded.values()), thinking_order=thinking_order,
+            formats=sorted(padded),
+        )
     print()
     return drafted
 

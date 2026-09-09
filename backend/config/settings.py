@@ -147,6 +147,12 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
 OLLAMA_VISION_TIMEOUT = int(os.getenv("OLLAMA_VISION_TIMEOUT", str(OLLAMA_TIMEOUT)))
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 
+# Questions generated per learning object, per thinking order. Lower these
+# while iterating: each thinking order is one LLM call, and the count drives
+# how much that call has to write.
+QUESTION_COUNT_LOT = int(os.getenv("QUESTION_COUNT_LOT", "3"))
+QUESTION_COUNT_HOT = int(os.getenv("QUESTION_COUNT_HOT", "3"))
+
 ADAPTIVE_VARIANT_GENERATION_ENABLED = os.getenv(
     "ADAPTIVE_VARIANT_GENERATION_ENABLED", "True"
 ).lower() in ("1", "true", "yes")

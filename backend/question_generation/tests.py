@@ -10,6 +10,7 @@ from lessons.services.audio_generator import generate_material_audio_playlist
 from .models import GeneratedQuestion, GenerationRun
 from .services.pipeline import (
     finalize_node_questions,
+    QUESTION_DISTRIBUTION,
     generate_questions_for_material,
 )
 
@@ -166,8 +167,12 @@ class QuestionGenerationScopeTests(TestCase):
         classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
         finalize_node_questions(self.first_node, classifier)
 
-        # QUESTION_DISTRIBUTION caps LOT at 5
-        self.assertEqual(self.first_node.generated_questions.count(), 5)
+        # Read the cap from the configuration rather than restating it, so
+        # tuning the counts does not turn into a failing test.
+        self.assertEqual(
+            self.first_node.generated_questions.count(),
+            QUESTION_DISTRIBUTION["LOT"]["count"],
+        )
 
     def test_finalize_replaces_the_previous_runs_questions(self):
         old = GeneratedQuestion.objects.create(
