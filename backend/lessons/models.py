@@ -175,6 +175,17 @@ class LearningObject(models.Model):
         related_name="learning_objects",
         on_delete=models.SET_NULL,
     )
+    # Set when semantic grouping decided another object teaches this same
+    # concept. The row, its metadata_id and its question links are all kept:
+    # grouping is an automatic decision at an unvalidated threshold, so it has
+    # to stay reversible. Consumers skip represented objects when sequencing.
+    represented_by = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="represents",
+        on_delete=models.SET_NULL,
+    )
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.TEXT)
     section_title = models.CharField(max_length=255, blank=True)
     title = models.CharField(max_length=255)
