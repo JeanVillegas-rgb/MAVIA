@@ -10,8 +10,10 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from user.permissions import IsTeacherOrAdmin
 
+from course.models import LessonVariant
 from course.services import sync_course_outline
 from course.variant_generator import generate_standalone_variants
+from course.version_assignment import assign_group_versions, settle_group
 
 from .models import (
     CourseGroup,
@@ -180,11 +182,31 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             ]
             if not learning_objects:
                 continue
+            version_state = assign_group_versions(group)
+            slot_rows = {}
+            if version_state["representative_id"] is not None:
+                slot_rows = {
+                    row.variant.lower(): {
+                        "text": row.narration,
+                        "origin": row.origin,
+                        "assigned_by": row.assigned_by,
+                        "source_learning_object_id": row.source_learning_object_id,
+                    }
+                    for row in LessonVariant.objects.filter(
+                        learning_object_id=version_state["representative_id"],
+                    ).exclude(variant="EXTRA")
+                }
             groups.append(
                 {
                     "id": group.id,
                     "label": group.label,
                     "outline_node_id": node.id,
+                    "versions": {
+                        "representative_id": version_state["representative_id"],
+                        "slots": slot_rows,
+                        "needs_confirmation": version_state["needs_confirmation"],
+                        "complete": {"simplified", "elaborated"}.issubset(slot_rows.keys()),
+                    },
                     "learning_objects": LearningObjectSerializer(
                         learning_objects,
                         many=True,
@@ -901,6 +923,67 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         refreshed_course = self.get_queryset().get(pk=course.pk)
         payload["course"] = CourseDetailSerializer(refreshed_course, context={"request": request}).data
         return Response(payload)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/version-assignment",
+    )
+    def confirm_version_assignment(self, request, pk=None, node_id=None):
+        """Record a teacher's ruling on which version slot a grouped text fills."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        slot = str(request.data.get("slot", "")).upper()
+        if slot not in ("SIMPLIFIED", "ELABORATED", "EXTRA"):
+            return Response(
+                {"detail": "slot must be SIMPLIFIED, ELABORATED or EXTRA."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            learning_object = LearningObject.objects.select_related("group", "material").get(
+                pk=request.data.get("learning_object_id"),
+                material__outline_node=node,
+            )
+        except (LearningObject.DoesNotExist, TypeError, ValueError):
+            return Response(
+                {"detail": "Learning object not found in this topic."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if learning_object.group_id is None:
+            return Response(
+                {"detail": "Only grouped learning objects have version slots."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        state = assign_group_versions(learning_object.group)
+        representative_id = state["representative_id"]
+        if representative_id is None or representative_id == learning_object.id:
+            return Response(
+                {"detail": "This object is the original and cannot fill another slot."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        LessonVariant.objects.update_or_create(
+            learning_object_id=representative_id,
+            variant=slot,
+            defaults={
+                "narration": learning_object.content,
+                "origin": LessonVariant.Origin.SOURCE_PDF,
+                "source_learning_object": learning_object,
+                "assigned_by": LessonVariant.AssignedBy.TEACHER,
+            },
+        )
+        LearningObject.objects.filter(pk=learning_object.pk).update(
+            represented_by_id=representative_id
+        )
+
+        return Response(self._learning_resources_payload(node, request))
 
     @action(
         detail=True,
