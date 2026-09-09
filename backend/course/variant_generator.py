@@ -205,3 +205,63 @@ def generate_standalone_variants(outline_node):
         "cached_count": cached_count,
         "errors": errors,
     }
+
+
+def fill_missing_slots(learning_object):
+    """Generate only the primary slots real source text did not supply.
+
+    Rows whose origin is ``source_pdf`` are never touched: a teacher wrote
+    that text and it cannot be regenerated. A generation failure leaves the
+    slot empty and is reported, so the review screen can show it as incomplete
+    rather than the pipeline silently publishing two versions as three.
+    """
+    if not settings.ADAPTIVE_VARIANT_GENERATION_ENABLED:
+        return {"generated": [], "skipped": [], "errors": []}
+    if not (learning_object.content or "").strip():
+        return {"generated": [], "skipped": [], "errors": []}
+
+    existing = set(
+        learning_object.variants.filter(
+            variant__in=("SIMPLIFIED", "ELABORATED"),
+        ).values_list("variant", flat=True)
+    )
+    missing = [slot for slot in ("SIMPLIFIED", "ELABORATED") if slot not in existing]
+    if not missing:
+        return {"generated": [], "skipped": sorted(existing), "errors": []}
+
+    model = settings.ADAPTIVE_VARIANT_LLM_MODEL
+    fingerprint = _fingerprint(learning_object)
+    try:
+        variants = _request_variants(learning_object, model)
+    except VariantGenerationError as exc:
+        logger.warning(
+            "Adaptive variant generation failed: learning_object=%s model=%s error=%s",
+            learning_object.id,
+            model,
+            exc,
+        )
+        return {
+            "generated": [],
+            "skipped": sorted(existing),
+            "errors": [{"learning_object_id": learning_object.id, "detail": str(exc)}],
+        }
+
+    generated = []
+    with transaction.atomic():
+        for slot in missing:
+            LessonVariant.objects.update_or_create(
+                learning_object=learning_object,
+                variant=slot,
+                defaults={
+                    "narration": variants[slot],
+                    "audio_url": "",
+                    "source_fingerprint": fingerprint,
+                    "generator_model": model,
+                    "generated_at": timezone.now(),
+                    "origin": LessonVariant.Origin.GENERATED,
+                    "source_learning_object": None,
+                },
+            )
+            generated.append(slot)
+
+    return {"generated": generated, "skipped": sorted(existing), "errors": []}
