@@ -56,6 +56,7 @@ from .services.content_generator import (
     is_structural_metadata_label,
 )
 from .services.instructional_content_classifier import CLASSIFICATION_CATEGORIES
+from .services.image_describer import populate_missing_image_descriptions
 from .services.learning_resource_linker import (
     CONFIRMED_QUESTION_PAIRING_STATUSES,
     learning_objects_are_confirmed,
@@ -858,6 +859,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        image_description_generated_count = 0
+        image_description_errors = []
+        for material in confirmed_materials:
+            image_result = populate_missing_image_descriptions(material)
+            image_description_generated_count += image_result["generated_count"]
+            image_description_errors.extend(image_result["errors"])
+            if image_result["generated_count"]:
+                self._set_learning_objects_confirmed(material, True)
+
         # LessonVariant requires the student-facing lesson package wrapper.
         sync_course_outline(course.id)
         variant_result = generate_standalone_variants(node)
@@ -885,6 +895,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "adaptive_variants_generated": variant_result["generated_count"],
             "adaptive_variants_cached": variant_result["cached_count"],
             "adaptive_variant_errors": variant_result["errors"],
+            "image_descriptions_generated": image_description_generated_count,
+            "image_description_errors": image_description_errors,
         }
         refreshed_course = self.get_queryset().get(pk=course.pk)
         payload["course"] = CourseDetailSerializer(refreshed_course, context={"request": request}).data
@@ -1358,8 +1370,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        image_result = populate_missing_image_descriptions(material)
         self._set_learning_objects_confirmed(material, True)
-        return self._serialize_course_detail(course, request)
+        response = self._serialize_course_detail(course, request)
+        response.data["image_description_generation"] = image_result
+        return response
 
     @action(
         detail=True,

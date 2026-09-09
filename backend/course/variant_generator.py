@@ -146,13 +146,13 @@ def generate_standalone_variants(outline_node):
         if learning_object.group_id is not None:
             group_sizes[learning_object.group_id] = group_sizes.get(learning_object.group_id, 0) + 1
 
-    text_objects = [item for item in objects if item.kind == LearningObject.Kind.TEXT]
+    adaptable_objects = [item for item in objects if (item.content or "").strip()]
     standalone = [
-        item for item in text_objects
+        item for item in adaptable_objects
         if item.group_id is None or group_sizes.get(item.group_id, 0) == 1
     ]
     standalone_ids = {item.id for item in standalone}
-    grouped_ids = [item.id for item in text_objects if item.id not in standalone_ids]
+    grouped_ids = [item.id for item in adaptable_objects if item.id not in standalone_ids]
     if grouped_ids:
         LessonVariant.objects.filter(
             learning_object_id__in=grouped_ids,

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import requests
 from django.test import TestCase, override_settings
 
+from lessons.models import CourseGroup, LearningMaterial, LearningObject
 from lessons.services import image_describer
 from lessons.services.content_generator import describe_pdf_images
 
@@ -77,6 +78,18 @@ class DescribeImageTests(TestCase):
 
     @patch("lessons.services.image_describer.requests.post")
     @patch("lessons.services.image_describer.requests.get")
+    def test_ollama_can_recover_without_backend_restart(self, mock_get, mock_post):
+        mock_get.side_effect = [requests.ConnectionError("refused"), _ok_response({})]
+        mock_post.return_value = _ok_response({"response": "Particles represent the three states of matter."})
+
+        self.assertEqual(image_describer.describe_image_for_lesson(PNG), "")
+        self.assertEqual(
+            image_describer.describe_image_for_lesson(PNG),
+            "Particles represent the three states of matter.",
+        )
+
+    @patch("lessons.services.image_describer.requests.post")
+    @patch("lessons.services.image_describer.requests.get")
     def test_timeout_during_generate_returns_empty(self, mock_get, mock_post):
         mock_get.return_value = _ok_response({})
         mock_post.side_effect = requests.Timeout("too slow")
@@ -135,3 +148,23 @@ class DescribePdfImagesIntegrationTests(TestCase):
         [described] = describe_pdf_images([self._image()], "The water cycle", "")
         self.assertEqual(described["description"], "Figure 1. The water cycle")
         self.assertEqual(described["description_source"], "caption_or_visible_text")
+
+    @patch("lessons.services.image_describer.describe_image_for_lesson")
+    @patch("lessons.services.image_describer._learning_object_image_bytes", return_value=PNG)
+    def test_missing_saved_narration_can_be_regenerated(self, _image_bytes, describe):
+        describe.return_value = "Solid particles are packed closely, liquid particles can move, and gas particles are far apart."
+        course = CourseGroup.objects.create(title="Science")
+        material = LearningMaterial.objects.create(course=course, title="States of matter")
+        learning_object = LearningObject.objects.create(
+            material=material,
+            kind=LearningObject.Kind.IMAGE,
+            title="Particle arrangement",
+            content="",
+            image_url="/media/extracted_images/particles.png",
+        )
+
+        result = image_describer.populate_missing_image_descriptions(material)
+
+        learning_object.refresh_from_db()
+        self.assertEqual(result["generated_learning_object_ids"], [learning_object.id])
+        self.assertIn("Solid particles", learning_object.content)

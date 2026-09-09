@@ -102,3 +102,24 @@ class StandaloneVariantGenerationTests(TestCase):
         ) + '"}'
         with self.assertRaises(VariantGenerationError):
             _parse_response(raw, source_word_count=10)
+
+    @patch("course.variant_generator._request_variants")
+    def test_narrated_standalone_image_receives_adaptive_text_variants(self, request_variants):
+        request_variants.return_value = {
+            "SIMPLIFIED": "Solid particles are close together.",
+            "ELABORATED": "The narration explains that particles in a solid are positioned close together.",
+        }
+        group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Particle figure")
+        image = LearningObject.objects.create(
+            material=self.material,
+            group=group,
+            title="Particle arrangement",
+            content="Particles in a solid are packed close together.",
+            kind=LearningObject.Kind.IMAGE,
+            image_url="/media/extracted_images/particles.png",
+        )
+
+        result = generate_standalone_variants(self.topic)
+
+        self.assertEqual(result["generated_count"], 2)
+        self.assertEqual(image.variants.count(), 2)

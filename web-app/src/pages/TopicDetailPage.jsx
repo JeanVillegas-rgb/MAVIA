@@ -1457,7 +1457,7 @@ function LearningObjectConnections({
                                   )}
                                   <span>
                                     {isMissingImageDescription
-                                      ? "No teacher image description is available."
+                                      ? "No image narration is available. Start Ollama, then confirm again to retry."
                                       : "Suggested description · review recommended."}
                                   </span>
                                 </div>
@@ -1814,7 +1814,14 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
     try {
       const updatedCourse = await confirmLearningObjects(courseId, material.id);
       onCourseChange(updatedCourse);
-      onMessage("Learning objects confirmed and saved to the database.");
+      const imageResult = updatedCourse.image_description_generation;
+      if (imageResult?.generated_count) {
+        onMessage(`Learning objects confirmed. Generated ${imageResult.generated_count} missing image narration${imageResult.generated_count === 1 ? "" : "s"} with Gemma.`);
+      } else if (imageResult?.errors?.length) {
+        onMessage("Learning objects confirmed, but image narration is still unavailable. Check that Ollama and gemma3:4b are running, then confirm again.");
+      } else {
+        onMessage("Learning objects confirmed and saved to the database.");
+      }
     } catch (err) {
       onError(err.message);
     } finally {
@@ -2108,8 +2115,8 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
                                 )}
                                 <span>
                                   {isMissingImageDescription
-                                    ? `Learning object ${index + 1} has no image description. Edit this object to add one.`
-                                    : "Suggested description · review recommended."}
+                                    ? `Learning object ${index + 1} has no image narration. Confirm again to retry Gemma, or edit it manually.`
+                                    : "Suggested image narration · review recommended."}
                                 </span>
                               </div>
                             )}
