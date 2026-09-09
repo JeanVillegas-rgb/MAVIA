@@ -18,6 +18,9 @@ import {
   publishTopic,
   regenerateImageNarrations,
   rejectLearningObjectMatchSuggestion,
+  assignVersionSlot,
+  editVersionText,
+  generateObjectVersions,
   reviewQuestionPairing,
   separateLearningObject,
   startQuestionGeneration,
@@ -291,12 +294,14 @@ function ObjectPairsPanel({
         </div>
         <span>{suggestions.length} to review</span>
       </div>
-      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-active">1</span>
         <div aria-hidden="true" />
         <span>2</span>
         <div aria-hidden="true" />
         <span>3</span>
+        <div aria-hidden="true" />
+        <span>4</span>
         <strong>Object pairs</strong>
       </div>
 
@@ -375,8 +380,8 @@ function ObjectPairsPanel({
         </>
       )}
       <div className="review-step-actions review-step-actions-next">
-        <button type="button" className="btn btn-primary" disabled={Boolean(busyAction)} onClick={() => onReviewStepChange("questions")}>
-          Next step: Question pairs ({pendingQuestionCount})
+        <button type="button" className="btn btn-primary" disabled={Boolean(busyAction)} onClick={() => onReviewStepChange("versions")}>
+          Next step: Content versions
         </button>
       </div>
     </aside>
@@ -462,12 +467,14 @@ function ReviewQueuePanel({
         </div>
         <span className="connection-source-count">{pendingQuestions.length} to review</span>
       </div>
-      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
         <div aria-hidden="true" />
-        <span className="is-active">2</span>
+        <span className="is-complete">2</span>
         <div aria-hidden="true" />
-        <span>3</span>
+        <span className="is-active">3</span>
+        <div aria-hidden="true" />
+        <span>4</span>
         <strong>Question pairs</strong>
       </div>
 
@@ -810,6 +817,277 @@ function QuestionEditForm({ question, busy, onCancel, onSave }) {
       </select></label>
       <div className="question-inline-editor-actions"><button type="button" className="btn btn-secondary btn-small" onClick={onCancel} disabled={busy}>Cancel</button><button type="submit" className="btn btn-primary btn-small" disabled={busy}>Save question</button></div>
     </form>
+  );
+}
+
+// Where a version's wording came from, in the teacher's words rather than the
+// database's. Exported so the labelling can be checked without rendering.
+export function versionOriginLabel(entry, materialTitle) {
+  if (!entry) return "";
+  const source = entry.origin === "source_pdf"
+    ? `From ${materialTitle || "another PDF"}`
+    : "AI generated";
+  return entry.assigned_by === "teacher" ? `${source} · Edited` : source;
+}
+
+function VersionSlotCard({
+  slotKey,
+  heading,
+  entry,
+  text,
+  originLabel,
+  readOnly,
+  busy,
+  isEditing,
+  onBeginEdit,
+  onCancelEdit,
+  onSave,
+  onGenerate,
+}) {
+  const [draft, setDraft] = useState(text || "");
+  useEffect(() => { setDraft(text || ""); }, [text, isEditing]);
+
+  return (
+    <article className={`version-slot is-${slotKey}`}>
+      <header className="version-slot-head">
+        <span className={`version-slot-label is-${slotKey}`}>{heading}</span>
+        {originLabel && <small className="version-slot-origin">{originLabel}</small>}
+      </header>
+
+      {text ? (
+        isEditing ? (
+          <div className="version-slot-editor">
+            <textarea
+              value={draft}
+              rows={5}
+              onChange={(event) => setDraft(event.target.value)}
+              aria-label={`${heading} text`}
+            />
+            <div className="version-slot-actions">
+              <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onCancelEdit}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-small"
+                disabled={busy || !draft.trim()}
+                onClick={() => onSave(draft.trim())}
+              >
+                {busy ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="version-slot-text">{text}</p>
+            {!readOnly && (
+              <div className="version-slot-actions">
+                <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onBeginEdit}>
+                  Edit wording
+                </button>
+              </div>
+            )}
+          </>
+        )
+      ) : (
+        <div className="version-slot-empty">
+          <p>Not written yet.</p>
+          <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onGenerate}>
+            {busy ? "Generating, this takes a few minutes..." : "Generate"}
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function VersionReviewPanel({
+  groups,
+  materialById,
+  busyAction,
+  onReviewStepChange,
+  onAssignSlot,
+  onGenerate,
+  onEditVersion,
+}) {
+  const [chunkIndex, setChunkIndex] = useState(0);
+  const [editingSlot, setEditingSlot] = useState(null);
+
+  const chunks = useMemo(
+    () => groups.filter((group) => group.versions?.representative_id),
+    [groups],
+  );
+
+  useEffect(() => {
+    setChunkIndex((current) => Math.max(0, Math.min(current, chunks.length - 1)));
+  }, [chunks.length]);
+
+  const chunk = chunks[chunkIndex];
+  useEffect(() => { setEditingSlot(null); }, [chunk?.id]);
+
+  const versions = chunk?.versions;
+  const representative = chunk?.learning_objects?.find(
+    (item) => Number(item.id) === Number(versions?.representative_id),
+  );
+  const originalMaterial = materialById.get(Number(representative?.material));
+
+  function materialTitleFor(entry) {
+    if (!entry?.source_learning_object_id) return null;
+    const source = chunk?.learning_objects?.find(
+      (item) => Number(item.id) === Number(entry.source_learning_object_id),
+    );
+    const material = materialById.get(Number(source?.material));
+    return material?.filename || material?.title || null;
+  }
+
+  return (
+    <section className="connection-review-panel" aria-labelledby="version-review-title">
+      <div className="connection-review-heading">
+        <div>
+          <span className="connection-eyebrow">Review queue</span>
+          <h3 id="version-review-title">Review content versions</h3>
+          <p>
+            Each concept is taught in three versions. Text from a second PDF is used where it
+            exists; the rest is generated and should be read before publishing.
+          </p>
+        </div>
+        <span className="connection-source-count">{chunks.length} concepts</span>
+      </div>
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
+        <span className="is-complete">1</span>
+        <div aria-hidden="true" />
+        <span className="is-active">2</span>
+        <div aria-hidden="true" />
+        <span>3</span>
+        <div aria-hidden="true" />
+        <span>4</span>
+        <strong>Content versions</strong>
+      </div>
+
+      {!chunks.length ? (
+        <div className="review-queue-empty">No concepts to review yet.</div>
+      ) : (
+        <>
+          <ReviewQueueNavigator
+            index={chunkIndex}
+            count={chunks.length}
+            onChange={setChunkIndex}
+            disabled={Boolean(busyAction)}
+            itemLabel="Concept"
+          />
+
+          <h4 className="version-chunk-title">{representative?.title || "Untitled concept"}</h4>
+
+          {(versions?.needs_confirmation || []).map((pending) => {
+            const candidate = chunk.learning_objects.find(
+              (item) => Number(item.id) === Number(pending.learning_object_id),
+            );
+            if (!candidate) return null;
+            return (
+              <div className="version-pending-decision" key={pending.learning_object_id}>
+                <p>
+                  A second PDF also teaches this. Its wording is too close to call automatically
+                  &mdash; where does it belong?
+                </p>
+                <blockquote>{candidate.content}</blockquote>
+                <div className="version-slot-actions">
+                  {["SIMPLIFIED", "ELABORATED", "EXTRA"].map((slot) => (
+                    <button
+                      type="button"
+                      key={slot}
+                      className={slot === "EXTRA" ? "btn btn-secondary btn-small" : "btn btn-primary btn-small"}
+                      disabled={Boolean(busyAction)}
+                      onClick={() => onAssignSlot(pending.learning_object_id, slot)}
+                    >
+                      {slot === "SIMPLIFIED" ? "This is simpler"
+                        : slot === "ELABORATED" ? "This is fuller"
+                        : "Keep as extra"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="version-slot-grid">
+            <VersionSlotCard
+              slotKey="original"
+              heading="Original"
+              text={representative?.content}
+              originLabel={`From ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`}
+              readOnly
+              busy={false}
+            />
+            {["simplified", "elaborated"].map((slotKey) => {
+              const entry = versions?.slots?.[slotKey];
+              const busyKey = entry
+                ? `version-edit-${entry.id}`
+                : `version-generate-${versions?.representative_id}`;
+              return (
+                <VersionSlotCard
+                  key={slotKey}
+                  slotKey={slotKey}
+                  heading={slotKey === "simplified" ? "Simplified" : "Elaborated"}
+                  entry={entry}
+                  text={entry?.text}
+                  originLabel={versionOriginLabel(entry, materialTitleFor(entry))}
+                  busy={busyAction === busyKey}
+                  isEditing={editingSlot === slotKey}
+                  onBeginEdit={() => setEditingSlot(slotKey)}
+                  onCancelEdit={() => setEditingSlot(null)}
+                  onSave={async (narration) => {
+                    const done = await onEditVersion(entry.id, narration);
+                    if (done) setEditingSlot(null);
+                  }}
+                  onGenerate={() => onGenerate(versions.representative_id)}
+                />
+              );
+            })}
+          </div>
+
+          {(versions?.extras || []).length > 0 && (
+            <div className="version-extra-block">
+              <h5>Extra versions</h5>
+              <p>
+                Kept for the learning path to use later. They are not shown to students as one of
+                the three versions.
+              </p>
+              {versions.extras.map((entry) => (
+                <VersionSlotCard
+                  key={entry.id}
+                  slotKey="extra"
+                  heading="Extra"
+                  entry={entry}
+                  text={entry.text}
+                  originLabel={versionOriginLabel(entry, materialTitleFor(entry))}
+                  readOnly
+                  busy={false}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="review-step-actions-row">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={Boolean(busyAction)}
+          onClick={() => onReviewStepChange("objects")}
+        >
+          Back to object pairs
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={Boolean(busyAction)}
+          onClick={() => onReviewStepChange("questions")}
+        >
+          Next step: Question pairs
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1158,12 +1436,14 @@ ${question.prompt}`,
           {groups.length} concept{groups.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="review-step-indicator has-three-steps" aria-label="Review progress">
+      <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
         <div aria-hidden="true" />
         <span className="is-complete">2</span>
         <div aria-hidden="true" />
-        <span className="is-active">3</span>
+        <span className="is-complete">3</span>
+        <div aria-hidden="true" />
+        <span className="is-active">4</span>
         <strong>Publish</strong>
       </div>
 
@@ -1477,6 +1757,70 @@ function LearningObjectConnections({
       onError(err.message);
     } finally {
       console.groupEnd();
+      setBusyAction("");
+    }
+  }
+
+  async function assignVersion(learningObjectId, slot) {
+    setBusyAction(`version-assign-${learningObjectId}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = await assignVersionSlot(courseId, topicId, learningObjectId, slot);
+      setResources(data);
+      onMessage(
+        slot === "EXTRA"
+          ? "Kept as an extra version for the learning path."
+          : `Set as the ${slot.toLowerCase()} version.`,
+      );
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  // One object per request. The model takes minutes, so the button this drives
+  // says so rather than looking hung.
+  async function generateVersions(learningObjectId) {
+    setBusyAction(`version-generate-${learningObjectId}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = await generateObjectVersions(courseId, topicId, learningObjectId);
+      setResources(data);
+      const result = data.version_generation || {};
+      if (result.errors?.length) {
+        onError(result.errors[0].detail || "Version generation failed.");
+      } else if (result.generated?.length) {
+        onMessage(`Wrote the ${result.generated.map((s) => s.toLowerCase()).join(" and ")} version.`);
+      } else {
+        onMessage("Both versions already exist.");
+      }
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function saveVersionText(variantId, narration) {
+    setBusyAction(`version-edit-${variantId}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = await editVersionText(courseId, topicId, variantId, narration);
+      setResources(data);
+      onMessage("Version wording updated.");
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
       setBusyAction("");
     }
   }
@@ -1799,6 +2143,17 @@ function LearningObjectConnections({
           pendingQuestionCount={questionReviewQueue.length}
           onReviewStepChange={onReviewStepChange}
           onReview={reviewMatchSuggestion}
+        />
+      )}
+      {reviewStep === "versions" && (
+        <VersionReviewPanel
+          groups={groups}
+          materialById={materialById}
+          busyAction={busyAction}
+          onReviewStepChange={onReviewStepChange}
+          onAssignSlot={assignVersion}
+          onGenerate={generateVersions}
+          onEditVersion={saveVersionText}
         />
       )}
       {reviewStep === "questions" && (
@@ -2893,7 +3248,7 @@ export default function TopicDetailPage() {
                 Selected module/topic: {selectedModule?.title || topic.title} / {topic.title}
               </p>
             </div>
-            {!(activeSource === "connections" && connectionReviewStep === "questions") && (
+            {!(activeSource === "connections" && ["versions", "questions"].includes(connectionReviewStep)) && (
               <label className="btn btn-primary">
                 {uploading ? "Processing..." : "Upload PDF"}
                 <input

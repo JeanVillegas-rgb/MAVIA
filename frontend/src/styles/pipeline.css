@@ -5196,3 +5196,140 @@ button {
   border-radius: 6px;
   border: 1px solid var(--line, #d9dee7);
 }
+
+.review-step-indicator.has-four-steps {
+  grid-template-columns:
+    auto minmax(0.6rem, 1fr) auto minmax(0.6rem, 1fr)
+    auto minmax(0.6rem, 1fr) auto;
+}
+
+/* --- Content versions review ------------------------------------------- */
+
+.version-chunk-title {
+  margin: 1rem 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.version-slot-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.version-slot {
+  border: 1px solid var(--line, #e2e6ee);
+  border-left: 4px solid #c9d1e0;
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  background: #fff;
+}
+
+/* Each slot is colour-coded on its left edge so a teacher can tell the three
+   versions apart at a glance without reading the labels every time. */
+.version-slot.is-original { border-left-color: #4a6da7; }
+.version-slot.is-simplified { border-left-color: #3f8f5f; }
+.version-slot.is-elaborated { border-left-color: #8a6d3b; }
+.version-slot.is-extra { border-left-color: #9aa2b1; background: #fafbfc; }
+
+.version-slot-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.version-slot-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #35405a;
+}
+
+.version-slot-label.is-original { background: #e6ecf7; color: #29406b; }
+.version-slot-label.is-simplified { background: #e2f2e8; color: #1f5c39; }
+.version-slot-label.is-elaborated { background: #f4ecdc; color: #6a5326; }
+.version-slot-label.is-extra { background: #eceef1; color: #4d545f; }
+
+.version-slot-origin {
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+.version-slot-text {
+  margin: 0 0 0.55rem;
+  font-size: 0.93rem;
+  line-height: 1.5;
+}
+
+.version-slot-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.version-slot-editor textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line, #d9dee7);
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}
+
+.version-slot-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.version-slot-empty p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+/* A pair the heuristic could not call. Both texts are shown so the teacher
+   decides from the content, not from a score. */
+.version-pending-decision {
+  border: 1px solid #e6dfcf;
+  background: #fbf8f1;
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.85rem;
+}
+
+.version-pending-decision p {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.version-pending-decision blockquote {
+  margin: 0 0 0.6rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid #ddd3bd;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.version-extra-block {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px dashed var(--line, #dfe3ea);
+}
+
+.version-extra-block h5 {
+  margin: 0 0 0.25rem;
+  font-size: 0.9rem;
+}
+
+.version-extra-block > p {
+  margin: 0 0 0.6rem;
+  color: #6b7280;
+  font-size: 0.82rem;
+}

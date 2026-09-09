@@ -394,3 +394,28 @@ export function searchStudents(query = "") {
   const q = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
   return request(`/adaptive-portal/students/${q}`);
 }
+
+export function assignVersionSlot(courseId, nodeId, learningObjectId, slot) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/version-assignment/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learning_object_id: learningObjectId, slot }),
+  });
+}
+
+// One object at a time: a single Gemma call runs for minutes, so this request
+// is deliberately slow and the caller must show that it is working.
+export function generateObjectVersions(courseId, nodeId, learningObjectId) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/generate-versions/`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+  );
+}
+
+export function editVersionText(courseId, nodeId, variantId, narration) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/versions/${variantId}/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ narration }),
+  });
+}
