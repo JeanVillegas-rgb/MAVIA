@@ -3857,6 +3857,47 @@ button {
   overflow: hidden;
 }
 
+/* "Next step: Question pairs" is the last child of this aside, which clips its
+   overflow. On a normal laptop (1536x864) the heading, step indicator, intro,
+   navigator and the clamped review card together fill the panel exactly, so the
+   button renders one pixel below the visible edge and cannot be seen or
+   clicked. That makes step 1 look mandatory when nothing in the code gates it.
+   Lay the panel out as a column instead: the card list takes the leftover
+   space and scrolls, and the action row stays pinned in view at any height. */
+.connection-review-layout.has-recommendations > .match-suggestion-panel.panel-aside {
+  display: flex;
+  flex-direction: column;
+}
+
+.connection-review-layout.has-recommendations
+  > .panel-aside
+  > .match-suggestion-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+}
+
+.connection-review-layout.has-recommendations
+  > .panel-aside
+  > .match-suggestion-list
+  > .match-suggestion-card {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.connection-review-layout.has-recommendations
+  > .panel-aside
+  > .review-step-actions-next {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f0e3c4;
+}
+
 .match-suggestion-heading {
   align-items: flex-start;
 }
@@ -4620,6 +4661,44 @@ button {
   overflow: hidden;
 }
 
+/* The inline question editor adds children the fixed-height grid was never
+   sized for. `.question-review-card` declares four rows (meta, prompt,
+   scrolling suggestion, actions); opening the editor inserts the form as a
+   fifth, so the actions row spills into an implicit row past the clamped
+   height and `overflow: hidden` swallows it — taking "Save question",
+   "Cancel", "Approve" and "Decline" with it.
+   While editing, drop the fixed height and let the card size to its content so
+   the page scrolls instead of the buttons disappearing. */
+.question-review-list.is-editing,
+.question-review-list.is-editing .question-review-card,
+.question-review-card.is-editing-content {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.question-review-card.is-editing-content {
+  grid-template-rows: none;
+}
+
+/* The suggestion pane only needs its own scrollbar while it is competing for a
+   fixed height. Once the card grows, a nested scroller just hides content. */
+.question-review-card.is-editing-content .question-review-suggestion {
+  max-height: none;
+  overflow: visible;
+}
+
+/* Keep the editor's own controls obvious and reachable. */
+.question-inline-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid #e7ecef;
+}
+
 .match-suggestion-card {
   grid-template-rows: auto minmax(0, 1fr) auto;
   align-items: stretch;
@@ -5027,3 +5106,93 @@ button {
 .question-generation-tool select { width: 100%; border: 1px solid #bccde0; border-radius: 0.5rem; padding: 0.58rem; background: white; }
 .question-inline-editor-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 .question-generation-tool p { margin: 0; color: #526a86; }
+
+/* Reviewed questions leave the queue but stay reachable: a teacher who
+   declined by mistake needs somewhere to find it again. Collapsed by default
+   so the queue itself stays the focus. */
+.reviewed-question-block {
+  margin-top: 1.25rem;
+  border: 1px solid var(--line, #d9dee7);
+  border-radius: 10px;
+  background: var(--surface-muted, #f7f8fb);
+}
+
+.reviewed-question-block > summary {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reviewed-count {
+  font-weight: 500;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--line, #d9dee7);
+}
+
+.reviewed-question-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 1rem 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.reviewed-question-row {
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line, #e4e8ef);
+}
+
+.reviewed-question-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.reviewed-question-prompt {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+}
+
+.reviewed-status-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #e7ecf5;
+  color: #35405a;
+}
+
+/* Each outcome reads differently at a glance: teacher decisions are stronger
+   than the automatic pairing, and "unpaired" must not look like a failure. */
+.reviewed-status-chip.is-auto_confirmed { background: #e8eef8; color: #2f4a76; }
+.reviewed-status-chip.is-teacher_confirmed { background: #dff3e6; color: #1d5c34; }
+.reviewed-status-chip.is-teacher_unpaired { background: #f1ece0; color: #6a5326; }
+
+.reviewed-question-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.reviewed-question-picker {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.reviewed-question-picker select {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--line, #d9dee7);
+}

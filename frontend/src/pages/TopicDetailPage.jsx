@@ -384,6 +384,30 @@ function ObjectPairsPanel({
 }
 
 
+// A question leaves the review queue as soon as the teacher has ruled on it.
+// Declining sets `teacher_unpaired`, which is a decision -- not an unreviewed
+// state -- so it must not keep the question in the queue. `auto_confirmed`
+// never needed a teacher at all. Exported so the classification can be tested
+// without rendering the panel.
+export const PENDING_REVIEW_STATUSES = ["pending_review", "unmatched"];
+
+export function questionReviewState(question) {
+  const link = question?.learning_object_links?.[0];
+  const status = link?.review_status || "unmatched";
+  const isPending = PENDING_REVIEW_STATUSES.includes(status);
+  let label = "Needs review";
+  if (status === "auto_confirmed") {
+    label = "Auto-paired";
+  } else if (status === "teacher_confirmed") {
+    label = link?.method === "teacher_selected" ? "Moved" : "Paired";
+  } else if (status === "teacher_unpaired") {
+    label = "Unpaired";
+  } else if (status === "unmatched") {
+    label = "No confident match";
+  }
+  return { status, isPending, label };
+}
+
 function ReviewQueuePanel({
   questionPairings,
   groups,
@@ -398,11 +422,23 @@ function ReviewQueuePanel({
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [questionIndex, setQuestionIndex] = useState(0);
 
-  useEffect(() => {
-    setQuestionIndex((current) => Math.max(0, Math.min(current, questionPairings.length - 1)));
-  }, [questionPairings.length]);
+  const pendingQuestions = useMemo(
+    () => questionPairings.filter((question) => questionReviewState(question).isPending),
+    [questionPairings],
+  );
+  const reviewedQuestions = useMemo(
+    () => questionPairings.filter((question) => !questionReviewState(question).isPending),
+    [questionPairings],
+  );
 
-  const currentQuestionId = questionPairings[questionIndex]?.id;
+  // Acting on a question removes it from `pendingQuestions`, so whatever came
+  // next shifts into the current index -- holding the index still is what
+  // advances the queue. Only the final item needs the clamp.
+  useEffect(() => {
+    setQuestionIndex((current) => Math.max(0, Math.min(current, pendingQuestions.length - 1)));
+  }, [pendingQuestions.length]);
+
+  const currentQuestionId = pendingQuestions[questionIndex]?.id;
   useEffect(() => {
     setEditingQuestionId(null);
     setSelectedGroupId("");
@@ -424,7 +460,7 @@ function ReviewQueuePanel({
             Review one uncertain question at a time. Accept the suggested concept, change it, or decline it.
           </p>
         </div>
-        <span className="connection-source-count">{questionPairings.length} to review</span>
+        <span className="connection-source-count">{pendingQuestions.length} to review</span>
       </div>
       <div className="review-step-indicator has-three-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
@@ -435,19 +471,23 @@ function ReviewQueuePanel({
         <strong>Question pairs</strong>
       </div>
 
-      {!questionPairings.length ? (
-        <div className="review-queue-empty">No question pairs need review.</div>
+      {!pendingQuestions.length ? (
+        <div className="review-queue-empty">
+          {reviewedQuestions.length
+            ? "All question pairs reviewed."
+            : "No question pairs need review."}
+        </div>
       ) : (
         <>
       <ReviewQueueNavigator
         index={questionIndex}
-        count={questionPairings.length}
+        count={pendingQuestions.length}
         onChange={setQuestionIndex}
         disabled={Boolean(busyAction)}
         itemLabel="Question pair"
       />
-      <div className="question-review-list">
-        {questionPairings.map((question, index) => {
+      <div className={`question-review-list ${editingContentId ? "is-editing" : ""}`.trim()}>
+        {pendingQuestions.map((question, index) => {
           const link = question.learning_object_links?.[0];
           const suggestedGroup = groups.find(
             (group) => Number(group.id) === Number(link?.learning_object_group_id),
@@ -467,7 +507,11 @@ function ReviewQueuePanel({
           const isApproved = ["auto_confirmed", "teacher_confirmed"].includes(pairingStatus);
           return (
           <article
-            className={`question-review-card ${index === questionIndex ? "" : "is-hidden"}`.trim()}
+            className={[
+              "question-review-card",
+              index === questionIndex ? "" : "is-hidden",
+              editingContentId === question.id ? "is-editing-content" : "",
+            ].filter(Boolean).join(" ")}
             key={question.id}
           >
             <div className="question-review-meta">
@@ -617,6 +661,92 @@ function ReviewQueuePanel({
       </div>
         </>
       )}
+
+      {reviewedQuestions.length > 0 && (
+        <details className="reviewed-question-block">
+          <summary>
+            Reviewed questions
+            <span className="reviewed-count">{reviewedQuestions.length}</span>
+          </summary>
+          <ul className="reviewed-question-list">
+            {reviewedQuestions.map((question) => {
+              const { status, label } = questionReviewState(question);
+              const link = question.learning_object_links?.[0];
+              const group = groups.find(
+                (item) => Number(item.id) === Number(link?.learning_object_group_id),
+              );
+              const conceptLabel = status === "teacher_unpaired"
+                ? "Not attached to a concept"
+                : group?.label
+                  || group?.learning_objects?.[0]?.title
+                  || link?.learning_object_title
+                  || "No concept";
+              return (
+                <li key={question.id} className="reviewed-question-row">
+                  <div className="reviewed-question-head">
+                    <span className={`reviewed-status-chip is-${status}`}>{label}</span>
+                    <small>{conceptLabel}</small>
+                  </div>
+                  <p className="reviewed-question-prompt">{question.prompt}</p>
+                  {editingQuestionId === question.id ? (
+                    <div className="reviewed-question-picker">
+                      <select
+                        aria-label="Move to concept"
+                        value={selectedGroupId}
+                        onChange={(event) => setSelectedGroupId(event.target.value)}
+                      >
+                        <option value="">Select a concept...</option>
+                        {groups.map((group) => (
+                          <option value={group.id} key={group.id}>
+                            {group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="reviewed-question-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => setEditingQuestionId(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-small"
+                          disabled={!selectedGroupId || Boolean(busyAction)}
+                          onClick={async () => {
+                            const completed = await onReviewQuestion(
+                              question,
+                              "change",
+                              selectedGroupId,
+                            );
+                            if (completed) setEditingQuestionId(null);
+                          }}
+                        >
+                          {busyAction === `question-change-${question.id}` ? "Saving..." : "Move"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="reviewed-question-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        disabled={Boolean(busyAction)}
+                        onClick={() => beginConceptChange(question)}
+                      >
+                        Change concept
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
+
       <div className="review-step-actions-row">
         <button
           type="button"
