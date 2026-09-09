@@ -242,12 +242,28 @@ def _build_chunk(learning_object):
 
     normal = normal_variant_for(learning_object)
     if normal:
-        variants["normal"] = {"text": normal["narration"], "audio_url": normal["audio_url"]}
+        variants["normal"] = {
+            "text": normal["narration"],
+            "audio_url": normal["audio_url"],
+            "origin": "original",
+        }
     else:
-        variants["normal"] = {"text": learning_object.content, "audio_url": ""}
+        variants["normal"] = {
+            "text": learning_object.content,
+            "audio_url": "",
+            "origin": "original",
+        }
 
-    for row in learning_object.variants.all(): 
-        variants[row.variant.lower()] = {"text": row.narration, "audio_url": row.audio_url}
+    for row in learning_object.variants.all():
+        # Extras are retained for the interaction pipeline to rule on later.
+        # They are not one of the three versions a student is offered.
+        if row.variant == "EXTRA":
+            continue
+        variants[row.variant.lower()] = {
+            "text": row.narration,
+            "audio_url": row.audio_url,
+            "origin": row.origin,
+        }
 
     return {
         "id": learning_object.id,
@@ -255,6 +271,7 @@ def _build_chunk(learning_object):
         "order": learning_object.order,
         "title": learning_object.title,
         "variants": variants,
+        "versions_complete": {"simplified", "elaborated"}.issubset(variants.keys()),
     }
 
 
@@ -283,7 +300,9 @@ class LessonPackageService:
 
         sync_module_questions(node)
 
-        learning_objects = list(node.learning_objects.order_by("order", "id"))
+        learning_objects = list(
+            node.learning_objects.filter(represented_by__isnull=True).order_by("order", "id")
+        )
         chunks = [_build_chunk(lo) for lo in learning_objects]
 
         module_questions = node.module_questions.select_related("question").order_by("order", "id")
