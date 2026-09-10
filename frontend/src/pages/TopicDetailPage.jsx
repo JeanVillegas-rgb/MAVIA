@@ -3177,7 +3177,10 @@ export default function TopicDetailPage() {
   );
   const pendingLessonMaterials = useMemo(
     () => lessonMaterials.filter(
-      (material) => !material.generated_json?.learning_objects_confirmed,
+      (material) => (
+        material.status !== "failed"
+        && !material.generated_json?.learning_objects_confirmed
+      ),
     ),
     [lessonMaterials],
   );
