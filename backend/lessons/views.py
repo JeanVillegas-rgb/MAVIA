@@ -271,6 +271,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     "outline_node_id": node.id,
                     "versions": {
                         "representative_id": version_state["representative_id"],
+                        "original_selected": version_state.get("original_selected", False),
                         "slots": slot_rows,
                         "extras": extra_rows,
                         "needs_confirmation": version_state["needs_confirmation"],

@@ -59,6 +59,7 @@ class VersionAssignmentTests(TestCase):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
         classify.return_value = {
+            first.id: {"slot": "ORIGINAL", "confidence": 0.93, "reason": "Balanced."},
             second.id: {"slot": "ELABORATED", "confidence": 0.94, "reason": "More explanation."}
         }
 
@@ -80,6 +81,7 @@ class VersionAssignmentTests(TestCase):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
         classify.return_value = {
+            first.id: {"slot": "ORIGINAL", "confidence": 0.93, "reason": "Balanced."},
             second.id: {"slot": "SIMPLIFIED", "confidence": 0.99, "reason": "Model guess."}
         }
 
@@ -88,6 +90,24 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(result["assigned"], [])
         self.assertEqual(result["needs_confirmation"][0]["llm_slot"], "SIMPLIFIED")
         self.assertFalse(LessonVariant.objects.exists())
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_grouped_original_is_selected_by_llm_not_upload_order(self, classify):
+        first = self._object(self._material("PDF one", 0), SHORT)
+        second = self._object(self._material("PDF two", 5), LONG)
+        classify.return_value = {
+            first.id: {"slot": "SIMPLIFIED", "confidence": 0.96, "reason": "Clearer."},
+            second.id: {"slot": "ORIGINAL", "confidence": 0.94, "reason": "Balanced."},
+        }
+
+        result = assign_group_versions(self.group, use_llm=True)
+
+        self.assertEqual(result["representative_id"], second.id)
+        simplified = LessonVariant.objects.get(
+            learning_object=second,
+            variant="SIMPLIFIED",
+        )
+        self.assertEqual(simplified.source_learning_object, first)
 
     def test_thin_margin_is_routed_to_the_teacher_not_stored(self):
         first = self._object(self._material("PDF one", 0), SHORT)
@@ -113,6 +133,7 @@ class VersionAssignmentTests(TestCase):
         )
 
         classify.return_value = {
+            first.id: {"slot": "ORIGINAL", "confidence": 0.93, "reason": "Balanced."},
             bigger.id: {"slot": "ELABORATED", "confidence": 0.96, "reason": "Fuller."},
             smaller.id: {"slot": "ELABORATED", "confidence": 0.91, "reason": "Also fuller."},
         }
@@ -132,9 +153,10 @@ class VersionAssignmentTests(TestCase):
 
     @patch("course.version_assignment.classify_group_versions")
     def test_reassignment_is_idempotent(self, classify):
-        self._object(self._material("PDF one", 0), SHORT)
+        first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
         classify.return_value = {
+            first.id: {"slot": "ORIGINAL", "confidence": 0.93, "reason": "Balanced."},
             second.id: {"slot": "ELABORATED", "confidence": 0.95, "reason": "Fuller."}
         }
 

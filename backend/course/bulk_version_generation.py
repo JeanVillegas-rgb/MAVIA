@@ -17,7 +17,11 @@ def generate_all_missing_versions(outline_node, on_event=None):
     for group in groups:
         state = assign_group_versions(group, use_llm=True)
         representative_id = state["representative_id"]
-        if representative_id is None or representative_id in seen:
+        if (
+            representative_id is None
+            or representative_id in seen
+            or not state.get("original_selected")
+        ):
             continue
         representative = group.learning_objects.filter(pk=representative_id).first()
         if representative is None or not (representative.content or "").strip():

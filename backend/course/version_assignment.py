@@ -22,12 +22,7 @@ PRIMARY_SLOTS = ("SIMPLIFIED", "ELABORATED")
 
 
 def choose_representative(members):
-    """The earliest-uploaded member. Ties break on material id, then object id.
-
-    Deterministic ordering matters: the representative decides which object
-    survives as a teaching step, and a reshuffle on every refresh would churn
-    question links and the prerequisite graph.
-    """
+    """Return a stable display fallback before a grouped original is classified."""
     return sorted(
         members,
         key=lambda item: (item.material.created_at, item.material_id, item.id),
@@ -49,12 +44,53 @@ def assign_group_versions(group, *, use_llm=False):
     if len(members) < 2:
         return {
             "representative_id": members[0].id if members else None,
+            "original_selected": bool(members),
             "assigned": [],
             "needs_confirmation": [],
             "extras": 0,
+            "classification_error": "",
         }
 
-    representative = choose_representative(members)
+    member_ids = {item.id for item in members}
+    # Once source/generated slots have been stored, their owner is the durable
+    # original. This prevents a later refresh from silently reshuffling the
+    # learning path. Before that first classification, upload order is only a
+    # UI fallback and is not treated as a version decision.
+    stored_owner_id = (
+        LessonVariant.objects.filter(learning_object_id__in=member_ids)
+        .order_by("-assigned_by", "id")
+        .values_list("learning_object_id", flat=True)
+        .first()
+    )
+    representative = next(
+        (item for item in members if item.id == stored_owner_id),
+        None,
+    )
+    original_selected = representative is not None
+    classifications = {}
+    classification_error = ""
+
+    if use_llm and representative is None:
+        try:
+            classifications = classify_group_versions(members)
+            original_id = next(
+                item_id
+                for item_id, result in classifications.items()
+                if result["slot"] == "ORIGINAL"
+            )
+            representative = next(item for item in members if item.id == original_id)
+            original_selected = True
+        except (VersionClassificationError, StopIteration) as exc:
+            classification_error = str(exc)
+            logger.warning(
+                "Content-version classification failed: group=%s model=%s error=%s",
+                group.id,
+                settings.CONTENT_VERSION_LLM_MODEL,
+                exc,
+            )
+
+    if representative is None:
+        representative = choose_representative(members)
     candidates = [item for item in members if item.id != representative.id]
 
     # A teacher decision (and an earlier confident automatic decision) is
@@ -73,15 +109,13 @@ def assign_group_versions(group, *, use_llm=False):
         if current is None or (current.variant == "EXTRA" and row.variant in PRIMARY_SLOTS):
             stored_by_source[row.source_learning_object_id] = row
 
-    unresolved = [
-        item for item in candidates
-        if item.id not in stored_by_source
-    ]
-    classifications = {}
-    classification_error = ""
-    if use_llm and unresolved:
+    unresolved = [item for item in candidates if item.id not in stored_by_source]
+    if use_llm and unresolved and not classifications and original_selected:
         try:
-            classifications = classify_group_versions(representative, unresolved)
+            classifications = classify_group_versions(
+                unresolved,
+                representative=representative,
+            )
         except VersionClassificationError as exc:
             classification_error = str(exc)
             logger.warning(
@@ -162,6 +196,7 @@ def assign_group_versions(group, *, use_llm=False):
 
     return {
         "representative_id": representative.id,
+        "original_selected": original_selected,
         "assigned": assigned,
         "needs_confirmation": needs_confirmation,
         "extras": extras,
@@ -265,6 +300,13 @@ def settle_group(group):
     outcome = assign_group_versions(group, use_llm=True)
     if outcome["representative_id"] is None:
         return {**outcome, "generated": [], "errors": []}
+    if not outcome.get("original_selected"):
+        detail = outcome.get("classification_error") or "Gemma did not select an original version."
+        return {
+            **outcome,
+            "generated": [],
+            "errors": [{"learning_object_id": None, "detail": detail}],
+        }
 
     members = {item.id: item for item in group.learning_objects.select_related("material")}
     representative = members[outcome["representative_id"]]

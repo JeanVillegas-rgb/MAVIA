@@ -1049,9 +1049,11 @@ function VersionReviewPanel({
           <div className="version-slot-grid">
             <VersionSlotCard
               slotKey="original"
-              heading="Original"
+              heading={versions?.original_selected ? "Original" : "Original candidate"}
               text={representative?.content}
-              originLabel={`From ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`}
+              originLabel={versions?.original_selected
+                ? `Selected from ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`
+                : "Gemma will choose the original when versions are generated"}
               readOnly
               busy={false}
             />

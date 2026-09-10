@@ -23,9 +23,9 @@ class VersionClassifierTests(SimpleTestCase):
                 }
             ]
         })
-        self.assertEqual(_parse(raw, {2})[2]["slot"], "SIMPLIFIED")
+        self.assertEqual(_parse(raw, {2}, require_original=False)[2]["slot"], "SIMPLIFIED")
         with self.assertRaises(VersionClassificationError):
-            _parse(raw, {2, 3})
+            _parse(raw, {2, 3}, require_original=False)
 
     @override_settings(
         CONTENT_VERSION_LLM_ENABLED=True,
@@ -38,12 +38,20 @@ class VersionClassifierTests(SimpleTestCase):
     def test_request_uses_structured_low_temperature_output(self, post):
         post.return_value.json.return_value = {
             "response": json.dumps({
-                "assignments": [{
-                    "learning_object_id": 2,
-                    "slot": "ELABORATED",
-                    "confidence": 0.88,
-                    "reason": "Contains a fuller explanation.",
-                }]
+                "assignments": [
+                    {
+                        "learning_object_id": 1,
+                        "slot": "ORIGINAL",
+                        "confidence": 0.92,
+                        "reason": "Balanced baseline.",
+                    },
+                    {
+                        "learning_object_id": 2,
+                        "slot": "ELABORATED",
+                        "confidence": 0.88,
+                        "reason": "Contains a fuller explanation.",
+                    },
+                ]
             })
         }
         representative = SimpleNamespace(id=1, title="Solid", content="A solid keeps its shape.")
@@ -53,7 +61,7 @@ class VersionClassifierTests(SimpleTestCase):
             content="A solid keeps its shape because its particles remain closely packed.",
         )
 
-        result = classify_group_versions(representative, [candidate])
+        result = classify_group_versions([representative, candidate])
 
         self.assertEqual(result[2]["slot"], "ELABORATED")
         request_json = post.call_args.kwargs["json"]

@@ -34,14 +34,17 @@ class RepresentationTests(TestCase):
         classifier_patcher = patch("course.version_assignment.classify_group_versions")
         self.classify_group_versions = classifier_patcher.start()
         self.addCleanup(classifier_patcher.stop)
-        self.classify_group_versions.side_effect = lambda representative, candidates: {
-            item.id: {
-                "slot": "ELABORATED",
-                "confidence": 0.95,
-                "reason": "More detailed than the original.",
+        def classify(members, representative=None):
+            original = representative or members[0]
+            return {
+                item.id: {
+                    "slot": "ORIGINAL" if item.id == original.id else "ELABORATED",
+                    "confidence": 0.95,
+                    "reason": "Balanced original." if item.id == original.id else "More detailed.",
+                }
+                for item in members
             }
-            for item in candidates
-        }
+        self.classify_group_versions.side_effect = classify
         self.course = CourseGroup.objects.create(title="Grade 1 Science")
         self.node = OutlineNode.objects.create(
             course=self.course, title="Matter", order=0, depth=0
@@ -83,6 +86,33 @@ class RepresentationTests(TestCase):
         self.assertEqual(elaborated.origin, "source_pdf")
         simplified = LessonVariant.objects.get(learning_object=self.first, variant="SIMPLIFIED")
         self.assertEqual(simplified.origin, "generated")
+
+    @patch("course.variant_generator._request_variants")
+    def test_llm_selects_original_and_only_missing_slot_is_generated(self, request_variants):
+        self.classify_group_versions.side_effect = None
+        self.classify_group_versions.return_value = {
+            self.first.id: {"slot": "SIMPLIFIED", "confidence": 0.96, "reason": "Clearer."},
+            self.second.id: {"slot": "ORIGINAL", "confidence": 0.94, "reason": "Balanced."},
+        }
+        request_variants.return_value = {
+            "SIMPLIFIED": "ignored",
+            "ELABORATED": "A fuller generated explanation.",
+        }
+
+        result = settle_group(self.group)
+
+        self.assertEqual(result["representative_id"], self.second.id)
+        self.assertEqual(result["generated"], ["ELABORATED"])
+        simplified = LessonVariant.objects.get(
+            learning_object=self.second,
+            variant="SIMPLIFIED",
+        )
+        self.assertEqual(simplified.source_learning_object, self.first)
+        elaborated = LessonVariant.objects.get(
+            learning_object=self.second,
+            variant="ELABORATED",
+        )
+        self.assertEqual(elaborated.origin, "generated")
 
     @patch("course.variant_generator._request_variants")
     def test_release_takes_back_its_own_text_and_drops_generated_rows(self, request_variants):
