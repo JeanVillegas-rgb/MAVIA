@@ -265,26 +265,28 @@ class LearningPathTests(LearningObjectFixtureMixin, TestCase):
                     order[prerequisite_id], order[step["learning_object_id"]]
                 )
 
-    def test_path_is_not_a_copy_of_the_source_document_order(self):
-        # "Weather" arrives last in the PDF but depends on nothing, so the depth
-        # tie-breaker must hoist it above the comparison passage.
-        self._object(0, "Matter", "Matter is anything that has mass.")
-        self._object(1, "Solid", "A solid is matter with a definite shape.")
-        self._object(2, "Liquid", "A liquid is matter that flows freely.")
-        self._object(
-            3,
-            "Shape",
-            "Solids keep their shape while liquids take the shape of the container.",
-            section_title="Comparing the States",
-        )
-        self._object(4, "Weather", "Rain, wind and sunshine change from day to day.")
+    def test_path_follows_the_source_document_order(self):
+        """The author's sequence teaches; the graph supplies dependencies.
+
+        Every edge runs forward through the material, so document order is
+        always a valid topological order. Following it cannot violate a
+        prerequisite, and it keeps unvalidated criteria from overriding a
+        sequence a curriculum author chose.
+        """
+        for index, (title, content) in enumerate([
+            ("Matter", "Matter is anything that has mass."),
+            ("Solid", "A solid is matter with a definite shape."),
+            ("Ice", "Ice is a solid form of water."),
+        ]):
+            self._object(index, title, content)
 
         result = build_learning_path(self.material.id)
-        self.assertFalse(result["diagnostics"]["matches_source_order"])
-        self.assertGreater(result["diagnostics"]["displaced_object_count"], 0)
 
-        titles = [step["title"] for step in result["steps"]]
-        self.assertLess(titles.index("Weather"), titles.index("Shape"))
+        self.assertEqual(
+            [step["title"] for step in result["steps"]], ["Matter", "Solid", "Ice"]
+        )
+        self.assertTrue(result["diagnostics"]["matches_source_order"])
+
 
     def test_foundational_definition_is_taught_before_its_subtypes(self):
         self._object(0, "Matter", "Matter is anything that has mass and occupies space.")

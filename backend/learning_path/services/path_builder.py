@@ -57,12 +57,23 @@ def build_learning_path(material_id, *, rebuild=False):
     edge_pairs, edge_weights = _edges_and_weights(edge_rows)
     ranks = build_first_mention_ranks(learning_objects)
 
-    ordered_ids, depth_by_id = kahn_topological_order(
+    # Kahn's is still run, for two things the graph alone gives us: the depth
+    # layer of each object, and detection of a cycle. It no longer decides the
+    # teaching order.
+    #
+    # Every derived edge is forced to run forward through the material, so the
+    # document's own order is always a valid topological order of this graph.
+    # Teaching in it therefore cannot violate a prerequisite -- and it stops
+    # criteria that have never been evaluated from overriding a sequence a
+    # curriculum author chose deliberately. The graph's job is to say what
+    # depends on what, which is what remediation needs.
+    _, depth_by_id = kahn_topological_order(
         node_ids,
         edge_pairs,
         first_mention_rank=ranks,
         edge_weights=edge_weights,
     )
+    ordered_ids = node_ids  # already sorted by (order, id)
     confidence_by_id = mean_incoming_confidence(node_ids, edge_pairs, edge_weights)
 
     prerequisites_by_id = {node_id: [] for node_id in node_ids}
@@ -117,6 +128,7 @@ def build_learning_path(material_id, *, rebuild=False):
             "edge_count": len(edge_pairs),
             "root_count": sum(1 for step in steps if step["prerequisite_count"] == 0),
             "max_depth": max(depth_by_id.values(), default=0),
+            "ordering": "document",
             "source_order": source_order_ids,
             "matches_source_order": ordered_ids == source_order_ids,
             "displaced_object_count": sum(

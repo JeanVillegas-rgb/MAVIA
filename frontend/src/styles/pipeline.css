@@ -5562,3 +5562,23 @@ button {
   max-height: 18rem;
   overflow-y: auto;
 }
+
+.path-view-toggle {
+  display: flex;
+  gap: 0.35rem;
+}
+
+/* React Flow needs an explicit height or it collapses to nothing. */
+.path-graph {
+  height: 30rem;
+  border: 1px solid var(--line, #e2e6ee);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 0.6rem;
+  background: #fbfcfe;
+}
+
+.path-graph + small {
+  display: block;
+  margin: -0.3rem 0 0.8rem;
+}

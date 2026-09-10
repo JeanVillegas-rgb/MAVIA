@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Background, Controls, ReactFlow } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 
 import { fetchTopicLearningPath } from "../api";
 
@@ -34,6 +36,75 @@ export function findFloatingSteps(steps) {
         !depended.has(step.learning_object_id),
     )
     .map((step) => step.learning_object_id);
+}
+
+// Depth decides the column, so arrows read left to right and every node in a
+// column is a peer. Laying out by depth rather than letting the library find a
+// layout is what keeps a dense graph interpretable at all.
+export function buildFlowLayout(steps, edges) {
+  const byDepth = new Map();
+  for (const step of steps) {
+    const depth = step.dag_depth ?? 0;
+    if (!byDepth.has(depth)) byDepth.set(depth, []);
+    byDepth.get(depth).push(step);
+  }
+
+  const nodes = [];
+  for (const [depth, layerSteps] of byDepth) {
+    layerSteps.forEach((step, index) => {
+      nodes.push({
+        id: String(step.learning_object_id),
+        position: { x: depth * 260, y: index * 86 },
+        data: { label: `${step.position}. ${step.title || "Untitled"}` },
+        style: {
+          width: 210,
+          fontSize: 12,
+          padding: 6,
+          borderRadius: 8,
+          border: "1px solid #cbd3e1",
+          background: (step.prerequisite_count || 0) === 0 ? "#fdfaf3" : "#ffffff",
+        },
+      });
+    });
+  }
+
+  const flowEdges = edges.map((edge, index) => ({
+    id: String(edge.id ?? `e${index}`),
+    source: String(edge.prerequisite_id),
+    target: String(edge.dependent_id),
+    animated: false,
+    style: { strokeWidth: Math.max(1, (edge.weight || 0.25) * 3) },
+  }));
+
+  return { nodes, edges: flowEdges };
+}
+
+function PathGraph({ steps, edges }) {
+  const layout = useMemo(() => buildFlowLayout(steps, edges), [steps, edges]);
+
+  if (!steps.length) {
+    return <p className="muted-text">Nothing to draw yet.</p>;
+  }
+
+  return (
+    <div className="path-graph">
+      <ReactFlow
+        nodes={layout.nodes}
+        edges={layout.edges}
+        fitView
+        nodesDraggable={false}
+        nodesConnectable={false}
+        proOptions={{ hideAttribution: false }}
+      >
+        <Background />
+        <Controls showInteractive={false} />
+      </ReactFlow>
+      <small className="muted-text">
+        Columns are depth layers. Thicker arrows carried more criteria. Drag to pan, scroll to
+        zoom.
+      </small>
+    </div>
+  );
 }
 
 function PathStep({ step, titleById, floating }) {
@@ -77,6 +148,7 @@ function PathStep({ step, titleById, floating }) {
 }
 
 function MaterialPath({ path }) {
+  const [view, setView] = useState("list");
   const steps = path.steps || [];
   const titleById = useMemo(
     () => new Map(steps.map((step) => [step.learning_object_id, step.title])),
@@ -98,11 +170,29 @@ function MaterialPath({ path }) {
             <span className="is-warning">{floating.size} not connected</span>
           )}
         </div>
+        <div className="path-view-toggle" role="group" aria-label="View">
+          <button
+            type="button"
+            className={`btn btn-small ${view === "list" ? "btn-primary" : "btn-secondary"}`}
+            onClick={() => setView("list")}
+          >
+            List
+          </button>
+          <button
+            type="button"
+            className={`btn btn-small ${view === "graph" ? "btn-primary" : "btn-secondary"}`}
+            onClick={() => setView("graph")}
+          >
+            Graph
+          </button>
+        </div>
       </header>
 
-      {!steps.length ? (
+      {view === "graph" && <PathGraph steps={steps} edges={edges} />}
+
+      {view === "list" && !steps.length ? (
         <p className="muted-text">This lesson file has no teaching steps yet.</p>
-      ) : (
+      ) : view === "list" ? (
         layers.map(({ depth, steps: layerSteps }) => (
           <div className="path-layer" key={depth}>
             <div className="path-layer-head">
@@ -125,7 +215,7 @@ function MaterialPath({ path }) {
             </ol>
           </div>
         ))
-      )}
+      ) : null}
 
       {edges.length > 0 && (
         <details className="path-edge-log">
