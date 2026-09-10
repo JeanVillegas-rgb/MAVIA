@@ -412,6 +412,14 @@ export function generateObjectVersions(courseId, nodeId, learningObjectId) {
   );
 }
 
+export function generateAllObjectVersions(courseId, nodeId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/generate-all-versions/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
 export function editVersionText(courseId, nodeId, variantId, narration) {
   return request(`/courses/${courseId}/outline-nodes/${nodeId}/versions/${variantId}/`, {
     method: "POST",

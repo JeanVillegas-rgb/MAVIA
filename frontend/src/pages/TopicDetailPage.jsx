@@ -15,6 +15,7 @@ import {
   fetchLearningResources,
   fetchQuestionGenerationTrace,
   generateAudioPlaylist,
+  generateAllObjectVersions,
   fetchGenerationRunEvents,
   publishTopic,
   regenerateImageNarrations,
@@ -909,6 +910,8 @@ function VersionReviewPanel({
   onReviewStepChange,
   onAssignSlot,
   onGenerate,
+  onGenerateAll,
+  generationEvents,
   onEditVersion,
 }) {
   const [chunkIndex, setChunkIndex] = useState(0);
@@ -927,6 +930,12 @@ function VersionReviewPanel({
   useEffect(() => { setEditingSlot(null); }, [chunk?.id]);
 
   const versions = chunk?.versions;
+  const conceptsMissingVersions = chunks.filter((item) => {
+    const slots = item.versions?.slots || {};
+    return !slots.simplified || !slots.elaborated;
+  }).length;
+  const latestGenerationEvent = generationEvents[generationEvents.length - 1];
+  const generationProgress = [...generationEvents].reverse().find((event) => event.data?.total);
   const representative = chunk?.learning_objects?.find(
     (item) => Number(item.id) === Number(versions?.representative_id),
   );
@@ -952,8 +961,32 @@ function VersionReviewPanel({
             exists; the rest is generated and should be read before publishing.
           </p>
         </div>
-        <span className="connection-source-count">{chunks.length} concepts</span>
+        <div className="version-review-heading-actions">
+          <span className="connection-source-count">{chunks.length} concepts</span>
+          <button
+            type="button"
+            className="btn btn-primary btn-small"
+            disabled={Boolean(busyAction) || conceptsMissingVersions === 0}
+            onClick={onGenerateAll}
+            title="Generate only missing Simplified and Elaborated versions; existing versions are reused."
+          >
+            {busyAction === "version-generate-all"
+              ? "Generating all..."
+              : conceptsMissingVersions === 0
+                ? "All generated"
+                : `Generate all (${conceptsMissingVersions})`}
+          </button>
+        </div>
       </div>
+      {(busyAction === "version-generate-all" || generationEvents.length > 0) && (
+        <div className="version-generation-progress" role="status" aria-live="polite">
+          <strong>{busyAction === "version-generate-all" ? "Generating missing versions" : "Generation finished"}</strong>
+          {generationProgress?.data?.index && (
+            <span>{generationProgress.data.index} of {generationProgress.data.total} concepts</span>
+          )}
+          {latestGenerationEvent && <p>{latestGenerationEvent.message}</p>}
+        </div>
+      )}
       <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
         <div aria-hidden="true" />
@@ -1664,6 +1697,7 @@ function LearningObjectConnections({
   const [resources, setResources] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState("");
+  const [versionGenerationEvents, setVersionGenerationEvents] = useState([]);
   const [filter, setFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
@@ -1892,6 +1926,50 @@ function LearningObjectConnections({
     } catch (err) {
       onError(err.message);
       return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function generateAllVersions() {
+    setBusyAction("version-generate-all");
+    setVersionGenerationEvents([]);
+    onError("");
+    onMessage("Generating missing content versions in the background.");
+    try {
+      const started = await generateAllObjectVersions(courseId, topicId);
+      let after = 0;
+      let allEvents = [];
+      while (true) {
+        const payload = await fetchGenerationRunEvents(started.run_id, after);
+        const incoming = payload.events || [];
+        if (incoming.length) {
+          after = incoming[incoming.length - 1].seq;
+          allEvents = [...allEvents, ...incoming];
+          setVersionGenerationEvents(allEvents);
+        }
+        if (["finished", "failed"].includes(payload.run?.status)) {
+          if (payload.run.status === "failed") {
+            const failure = [...allEvents].reverse().find(
+              (event) => event.event_type === "versions_bulk_failed",
+            );
+            throw new Error(failure?.message || "Version generation failed.");
+          }
+          const finished = [...allEvents].reverse().find(
+            (event) => event.event_type === "versions_bulk_finished",
+          );
+          const summary = finished?.data?.summary || {};
+          setResources(await fetchLearningResources(courseId, topicId));
+          onMessage(
+            `Generated ${summary.generated_count || 0} missing version${summary.generated_count === 1 ? "" : "s"}.`
+            + (summary.errors?.length ? ` ${summary.errors.length} concept${summary.errors.length === 1 ? "" : "s"} could not be completed.` : ""),
+          );
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      }
+    } catch (err) {
+      onError(err.message);
     } finally {
       setBusyAction("");
     }
@@ -2242,6 +2320,8 @@ function LearningObjectConnections({
           onReviewStepChange={onReviewStepChange}
           onAssignSlot={assignVersion}
           onGenerate={generateVersions}
+          onGenerateAll={generateAllVersions}
+          generationEvents={versionGenerationEvents}
           onEditVersion={saveVersionText}
         />
       )}

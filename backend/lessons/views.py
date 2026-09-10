@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from user.permissions import IsTeacherOrAdmin
 
 from course.models import LessonVariant
+from course.bulk_version_generation import generate_all_missing_versions
 from course.services import sync_course_outline
 from course.variant_generator import fill_missing_slots, generate_standalone_variants
 from question_generation.models import GenerationRun
@@ -109,6 +110,32 @@ def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
     except Exception as exc:  # a failed publish must not leave the run "running" forever
         logger.exception("Publish run %s failed", run_id)
         record("publish_failed", str(exc))
+        run.status = "failed"
+    finally:
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "finished_at"])
+
+
+def _run_all_versions_in_background(run_id, node_id):
+    """Generate every missing version while recording pollable progress."""
+    from question_generation.models import GenerationEvent
+
+    run = GenerationRun.objects.get(id=run_id)
+    seq = {"n": 0}
+
+    def record(event_type, message, **data):
+        seq["n"] += 1
+        GenerationEvent.objects.create(
+            run=run, seq=seq["n"], event_type=event_type, message=message, data=data or None
+        )
+
+    try:
+        node = OutlineNode.objects.get(id=node_id)
+        generate_all_missing_versions(node, on_event=record)
+        run.status = "finished"
+    except Exception as exc:
+        logger.exception("Bulk version run %s failed", run_id)
+        record("versions_bulk_failed", str(exc))
         run.status = "failed"
     finally:
         run.finished_at = timezone.now()
@@ -990,6 +1017,43 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "errors": result["errors"],
         }
         return Response(payload)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/generate-all-versions",
+    )
+    def generate_all_versions(self, request, pk=None, node_id=None):
+        """Start background generation for all missing version slots in a topic."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response(
+                {"detail": "Outline node not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        active = GenerationRun.objects.filter(
+            outline_node=node,
+            status="running",
+        ).order_by("-id").first()
+        if active is not None:
+            return Response(
+                {"detail": "Another topic task is already running.", "run_id": active.id},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        run = GenerationRun.objects.create(outline_node=node)
+        threading.Thread(
+            target=_run_all_versions_in_background,
+            args=(run.id, node.id),
+            daemon=True,
+        ).start()
+        return Response(
+            {"run_id": run.id, "node_id": node.id},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(
         detail=True,

@@ -1127,6 +1127,32 @@ button {
   font-size: 0.92rem;
 }
 
+.version-review-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.version-generation-progress {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.9rem 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #b9ddd8;
+  border-radius: 12px;
+  background: #effaf8;
+  color: #165c56;
+}
+
+.version-generation-progress p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .connection-eyebrow {
   color: var(--accent);
   font-size: 0.75rem;

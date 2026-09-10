@@ -375,7 +375,7 @@ class GenerationRunsView(APIView):
             {
                 "id": r.id,
                 "material_id": r.material_id,
-                "material_title": r.material.title,
+                "material_title": r.material.title if r.material_id else None,
                 "node_id": r.node_id,
                 "node_title": r.node.title if r.node else None,
                 "status": r.status,
