@@ -8,6 +8,8 @@ text that already exists.
 
 import logging
 
+from django.db import transaction
+
 from .models import LessonVariant
 from .readability import compare
 
@@ -53,6 +55,22 @@ def assign_group_versions(group):
     representative = choose_representative(members)
     candidates = [item for item in members if item.id != representative.id]
 
+    # A teacher decision (and an earlier confident automatic decision) is
+    # durable.  This function is called whenever the review payload is read;
+    # without consulting saved source rows, the same candidate is offered for
+    # confirmation again immediately after the teacher clicks a button.
+    stored_source_rows = list(
+        LessonVariant.objects.filter(
+            learning_object=representative,
+            source_learning_object__isnull=False,
+        ).order_by("id")
+    )
+    stored_by_source = {}
+    for row in stored_source_rows:
+        current = stored_by_source.get(row.source_learning_object_id)
+        if current is None or (current.variant == "EXTRA" and row.variant in PRIMARY_SLOTS):
+            stored_by_source[row.source_learning_object_id] = row
+
     proposals = []
     for candidate in candidates:
         verdict = compare(representative.content, candidate.content)
@@ -68,12 +86,23 @@ def assign_group_versions(group):
 
     assigned = []
     needs_confirmation = []
-    extras = 0
-    claimed = {}
+    extras = sum(row.variant == "EXTRA" for row in stored_source_rows)
+    claimed = {
+        row.variant: row.source_learning_object
+        for row in stored_source_rows
+        if row.variant in PRIMARY_SLOTS
+    }
 
     # Strongest margin first, so a collision resolves in favour of the clearer
     # of the two claims rather than whichever happened to be ordered first.
     for proposal in sorted(proposals, key=lambda item: -item["delta_fk"]):
+        stored = stored_by_source.get(proposal["learning_object_id"])
+        if stored is not None:
+            # Include persisted primary decisions in ``assigned`` so
+            # settle_group() still marks their source objects represented.
+            if stored.variant in PRIMARY_SLOTS:
+                assigned.append({**_public(proposal), "slot": stored.variant, "persisted": True})
+            continue
         if not proposal["confident"]:
             needs_confirmation.append(_public(proposal))
             continue
@@ -92,6 +121,54 @@ def assign_group_versions(group):
         "needs_confirmation": needs_confirmation,
         "extras": extras,
     }
+
+
+@transaction.atomic
+def assign_source_to_slot(representative, source, slot):
+    """Persist one teacher decision without duplicating or losing source text."""
+    if slot not in (*PRIMARY_SLOTS, "EXTRA"):
+        raise ValueError("Unknown version slot")
+    if source.id == representative.id:
+        raise ValueError("The representative cannot be assigned as its own version")
+
+    # Moving a source from one slot to another must remove its old placement.
+    LessonVariant.objects.filter(
+        learning_object=representative,
+        source_learning_object=source,
+    ).delete()
+
+    if slot in PRIMARY_SLOTS:
+        displaced = LessonVariant.objects.filter(
+            learning_object=representative,
+            variant=slot,
+        ).select_related("source_learning_object").first()
+        if displaced is not None:
+            displaced_source = displaced.source_learning_object
+            if displaced_source is not None and displaced_source_id != source.id:
+                # The teacher's new choice wins the primary slot, but wording
+                # from another PDF is retained as an extra rather than erased.
+                LessonVariant.objects.create(
+                    learning_object=representative,
+                    variant="EXTRA",
+                    narration=displaced.narration,
+                    origin=displaced.origin,
+                    source_learning_object=displaced_source,
+                    assigned_by=displaced.assigned_by,
+                )
+            displaced.delete()
+
+    row = LessonVariant.objects.create(
+        learning_object=representative,
+        variant=slot,
+        narration=source.content,
+        origin=LessonVariant.Origin.SOURCE_PDF,
+        source_learning_object=source,
+        assigned_by=LessonVariant.AssignedBy.TEACHER,
+    )
+    if source.represented_by_id != representative.id:
+        source.represented_by = representative
+        source.save(update_fields=["represented_by"])
+    return row
 
 
 def _public(proposal):

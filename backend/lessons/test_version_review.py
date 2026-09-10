@@ -68,6 +68,37 @@ class VersionReviewTests(TestCase):
         self.assertEqual(row.narration, MIDDLING)
         self.assertEqual(row.origin, "source_pdf")
         self.assertEqual(row.assigned_by, "teacher")
+        group = response.data["learning_object_groups"][0]
+        self.assertEqual(group["versions"]["needs_confirmation"], [])
+        self.assertEqual(
+            group["versions"]["slots"]["simplified"]["source_learning_object_id"],
+            self.second.id,
+        )
+
+    def test_teacher_can_move_a_source_without_leaving_it_in_two_slots(self):
+        url = (
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/"
+            "version-assignment/"
+        )
+        self.client.post(
+            url,
+            {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"},
+            format="json",
+        )
+
+        response = self.client.post(
+            url,
+            {"learning_object_id": self.second.id, "slot": "ELABORATED"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rows = LessonVariant.objects.filter(
+            learning_object=self.first,
+            source_learning_object=self.second,
+        )
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual(rows.get().variant, "ELABORATED")
 
     def test_assignment_flags_the_assigned_object(self):
         self.client.post(

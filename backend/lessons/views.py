@@ -16,7 +16,7 @@ from course.services import sync_course_outline
 from course.variant_generator import fill_missing_slots, generate_standalone_variants
 from question_generation.models import GenerationRun
 from .services.topic_publish import confirmed_materials_for, run_topic_publish
-from course.version_assignment import assign_group_versions, settle_group
+from course.version_assignment import assign_group_versions, assign_source_to_slot, settle_group
 
 from .models import (
     CourseGroup,
@@ -1075,19 +1075,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        LessonVariant.objects.update_or_create(
-            learning_object_id=representative_id,
-            variant=slot,
-            defaults={
-                "narration": learning_object.content,
-                "origin": LessonVariant.Origin.SOURCE_PDF,
-                "source_learning_object": learning_object,
-                "assigned_by": LessonVariant.AssignedBy.TEACHER,
-            },
-        )
-        LearningObject.objects.filter(pk=learning_object.pk).update(
-            represented_by_id=representative_id
-        )
+        representative = LearningObject.objects.get(pk=representative_id)
+        assign_source_to_slot(representative, learning_object, slot)
 
         return Response(self._learning_resources_payload(node, request))
 

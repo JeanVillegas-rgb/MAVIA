@@ -113,3 +113,21 @@ class VersionAssignmentTests(TestCase):
         assign_group_versions(self.group)
 
         self.assertEqual(LessonVariant.objects.filter(variant="ELABORATED").count(), 1)
+
+    def test_saved_teacher_decision_is_not_returned_for_confirmation_again(self):
+        first = self._object(self._material("PDF one", 0), SHORT)
+        second = self._object(self._material("PDF two", 5), MIDDLING)
+        LessonVariant.objects.create(
+            learning_object=first,
+            variant="SIMPLIFIED",
+            narration=second.content,
+            origin=LessonVariant.Origin.SOURCE_PDF,
+            source_learning_object=second,
+            assigned_by=LessonVariant.AssignedBy.TEACHER,
+        )
+
+        result = assign_group_versions(self.group)
+
+        self.assertEqual(result["needs_confirmation"], [])
+        self.assertEqual(result["assigned"][0]["learning_object_id"], second.id)
+        self.assertTrue(result["assigned"][0]["persisted"])
