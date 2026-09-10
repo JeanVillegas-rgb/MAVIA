@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.utils import timezone
@@ -53,11 +54,15 @@ class VersionAssignmentTests(TestCase):
         second = self._object(self._material("PDF two", 5), LONG)
         self.assertEqual(choose_representative([second, first]), first)
 
-    def test_confident_partner_is_assigned_and_stored_with_provenance(self):
+    @patch("course.version_assignment.classify_group_versions")
+    def test_llm_and_readability_agreement_is_assigned_with_provenance(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
+        classify.return_value = {
+            second.id: {"slot": "ELABORATED", "confidence": 0.94, "reason": "More explanation."}
+        }
 
-        result = assign_group_versions(self.group)
+        result = assign_group_versions(self.group, use_llm=True)
 
         self.assertEqual(result["representative_id"], first.id)
         self.assertEqual(len(result["assigned"]), 1)
@@ -68,6 +73,21 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(row.narration, LONG)
         self.assertEqual(row.origin, "source_pdf")
         self.assertEqual(row.source_learning_object, second)
+        self.assertEqual(row.assigned_by, "llm_validated")
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_llm_disagreement_is_routed_to_teacher(self, classify):
+        first = self._object(self._material("PDF one", 0), SHORT)
+        second = self._object(self._material("PDF two", 5), LONG)
+        classify.return_value = {
+            second.id: {"slot": "SIMPLIFIED", "confidence": 0.99, "reason": "Model guess."}
+        }
+
+        result = assign_group_versions(self.group, use_llm=True)
+
+        self.assertEqual(result["assigned"], [])
+        self.assertEqual(result["needs_confirmation"][0]["llm_slot"], "SIMPLIFIED")
+        self.assertFalse(LessonVariant.objects.exists())
 
     def test_thin_margin_is_routed_to_the_teacher_not_stored(self):
         first = self._object(self._material("PDF one", 0), SHORT)
@@ -80,7 +100,8 @@ class VersionAssignmentTests(TestCase):
         self.assertFalse(result["needs_confirmation"][0]["confident"])
         self.assertFalse(LessonVariant.objects.filter(learning_object=first).exists())
 
-    def test_slot_collision_keeps_the_larger_margin_and_stores_an_extra(self):
+    @patch("course.version_assignment.classify_group_versions")
+    def test_slot_collision_keeps_the_larger_margin_and_stores_an_extra(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         bigger = self._object(self._material("PDF two", 5), LONG)
         # Also confidently "elaborated", but by a narrower Flesch-Kincaid
@@ -91,7 +112,11 @@ class VersionAssignmentTests(TestCase):
             "together very closely. It cannot flow the way that water does.",
         )
 
-        result = assign_group_versions(self.group)
+        classify.return_value = {
+            bigger.id: {"slot": "ELABORATED", "confidence": 0.96, "reason": "Fuller."},
+            smaller.id: {"slot": "ELABORATED", "confidence": 0.91, "reason": "Also fuller."},
+        }
+        result = assign_group_versions(self.group, use_llm=True)
 
         elaborated = LessonVariant.objects.get(learning_object=first, variant="ELABORATED")
         self.assertEqual(elaborated.source_learning_object, bigger)
@@ -105,12 +130,16 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(result["assigned"], [])
         self.assertEqual(result["needs_confirmation"], [])
 
-    def test_reassignment_is_idempotent(self):
+    @patch("course.version_assignment.classify_group_versions")
+    def test_reassignment_is_idempotent(self, classify):
         self._object(self._material("PDF one", 0), SHORT)
-        self._object(self._material("PDF two", 5), LONG)
+        second = self._object(self._material("PDF two", 5), LONG)
+        classify.return_value = {
+            second.id: {"slot": "ELABORATED", "confidence": 0.95, "reason": "Fuller."}
+        }
 
-        assign_group_versions(self.group)
-        assign_group_versions(self.group)
+        assign_group_versions(self.group, use_llm=True)
+        assign_group_versions(self.group, use_llm=True)
 
         self.assertEqual(LessonVariant.objects.filter(variant="ELABORATED").count(), 1)
 

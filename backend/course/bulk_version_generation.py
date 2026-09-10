@@ -15,7 +15,7 @@ def generate_all_missing_versions(outline_node, on_event=None):
     representatives = []
     seen = set()
     for group in groups:
-        state = assign_group_versions(group)
+        state = assign_group_versions(group, use_llm=True)
         representative_id = state["representative_id"]
         if representative_id is None or representative_id in seen:
             continue

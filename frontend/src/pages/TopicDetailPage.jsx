@@ -829,7 +829,9 @@ export function versionOriginLabel(entry, materialTitle) {
   const source = entry.origin === "source_pdf"
     ? `From ${materialTitle || "another PDF"}`
     : "AI generated";
-  return entry.assigned_by === "teacher" ? `${source} · Edited` : source;
+  if (entry.assigned_by === "teacher") return `${source} · Teacher confirmed`;
+  if (entry.assigned_by === "llm_validated") return `${source} · AI classified, rules checked`;
+  return source;
 }
 
 function VersionSlotCard({
@@ -957,8 +959,9 @@ function VersionReviewPanel({
           <span className="connection-eyebrow">Review queue</span>
           <h3 id="version-review-title">Review content versions</h3>
           <p>
-            Each concept is taught in three versions. Text from a second PDF is used where it
-            exists; the rest is generated and should be read before publishing.
+            Gemma suggests how grouped PDF wording should be used. MAVIA assigns it automatically
+            only when the readability checks agree; uncertain choices stay here for confirmation.
+            Missing versions are generated from the original.
           </p>
         </div>
         <div className="version-review-heading-actions">

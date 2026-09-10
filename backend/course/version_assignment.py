@@ -1,17 +1,19 @@
 """Decide which grouped text becomes which version of a learning object.
 
 A group's members are alternative presentations of one concept, written by
-different teachers. The earliest upload is the original; the rest are ranked
-against it. Nothing here calls a language model -- this module only distributes
-text that already exists.
+different teachers. The earliest upload is the original. Gemma may propose
+roles for the remaining versions, but an automatic assignment is made only
+when independent readability evidence agrees with that proposal.
 """
 
 import logging
 
+from django.conf import settings
 from django.db import transaction
 
 from .models import LessonVariant
 from .readability import compare
+from .version_classifier import VersionClassificationError, classify_group_versions
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,7 @@ def choose_representative(members):
     )[0]
 
 
-def assign_group_versions(group):
+def assign_group_versions(group, *, use_llm=False):
     """Fill this group's primary slots from its own members.
 
     Confident comparisons are written immediately. Unconfident ones are
@@ -71,14 +73,47 @@ def assign_group_versions(group):
         if current is None or (current.variant == "EXTRA" and row.variant in PRIMARY_SLOTS):
             stored_by_source[row.source_learning_object_id] = row
 
+    unresolved = [
+        item for item in candidates
+        if item.id not in stored_by_source
+    ]
+    classifications = {}
+    classification_error = ""
+    if use_llm and unresolved:
+        try:
+            classifications = classify_group_versions(representative, unresolved)
+        except VersionClassificationError as exc:
+            classification_error = str(exc)
+            logger.warning(
+                "Content-version classification failed: group=%s model=%s error=%s",
+                group.id,
+                settings.CONTENT_VERSION_LLM_MODEL,
+                exc,
+            )
+
     proposals = []
     for candidate in candidates:
         verdict = compare(representative.content, candidate.content)
+        llm = classifications.get(candidate.id)
+        llm_slot = llm["slot"] if llm else None
+        llm_confidence = llm["confidence"] if llm else None
+        validated = bool(
+            llm
+            and llm_slot in PRIMARY_SLOTS
+            and llm_confidence >= settings.CONTENT_VERSION_LLM_AUTO_THRESHOLD
+            and verdict["confident"]
+            and verdict["slot"] == llm_slot
+        )
         proposals.append({
             "learning_object_id": candidate.id,
             "object": candidate,
-            "slot": verdict["slot"],
-            "confident": verdict["confident"],
+            "slot": llm_slot or verdict["slot"],
+            "confident": validated,
+            "llm_slot": llm_slot,
+            "llm_confidence": llm_confidence,
+            "llm_reason": llm["reason"] if llm else "",
+            "readability_slot": verdict["slot"],
+            "readability_confident": verdict["confident"],
             "delta_fk": verdict["delta_fk"],
             "delta_words": verdict["delta_words"],
             "ratio": verdict["ratio"],
@@ -108,11 +143,21 @@ def assign_group_versions(group):
             continue
         slot = proposal["slot"]
         if slot in claimed:
-            _store(representative, proposal["object"], "EXTRA")
+            _store(
+                representative,
+                proposal["object"],
+                "EXTRA",
+                assigned_by=LessonVariant.AssignedBy.LLM_VALIDATED,
+            )
             extras += 1
             continue
         claimed[slot] = proposal["object"]
-        _store(representative, proposal["object"], slot)
+        _store(
+            representative,
+            proposal["object"],
+            slot,
+            assigned_by=LessonVariant.AssignedBy.LLM_VALIDATED,
+        )
         assigned.append(_public(proposal))
 
     return {
@@ -120,6 +165,7 @@ def assign_group_versions(group):
         "assigned": assigned,
         "needs_confirmation": needs_confirmation,
         "extras": extras,
+        "classification_error": classification_error,
     }
 
 
@@ -175,7 +221,13 @@ def _public(proposal):
     return {key: value for key, value in proposal.items() if key != "object"}
 
 
-def _store(representative, source, slot):
+def _store(
+    representative,
+    source,
+    slot,
+    *,
+    assigned_by=LessonVariant.AssignedBy.HEURISTIC,
+):
     if slot == "EXTRA":
         LessonVariant.objects.update_or_create(
             learning_object=representative,
@@ -184,7 +236,7 @@ def _store(representative, source, slot):
             defaults={
                 "narration": source.content,
                 "origin": LessonVariant.Origin.SOURCE_PDF,
-                "assigned_by": LessonVariant.AssignedBy.HEURISTIC,
+                "assigned_by": assigned_by,
             },
         )
         return
@@ -195,7 +247,7 @@ def _store(representative, source, slot):
             "narration": source.content,
             "origin": LessonVariant.Origin.SOURCE_PDF,
             "source_learning_object": source,
-            "assigned_by": LessonVariant.AssignedBy.HEURISTIC,
+            "assigned_by": assigned_by,
         },
     )
 
@@ -210,7 +262,7 @@ def settle_group(group):
     """
     from .variant_generator import fill_missing_slots
 
-    outcome = assign_group_versions(group)
+    outcome = assign_group_versions(group, use_llm=True)
     if outcome["representative_id"] is None:
         return {**outcome, "generated": [], "errors": []}
 

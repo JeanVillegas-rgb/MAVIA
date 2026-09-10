@@ -74,6 +74,7 @@ class LessonVariant(models.Model):
 
     class AssignedBy(models.TextChoices):
         HEURISTIC = "heuristic", "Proposed by the readability heuristic"
+        LLM_VALIDATED = "llm_validated", "Proposed by the LLM and validated by readability rules"
         TEACHER = "teacher", "Confirmed or corrected by a teacher"
 
     learning_object = models.ForeignKey(

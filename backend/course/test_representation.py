@@ -31,6 +31,17 @@ MIDDLING = "A solid keeps its shape. The particles are packed closely. It will n
 )
 class RepresentationTests(TestCase):
     def setUp(self):
+        classifier_patcher = patch("course.version_assignment.classify_group_versions")
+        self.classify_group_versions = classifier_patcher.start()
+        self.addCleanup(classifier_patcher.stop)
+        self.classify_group_versions.side_effect = lambda representative, candidates: {
+            item.id: {
+                "slot": "ELABORATED",
+                "confidence": 0.95,
+                "reason": "More detailed than the original.",
+            }
+            for item in candidates
+        }
         self.course = CourseGroup.objects.create(title="Grade 1 Science")
         self.node = OutlineNode.objects.create(
             course=self.course, title="Matter", order=0, depth=0
