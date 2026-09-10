@@ -100,6 +100,6 @@ class DocumentOrderTests(TestCase):
 
         diagnostics = build_learning_path(self.material.id)["diagnostics"]
 
-        self.assertEqual(diagnostics["ordering"], "document")
+        self.assertEqual(diagnostics["ordering"], "graph_constrained_author_ordered")
         self.assertTrue(diagnostics["matches_source_order"])
         self.assertEqual(diagnostics["displaced_object_count"], 0)

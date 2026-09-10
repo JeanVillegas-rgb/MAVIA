@@ -107,7 +107,7 @@ function PathGraph({ steps, edges }) {
   );
 }
 
-function PathStep({ step, titleById, floating }) {
+function PathStep({ step, titleById, floating, showText }) {
   const prerequisites = (step.prerequisite_ids || [])
     .map((id) => titleById.get(id))
     .filter(Boolean);
@@ -132,6 +132,12 @@ function PathStep({ step, titleById, floating }) {
           )}
         </div>
         {step.section_title && <small className="path-step-section">{step.section_title}</small>}
+        {step.content && (
+          <details className="path-step-content" open={showText}>
+            <summary>Show passage</summary>
+            <p>{step.content}</p>
+          </details>
+        )}
         <div className="path-step-meta">
           {prerequisites.length > 0 ? (
             <span>
@@ -149,6 +155,7 @@ function PathStep({ step, titleById, floating }) {
 
 function MaterialPath({ path }) {
   const [view, setView] = useState("list");
+  const [showText, setShowText] = useState(false);
   const steps = path.steps || [];
   const titleById = useMemo(
     () => new Map(steps.map((step) => [step.learning_object_id, step.title])),
@@ -169,8 +176,24 @@ function MaterialPath({ path }) {
           {floating.size > 0 && (
             <span className="is-warning">{floating.size} not connected</span>
           )}
+          {path.diagnostics && (
+            <span
+              title="The graph decides what must precede what; the author breaks the ties it leaves open."
+            >
+              {path.diagnostics.displaced_object_count === 0
+                ? "matches the PDF order"
+                : `${path.diagnostics.displaced_object_count} moved by the graph`}
+            </span>
+          )}
         </div>
         <div className="path-view-toggle" role="group" aria-label="View">
+          <button
+            type="button"
+            className={`btn btn-small ${showText ? "btn-primary" : "btn-secondary"}`}
+            onClick={() => setShowText((current) => !current)}
+          >
+            {showText ? "Hide passages" : "Show passages"}
+          </button>
           <button
             type="button"
             className={`btn btn-small ${view === "list" ? "btn-primary" : "btn-secondary"}`}
@@ -210,6 +233,7 @@ function MaterialPath({ path }) {
                   step={step}
                   titleById={titleById}
                   floating={floating.has(step.learning_object_id)}
+                  showText={showText}
                 />
               ))}
             </ol>
