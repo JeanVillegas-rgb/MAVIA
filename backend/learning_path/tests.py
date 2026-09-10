@@ -98,23 +98,23 @@ class EdgeDerivationTests(LearningObjectFixtureMixin, TestCase):
     def setUp(self):
         self.build_material()
 
-    def test_naming_a_concept_creates_a_dependency_on_its_definition(self):
+    def test_naming_a_concept_is_not_enough_to_create_a_dependency(self):
+        """A textual mention produced 88% of the old graph. It is weak evidence
+        now: it generates a candidate and explains it, and never accepts it."""
         matter = self._object(0, "Matter", "Matter is anything that has mass.")
         solid = self._object(1, "Solid", "A solid is matter with a definite shape.")
-        edges = derive_edges([matter, solid])
-        forward = [
-            e for e in edges
-            if (e.prerequisite_id, e.dependent_id) == (matter.id, solid.id)
-        ]
-        self.assertEqual(len(forward), 1)
-        self.assertIn("body_reference", forward[0].evidence["voted_forward"])
+        edges = derive_edges([matter, solid], material=self.material)
         self.assertEqual(
-            [e for e in edges if (e.prerequisite_id, e.dependent_id) == (solid.id, matter.id)],
+            [e for e in edges if (e.prerequisite_id, e.dependent_id) == (matter.id, solid.id)],
             [],
         )
 
     def test_a_comparison_depends_on_every_concept_it_compares(self):
-        """The case a parent_id tree cannot represent: multi-prerequisite fan-in."""
+        """The case a parent_id tree cannot represent: multi-prerequisite fan-in.
+
+        A chunk whose heading declares it a comparison cannot be understood
+        without the things it compares -- that is its stated function.
+        """
         solid = self._object(0, "Solid", "A solid keeps a definite shape.")
         liquid = self._object(1, "Liquid", "A liquid flows and fills its container.")
         gas = self._object(2, "Gas", "A gas spreads out to fill any space.")
@@ -124,12 +124,13 @@ class EdgeDerivationTests(LearningObjectFixtureMixin, TestCase):
             "Solids keep their shape; liquids and gases take the shape of the container.",
             section_title="Comparing the Three States",
         )
-        edges = derive_edges([solid, liquid, gas, shape])
+        edges = derive_edges([solid, liquid, gas, shape], material=self.material)
         prerequisites = {e.prerequisite_id for e in edges if e.dependent_id == shape.id}
         self.assertEqual(prerequisites, {solid.id, liquid.id, gas.id})
 
-    def test_a_heading_mention_votes_on_its_own(self):
-        """The body never names the mixture; only the section heading does."""
+    def test_a_heading_mention_alone_creates_nothing(self):
+        """Section *reference* is gone. Shared section membership survives only
+        as M4 progression, which needs corroboration."""
         mixture = self._object(0, "Mixture", "A mixture combines two substances.")
         method = self._object(
             1,
@@ -137,11 +138,8 @@ class EdgeDerivationTests(LearningObjectFixtureMixin, TestCase):
             "Pour the sample through filter paper and collect what stays behind.",
             section_title="Separating a Mixture",
         )
-        edges = derive_edges([mixture, method])
-        incoming = [e for e in edges if e.dependent_id == method.id]
-        self.assertEqual(len(incoming), 1)
-        self.assertIn("section_reference", incoming[0].evidence["voted_forward"])
-        self.assertNotIn("body_reference", incoming[0].evidence["voted_forward"])
+        edges = derive_edges([mixture, method], material=self.material)
+        self.assertEqual([e for e in edges if e.dependent_id == method.id], [])
 
     def test_split_parts_of_one_passage_stay_in_part_order(self):
         first = self._object(0, "Gas (Part 1 of 2)", "A gas has no definite shape.")
@@ -214,33 +212,26 @@ class EdgeDerivationTests(LearningObjectFixtureMixin, TestCase):
             [],
         )
 
-    def test_co_occurrence_still_fires_on_genuinely_distinctive_terms(self):
-        """The fallback is narrowed, not disabled."""
+    def test_co_occurrence_no_longer_creates_an_edge(self):
+        """Shared vocabulary means the passages are about the same topic. It
+        gives no reason to send a learner from one to the other."""
         alpha = self._object(0, "Alpha", "Alpha is a thing.")
         notes = self._object(1, "Notes", "The greenhouse absorbs infrared radiation warmly.")
-        summary = self._object(2, "Summary", "Greenhouse infrared radiation matters.")
-        edges = derive_edges([alpha, notes, summary])
-        cooccurrence = [
-            e for e in edges if "cooccurrence" in e.evidence.get("voted_forward", {})
-        ]
-        self.assertEqual(len(cooccurrence), 1)
-        self.assertEqual(cooccurrence[0].prerequisite_id, notes.id)
-        self.assertEqual(cooccurrence[0].dependent_id, summary.id)
+        summary = self._object(2, "Digest", "Greenhouse infrared radiation matters here.")
+        edges = derive_edges([alpha, notes, summary], material=self.material)
+        self.assertEqual(
+            [e for e in edges if (e.prerequisite_id, e.dependent_id) == (notes.id, summary.id)],
+            [],
+        )
 
     def test_derived_edges_are_persisted_and_replaced_on_rebuild(self):
         self._object(0, "Matter", "Matter is anything that has mass.")
-        self._object(1, "Solid", "A solid is matter with a definite shape.")
+        self._object(1, "Solid", "A solid is a state of matter.")
         first = rebuild_edges_for_material(self.material.id)
-        self.assertGreater(len(first), 0)
-        self.assertEqual(
-            PrerequisiteEdge.objects.filter(dependent__material=self.material).count(),
-            len(first),
-        )
-        rebuild_edges_for_material(self.material.id)
-        self.assertEqual(
-            PrerequisiteEdge.objects.filter(dependent__material=self.material).count(),
-            len(first),
-        )
+        self.assertTrue(first)
+        self.assertEqual(PrerequisiteEdge.objects.count(), len(first))
+        second = rebuild_edges_for_material(self.material.id)
+        self.assertEqual(PrerequisiteEdge.objects.count(), len(second))
 
 
 class LearningPathTests(LearningObjectFixtureMixin, TestCase):
@@ -290,9 +281,9 @@ class LearningPathTests(LearningObjectFixtureMixin, TestCase):
 
     def test_foundational_definition_is_taught_before_its_subtypes(self):
         self._object(0, "Matter", "Matter is anything that has mass and occupies space.")
-        solid = self._object(1, "Solid", "A solid has a definite shape and a definite volume.")
-        liquid = self._object(2, "Liquid", "A liquid has a definite volume but no definite shape.")
-        gas = self._object(3, "Gas", "A gas has no definite shape and no definite volume.")
+        solid = self._object(1, "Solid", "A solid is a state of matter.")
+        liquid = self._object(2, "Liquid", "A liquid is a state of matter.")
+        gas = self._object(3, "Gas", "A gas is a state of matter.")
 
         result = build_learning_path(self.material.id)
         depth_by_id = {s["learning_object_id"]: s["dag_depth"] for s in result["steps"]}

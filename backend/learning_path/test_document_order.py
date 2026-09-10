@@ -16,11 +16,18 @@ class DocumentOrderTests(TestCase):
 
     def setUp(self):
         self.course = CourseGroup.objects.create(title="Grade 1 Science")
+        # Real materials always sit under a confirmed module/topic, and S3
+        # reads that hierarchy. A fixture without one silently disables it.
+        self.module = OutlineNode.objects.create(
+            course=self.course, title="Properties of Matter", order=0, depth=0
+        )
         self.topic = OutlineNode.objects.create(
-            course=self.course, title="States of Matter", order=0, depth=0
+            course=self.course, parent=self.module,
+            title="Solid, Liquid and Gas", order=0, depth=1,
         )
         self.material = LearningMaterial.objects.create(
-            course=self.course, title="States of Matter", status="completed"
+            course=self.course, outline_node=self.topic,
+            title="States of Matter", status="completed",
         )
 
     def _object(self, order, title, content, section_title=""):

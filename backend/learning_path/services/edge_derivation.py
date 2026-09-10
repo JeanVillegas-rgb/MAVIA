@@ -1,23 +1,25 @@
 """Derive prerequisite edges between the learning objects of one material.
 
-The source document informs the graph but does not dictate the path. Two
-decisions are kept deliberately apart:
+An edge asserts that understanding A is expected to support comprehension or
+assessment of B -- broad enough that a learner failing B can sensibly be sent
+back to A, narrow enough to exclude "these two passages share a topic".
 
-* **Document order decides direction.** An edge may only run forward. A passage
-  using a word the material does not define until later is using it loosely,
-  not depending on it. Keeping this as a hard rule rather than as evidence is
-  what makes the edge set a subgraph of a strict total order, and therefore
-  acyclic -- though Kahn's still verifies rather than trusting it.
-* **Evidence decides whether an edge exists at all.** Three criteria vote, each
-  evaluated in both directions and each worth exactly one vote. No criterion
-  outranks another, because there is no labelled data with which to justify a
-  weighting.
+The previous design scored *association*, which is dense: 28% of all possible
+ordered pairs became edges, 88% of them on a single textual mention. Two
+structural changes fix that:
 
-The criteria are the ones the prerequisite-relation literature supports:
-reference asymmetry (the RefD principle -- a reference only counts when it is
-not returned), and distinctive term co-occurrence. See
-docs/superpowers/specs/2026-09-10-edge-scoring-design.md for the reasoning and
-the citations.
+* **Candidate generation and the prerequisite decision are separate.**
+  Generating candidates may be generous; accepting them is strict. Density is
+  then set by the strictest stage rather than the loosest.
+* **Weak evidence cannot create an edge.** Mentions and co-occurrence generate
+  and explain candidates; they never accept one.
+
+Document order is no longer a hard directional filter. Real materials contain
+forward references -- a property may be defined after the passage that uses it
+-- so strong evidence may run backwards, and cycles are broken afterwards.
+Ordering the lesson is not this module's job: see ``path_builder``.
+
+See docs/superpowers/specs/2026-09-10-prerequisite-redesign-design.md.
 """
 
 from django.db import transaction
@@ -25,58 +27,19 @@ from django.db import transaction
 from lessons.models import LearningObject
 
 from ..models import PrerequisiteEdge
-from .text_signals import (
-    MIN_SHARED_TERMS_FOR_COOCCURRENCE,
-    concept_terms,
-    content_terms,
-    definition_subject,
-    distinctive_document_frequency_limit,
-    document_frequencies,
-    mentions,
-    normalize,
-    part_marker,
-    scan_positions,
-    searchable_text,
-)
+from .evidence import accept, build_context, gather, suppressed
 
-# A teacher's own edge is the most trustworthy statement in the graph -- it is
-# the only one backed by a person who knows the subject. So is a chunk
-# continuation, for a different reason: it is not a claim about prerequisites at
-# all, but a fact about how our own chunker cut one passage in half.
+# Structural, not inferred: "(Part 1 of 3)" and "(Part 2 of 3)" are one passage
+# the chunker cut, and a teacher's own edge is the only one backed by a person
+# who knows the subject.
 CERTAIN_EDGE_WEIGHT = 1.0
-
-# The three criteria that vote. Named here so evidence rows are self-describing.
-CRITERION_BODY_REFERENCE = "body_reference"
-CRITERION_SECTION_REFERENCE = "section_reference"
-CRITERION_COOCCURRENCE = "cooccurrence"
-# The relation this criterion reaches for -- a general concept containing the
-# specific ones that follow -- is a recognised one; the multi-criteria
-# literature detects it as category containment using an external knowledge
-# base. MAVIA has none, so it is approximated locally: the material's opening
-# definition is treated as containing the definitions that come after it. It is
-# a proxy, and is described as one, which is why it is worth exactly one vote
-# rather than a weight of its own.
-CRITERION_DEFINITION_SCOPE = "definition_scope"
-CRITERIA = (
-    CRITERION_BODY_REFERENCE,
-    CRITERION_SECTION_REFERENCE,
-    CRITERION_COOCCURRENCE,
-    CRITERION_DEFINITION_SCOPE,
-)
-
-# One net vote out of four. Raising this to 0.5 demands two and is the
-# precision-first setting. Like every other cutoff in MAVIA this is a chosen
-# operating value, not a calibrated one; the comparable published figure is
-# 0.28 over ten criteria.
-VOTE_THRESHOLD = 0.25
 
 
 def learning_objects_for_material(material_id):
     """Teaching steps only.
 
     An object marked ``represented_by`` is taught through another one, so
-    sequencing it would put content in the path that the lesson does not
-    present.
+    sequencing it would put content in the path the lesson does not present.
     """
     return list(
         LearningObject.objects.filter(
@@ -86,189 +49,119 @@ def learning_objects_for_material(material_id):
     )
 
 
-def _build_definer_index(learning_objects, positions):
-    """Map each concept term to the object that introduces it.
+def _continuation_edges(ctx):
+    """Split parts stay adjacent and in order, regardless of evidence."""
+    from .text_signals import part_marker
 
-    When several objects claim one term -- the chunker split the concept into
-    "(Part 1 of 3)", or a teacher uploaded a second explanation of it -- the
-    earliest is the definer, and all the claimants are recorded as each other's
-    co-definers so no edge is ever drawn between two takes on the same concept.
-    """
-    claims = {}
-    for learning_object in learning_objects:
-        for term in concept_terms(learning_object.title):
-            claims.setdefault(term, []).append(learning_object)
-
-    definer_by_term = {}
-    co_definers = {lo.id: set() for lo in learning_objects}
-    for term, claimants in claims.items():
-        claimants.sort(key=lambda lo: positions[lo.id])
-        definer_by_term[term] = claimants[0]
-        if len(claimants) > 1:
-            ids = [lo.id for lo in claimants]
-            for object_id in ids:
-                co_definers[object_id].update(set(ids) - {object_id})
-    return definer_by_term, co_definers
-
-
-def _refers_to(text_normalized, other, own_concepts):
-    """Does this passage name a concept the other one claims?"""
-    for term in concept_terms(other.title):
-        if term in own_concepts:
+    ordered = sorted(ctx.objects, key=lambda item: ctx.positions[item.id])
+    edges, pairs = [], set()
+    for earlier, later in zip(ordered, ordered[1:]):
+        first, second = part_marker(earlier.title), part_marker(later.title)
+        if not first or not second:
             continue
-        if mentions(text_normalized, term):
-            return term
-    return None
+        if first[0] != second[0] or first[2] != second[2]:
+            continue
+        if second[1] != first[1] + 1:
+            continue
+        pairs.add((earlier.id, later.id))
+        edges.append(PrerequisiteEdge(
+            prerequisite=earlier,
+            dependent=later,
+            signal=PrerequisiteEdge.Signal.CHUNK_CONTINUATION,
+            weight=CERTAIN_EDGE_WEIGHT,
+            evidence={
+                "base_title": first[0],
+                "part": second[1],
+                "of": second[2],
+                "note": "document order for a passage the chunker split",
+            },
+        ))
+    return edges, pairs
 
 
-def derive_edges(learning_objects):
+def _is_candidate(a, b, strong, medium, weak):
+    """Generous on purpose: this only decides what gets *examined*."""
+    return bool(strong or medium or weak)
+
+
+def derive_edges(learning_objects, material=None):
     """Return candidate ``PrerequisiteEdge`` rows (unsaved) for these objects."""
     if len(learning_objects) < 2:
         return []
 
-    positions = scan_positions(learning_objects)
-    _, co_definers = _build_definer_index(learning_objects, positions)
+    if material is None:
+        material = learning_objects[0].material
 
-    normalized_content = {lo.id: searchable_text(lo) for lo in learning_objects}
-    normalized_section = {lo.id: normalize(lo.section_title) for lo in learning_objects}
-    concepts = {lo.id: concept_terms(lo.title) for lo in learning_objects}
-    terms_by_object = {
-        lo.id: content_terms(f"{lo.title} {lo.content}") for lo in learning_objects
-    }
-    # Co-occurrence must rest on words peculiar to a few passages. Counting how
-    # many passages use each word is what separates a real shared concept from
-    # the lesson's background vocabulary.
-    frequencies = document_frequencies(terms_by_object)
-    distinctive_limit = distinctive_document_frequency_limit(len(learning_objects))
+    ctx = build_context(material, learning_objects)
+    edges, continuation_pairs = _continuation_edges(ctx)
 
-    document_order = sorted(learning_objects, key=lambda lo: positions[lo.id])
+    for a in ctx.objects:
+        for b in ctx.objects:
+            if a.id == b.id or (a.id, b.id) in continuation_pairs:
+                continue
 
-    # A lesson's opening definition is groundwork for the definitions that
-    # follow it, even when none of them quotes it back: "A solid has a definite
-    # shape" never says the word "matter", so no reference criterion can reach
-    # it, and the concept the whole material rests on would be left floating.
-    definitions = [lo for lo in document_order if definition_subject(lo.content)]
-    definition_ids = {lo.id for lo in definitions}
-    opening_definition_id = definitions[0].id if len(definitions) > 1 else None
+            strong, medium, weak = gather(a, b, ctx)
+            if not _is_candidate(a, b, strong, medium, weak):
+                continue
 
-    edges = []
+            # Strong evidence is gathered BEFORE suppression, because an
+            # explicit statement from the author overrides the suppressors.
+            # Rejecting first would make that override unreachable.
+            author_says_so = any(item.type == "explicit_dependency" for item in strong)
+            if suppressed(a, b, ctx, author_says_so=author_says_so, strong=strong):
+                continue
 
-    # Chunk continuation is settled before any voting and is exempt from it.
-    # "(Part 1 of 3)" and "(Part 2 of 3)" are one passage the chunker had to
-    # cut; letting thin evidence separate the halves would scatter a single
-    # explanation across the path. It is also the one relation permitted
-    # between co-definers, since the parts deliberately share a concept.
-    continuation_pairs = set()
-    for earlier, later in zip(document_order, document_order[1:]):
-        earlier_part = part_marker(earlier.title)
-        later_part = part_marker(later.title)
-        if not earlier_part or not later_part:
-            continue
-        if earlier_part[0] != later_part[0] or earlier_part[2] != later_part[2]:
-            continue
-        if later_part[1] != earlier_part[1] + 1:
-            continue
-        continuation_pairs.add((earlier.id, later.id))
-        edges.append(
-            PrerequisiteEdge(
-                prerequisite=earlier,
-                dependent=later,
-                signal=PrerequisiteEdge.Signal.CHUNK_CONTINUATION,
-                weight=CERTAIN_EDGE_WEIGHT,
+            if not accept(strong, medium):
+                continue
+
+            edges.append(PrerequisiteEdge(
+                prerequisite=a,
+                dependent=b,
+                signal=PrerequisiteEdge.Signal.VOTED,
+                weight=CERTAIN_EDGE_WEIGHT if strong else 0.5,
                 evidence={
-                    "base_title": earlier_part[0],
-                    "part": later_part[1],
-                    "of": later_part[2],
-                    "note": "document order for a passage the chunker split",
+                    "tier": "strong" if strong else "medium",
+                    "strong": [item.type for item in strong],
+                    "medium": [item.type for item in medium],
+                    "weak": [item.type for item in weak],
+                    "detail": {item.type: item.detail for item in strong + medium},
                 },
-            )
-        )
+            ))
 
-    for index, dependent in enumerate(document_order):
-        for prerequisite in document_order[:index]:
-            if (prerequisite.id, dependent.id) in continuation_pairs:
-                continue
-            if prerequisite.id in co_definers[dependent.id]:
-                continue
+    return _break_cycles(edges, ctx)
 
-            forward = {}
-            backward = {}
 
-            # C1 -- body reference asymmetry. The dependent naming the
-            # prerequisite's concept only counts when the prerequisite does not
-            # name the dependent's back. A mutual mention says the two are
-            # related, not which one comes first.
-            dependent_refs = _refers_to(
-                normalized_content[dependent.id], prerequisite, concepts[dependent.id]
-            )
-            prerequisite_refs = _refers_to(
-                normalized_content[prerequisite.id], dependent, concepts[prerequisite.id]
-            )
-            if dependent_refs and not prerequisite_refs:
-                forward[CRITERION_BODY_REFERENCE] = dependent_refs
-            elif prerequisite_refs and not dependent_refs:
-                backward[CRITERION_BODY_REFERENCE] = prerequisite_refs
+def _break_cycles(edges, ctx):
+    """Strong evidence may run against document order, so a cycle is possible.
 
-            # C2 -- the same test against section headings, which is weaker
-            # evidence. Under equal-weight voting that is expressed by being a
-            # separate criterion that can fail on its own, not by a smaller
-            # number.
-            dependent_section_refs = _refers_to(
-                normalized_section[dependent.id], prerequisite, concepts[dependent.id]
-            ) if normalized_section[dependent.id] else None
-            prerequisite_section_refs = _refers_to(
-                normalized_section[prerequisite.id], dependent, concepts[prerequisite.id]
-            ) if normalized_section[prerequisite.id] else None
-            if dependent_section_refs and not prerequisite_section_refs:
-                forward[CRITERION_SECTION_REFERENCE] = dependent_section_refs
-            elif prerequisite_section_refs and not dependent_section_refs:
-                backward[CRITERION_SECTION_REFERENCE] = prerequisite_section_refs
+    Drop the weakest edge in a cycle; on a tie, drop the one running backwards
+    through the document. Dropped edges are returned to nobody -- they simply do
+    not exist -- but the rule is deterministic.
+    """
+    from .topological_sort import GraphCycleError, kahn_topological_order
 
-            # C3 -- distinctive shared vocabulary. Symmetric by nature, so it
-            # votes in the direction document order has already fixed and never
-            # against it.
-            shared = {
-                term
-                for term in terms_by_object[prerequisite.id] & terms_by_object[dependent.id]
-                if frequencies[term] <= distinctive_limit
-            }
-            if len(shared) >= MIN_SHARED_TERMS_FOR_COOCCURRENCE:
-                forward[CRITERION_COOCCURRENCE] = sorted(shared)[:10]
+    kept = list(edges)
+    for _ in range(len(kept)):
+        pairs = [(e.prerequisite_id, e.dependent_id) for e in kept]
+        try:
+            kahn_topological_order([item.id for item in ctx.objects], pairs)
+            return kept
+        except GraphCycleError as cycle:
+            unresolved = set(cycle.unresolved_nodes)
+            in_cycle = [
+                e for e in kept
+                if e.prerequisite_id in unresolved and e.dependent_id in unresolved
+            ]
+            if not in_cycle:
+                return kept
+            victim = min(in_cycle, key=lambda e: (
+                e.weight,
+                ctx.positions[e.prerequisite_id] < ctx.positions[e.dependent_id],
+            ))
+            kept.remove(victim)
+    return kept
 
-            # C4 -- definition scope. Only ever votes forward: the opening
-            # definition is by construction the earliest, so this criterion
-            # cannot argue against document order.
-            if (
-                opening_definition_id is not None
-                and prerequisite.id == opening_definition_id
-                and dependent.id in definition_ids
-            ):
-                forward[CRITERION_DEFINITION_SCOPE] = {
-                    "defines": definition_subject(prerequisite.content),
-                    "before_definition_of": definition_subject(dependent.content),
-                }
 
-            score = (len(forward) - len(backward)) / len(CRITERIA)
-            if score < VOTE_THRESHOLD:
-                continue
-
-            edges.append(
-                PrerequisiteEdge(
-                    prerequisite=prerequisite,
-                    dependent=dependent,
-                    signal=PrerequisiteEdge.Signal.VOTED,
-                    weight=round(score, 4),
-                    evidence={
-                        "score": round(score, 4),
-                        "threshold": VOTE_THRESHOLD,
-                        "voted_forward": forward,
-                        "voted_backward": backward,
-                        "document_frequency_limit": distinctive_limit,
-                    },
-                )
-            )
-
-    return edges
 @transaction.atomic
 def rebuild_edges_for_material(material_id):
     """Replace this material's DERIVED edges with a freshly derived set.
