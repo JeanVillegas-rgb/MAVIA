@@ -6,6 +6,22 @@ Design date: 2026-09-10. Replaces the four-criteria vote in
 Scope: the generic, learner-independent prerequisite graph. No reinforcement
 learning, no learner state.
 
+## What a prerequisite edge means here
+
+> **A → B asserts that understanding concept A is expected to support successful
+> comprehension or assessment of concept B.** A learner who fails on B can
+> reasonably be sent back to A.
+
+This definition is deliberately broader than "B is logically impossible without
+A" and deliberately narrower than "A and B are related". It is written to match
+what the graph is *used for* — remediation — and every rule below is judged
+against it. Two consequences worth stating in the thesis:
+
+- A comparison chunk may legitimately depend on the things it compares, because
+  a learner failing the comparison should be sent back to them.
+- Topical association is excluded, because being about the same subject gives no
+  reason to send a learner anywhere.
+
 ---
 
 ## A. Diagnosis of the current approach
@@ -70,7 +86,7 @@ content extraction            ← section hierarchy must be captured here (see A
  ↓
 learning objects (chunks)
  ↓
-[1] CONCEPT RESOLUTION        which concept does each chunk own?
+[1] CONCEPT RESOLUTION        which concept does each chunk own?  (see C.0)
  ↓
 [2] CANDIDATE GENERATION      narrow the pair space (recall-oriented, cheap)
  ↓
@@ -100,6 +116,32 @@ separate**. Candidate generation may be generous; the prerequisite decision is
 strict. Density is then governed by the strictest stage, not the loosest.
 
 ---
+
+## C.0 Concept resolution — the stage everything else rests on
+
+Testing the evidence rules against real data showed that most of their failures
+are not failures of the rules. They are failures to answer *"which concept does
+this chunk own?"* Two examples, both measured:
+
+- A chunk titled **"Ice is a solid"** matched the concept `solid` and was treated
+  as the concept itself. It is an *example* of a solid.
+- A chunk titled **"Matter is anything that has mass and occupies space"** is the
+  definition of `matter`, but its title is a sentence, so title-based matching
+  found no concept at all.
+
+Resolution rule, in order:
+
+1. Strip any `(Part n of m)` suffix. Split chunks share their base concept; the
+   edge attaches to Part 1 and the rest follow by chunk continuation.
+2. If the title is short (≤ 4 significant words) and is not itself a sentence,
+   the concept is the title.
+3. Otherwise, if the content opens with a definition, the concept is that
+   sentence's **subject** — "Matter is anything that has mass" yields `matter`.
+4. Otherwise the chunk owns no concept. It can still *depend* on things; nothing
+   can depend on it.
+
+Rule 4 is what excludes example and summary chunks from being mistaken for the
+concepts they mention.
 
 ## C. Evidence types
 
@@ -137,6 +179,28 @@ space between particles" extracts `Gas is-a space`. That false positive occurred
 in the simulation.
 *Double-counting guard:* when the is-a sentence is also B's defining sentence,
 S2 and M1 are the same observation. Only S2 counts.
+
+**S3 · Confirmed scope framing.**
+*Detects:* the teacher-confirmed course outline places this material under a
+module or topic whose title names concept A; A is resolved to a chunk in this
+material that appears before B; and B's concept is named by the topic title as
+one of its subjects.
+*Why it counts:* unlike everything else here, this structure is not inferred
+from prose — a teacher confirmed it at outline review. It is the one piece of
+expert-authored hierarchy that survives PDF extraction intact.
+*Why it is needed:* it is the answer to the phrasing-fragility problem. S2
+requires the author to write "a solid is a state of matter". One of the two PDFs
+teaching this lesson never does — it writes "A solid has a definite shape". S3
+recovers `Matter → Solid` from structure instead of wording, and was verified to
+do so on both PDFs.
+*Example (real):* module `Properties of Matter` → topic `Solid, Liquid and Gas`.
+`Matter` is defined in the material and precedes the states, which the topic
+title names. → `Matter → Solid`, `Matter → Liquid`, `Matter → Gas`.
+*Independent:* yes.
+*Also supplies sibling detection:* concepts co-enumerated in one topic title are
+peers. This gives V1 a phrasing-independent basis — the topic title
+"Solid, Liquid and Gas" marks all three as siblings whether or not any is-a
+sentence exists.
 
 ### MEDIUM — two of *different* types required
 
@@ -248,19 +312,35 @@ def build_prerequisite_graph(chunks):
 
     edges = []
     for a, b in candidate_pairs(chunks, concepts):            # stage [2]
-        if is_sibling(a, b, siblings) or is_co_definer(a, b):
+        # V2 is absolute: two chunks about the same concept cannot be
+        # prerequisites of one another.
+        if is_co_definer(a, b):
             continue
 
-        mentions = find_mentions(b, concepts[a.id])
-        if mentions and all(m.contrastive for m in mentions):  # V3
-            continue
-        if mutual_reference(a, b, concepts):                   # V4
-            continue
-
+        # Strong evidence is gathered BEFORE the remaining suppressors, because
+        # an explicit dependency statement overrides them. Rejecting first --
+        # as an earlier draft of this spec did -- makes the override
+        # unreachable and puts the code at odds with the prose.
         strong, medium, weak = [], [], []
         if (a.id, b.id) in explicit:            strong.append(Ev("explicit_dependency"))
-        if isa.get(b.id) == concepts[a.id]:     strong.append(Ev("is_a"))
-        if term_in_defining_sentence(b, concepts[a.id]):  medium.append(Ev("definitional"))
+        if isa.get(b.id) == concepts[a.id] and concepts[a.id] in taught:
+                                                strong.append(Ev("is_a"))
+        if scope_framing(a, b, outline):        strong.append(Ev("scope_framing"))
+
+        author_says_so = any(e.type == "explicit_dependency" for e in strong)
+        mentions = find_mentions(b, concepts[a.id])
+        if not author_says_so:
+            if is_sibling(a, b, siblings):                              # V1
+                continue
+            if mentions and all(m.contrastive for m in mentions):       # V3
+                continue
+            if mutual_reference(a, b, concepts):                        # V4
+                continue
+        # Double-counting guard: when the is-a sentence IS the defining
+        # sentence, S2 and M1 are one observation. Only the stronger counts.
+        if term_in_defining_sentence(b, concepts[a.id]) and not any(
+                e.type == "is_a" for e in strong):
+                                                          medium.append(Ev("definitional"))
         if is_aggregation_chunk(b) and mentions:          medium.append(Ev("aggregation"))
         if instantiates(b, concepts[a.id]):               medium.append(Ev("instantiation"))
         if same_section_progression(a, b):                medium.append(Ev("section_progression"))
@@ -547,3 +627,39 @@ whale/mammal problem is an *ontological* is-a, imported from outside the lesson.
 An is-a stated by the author, about a concept the author also teaches, is
 instructional framing. And where the parent is not taught, no edge can form
 anyway, because edges exist only between chunks.
+
+---
+
+**Rev 3 — after second review.** Three points raised, all adopted, one of them
+solved differently than proposed:
+
+1. **Suppressor pseudocode contradicted its own prose.** Correct and serious:
+   V1/V3/V4 rejected the pair before strong evidence was ever computed, so the
+   documented S1 override was unreachable. Fixed in section D — strong evidence
+   is gathered first, and only a non-explicit pair is subject to the remaining
+   suppressors. This is exactly the kind of spec/implementation disagreement
+   that produces a bug nobody can find later.
+
+2. **Phrasing fragility.** Adopted, but keyed to the **teacher-confirmed outline
+   hierarchy** rather than to `section_title` as the review suggested, and
+   promoted to STRONG (S3) rather than MEDIUM. Reasons: `section_title` is
+   missing on 84% of chunks, so an M5 built on it would be as dead as M4; the
+   outline hierarchy survives extraction intact; and it is *confirmed by a
+   teacher*, which is a different epistemic status from anything inferred from
+   prose. Verified on both PDFs — it recovers `Matter → Solid/Liquid/Gas` from
+   the PDF that contains no is-a sentence at all, and supplies phrasing-
+   independent sibling detection as a by-product.
+
+3. **Operational definition of "prerequisite".** Adopted, at the top of this
+   document, in the review's wording. It settles the Shape/Volume question the
+   review left open: under a remediation-oriented definition, sending a learner
+   who fails the comparison back to shape and volume is sensible, so the edge
+   stands.
+
+### What testing S3 exposed
+
+Concept resolution, not evidence typing, is the weak link. A chunk titled
+"Ice is a solid" was matched to the concept `solid`; a chunk titled "Matter is
+anything that has mass and occupies space" matched no concept at all. Both are
+resolution failures, and both would corrupt every downstream rule. Section C.0
+now specifies resolution explicitly, and it should be built and checked first.
