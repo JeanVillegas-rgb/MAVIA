@@ -82,8 +82,18 @@ learning objects (chunks)
  ↓
 [6] GRAPH CONSTRUCTION        acyclicity check, cycle breaking
  ↓
+prerequisite DAG              what must precede what
+ ↓
+[7] SEQUENCE BUILDER          + author's presentation order
+ ↓
 generic learning path
 ```
+
+**A prerequisite graph is not a learning path.** `Matter → {Solid, Liquid, Gas}`
+says nothing about the order of the three states, because they are siblings and
+no dependency holds between them. Something still has to choose. Making the
+graph carry that decision is what forced the old design to mislabel sequencing
+as dependency.
 
 The critical change from the current design is that **[2] and [5] are
 separate**. Candidate generation may be generous; the prerequisite decision is
@@ -107,18 +117,26 @@ state, **but understanding each state should come first**." → `Solid → Chang
 of State`, `Liquid → …`, `Gas → …`.
 *Independent:* yes.
 
-**S2 · Taxonomic is-a.**
+**S2 · Taxonomic is-a, where the parent is taught in the same material.**
 *Detects:* `B is a <kind|type|form|state|category> of A`, where the sentence
-subject is B's own concept.
-*Why it counts:* a subtype cannot be understood without its parent category.
-This is the category-containment relation the literature detects from knowledge
-bases; here it is stated outright in the text.
+subject is B's own concept **and** A is itself a learning object in this
+material.
+*Why the condition matters:* taxonomic dependency is not automatically
+instructional dependency. "A whale is a mammal" is ontologically true, but a
+Grade 1 learner does not need the general concept of mammals before learning
+about whales. What makes `Matter → Solid` different is that the author *teaches
+matter*, in this lesson, and then frames solid as one of its states. That is
+instructional framing, not an ontology lookup.
+*Where the parent is not taught here*, the relation is recorded as MEDIUM and
+needs corroboration — which in practice usually means no edge, correctly.
 *Example (real):* "A solid **is a state of matter** that has a definite shape."
-→ `Matter → Solid`.
-*Independent:* yes.
+→ `Matter → Solid`, because `Matter` is a chunk in the same material.
+*Independent:* yes, subject to the condition above.
 *Caveat:* the subject check is essential. Without it, "there **is a** lot of
 space between particles" extracts `Gas is-a space`. That false positive occurred
 in the simulation.
+*Double-counting guard:* when the is-a sentence is also B's defining sentence,
+S2 and M1 are the same observation. Only S2 counts.
 
 ### MEDIUM — two of *different* types required
 
@@ -161,7 +179,15 @@ evidence so a teacher can see why a pair was considered, and they never
 contribute to acceptance. This is the single biggest change: `body_reference`,
 which currently produces 88% of edges, is demoted to a candidate generator.
 
-### SUPPRESSORS — veto an edge regardless of other evidence
+### SUPPRESSORS — block an edge unless S1 overrides
+
+These express strong negative evidence, not logical impossibility. An explicit
+dependency statement (S1) is the author speaking directly, and overrides all of
+them: sibling concepts *can* be sequenced deliberately ("single-digit addition"
+before "multi-digit addition" share a parent yet one grounds the other), and a
+mutual reference makes direction ambiguous rather than proving no dependency
+exists. V2 is the one exception that stays absolute — two chunks about the same
+concept cannot be prerequisites of one another.
 
 **V1 · Siblings.** Two concepts sharing an is-a parent, or occupying parallel
 positions in one section, are peers. Never link them.
@@ -201,6 +227,15 @@ def accept(evidence, suppressors):
 
 Two medium signals of the *same* type do not corroborate — two instantiation
 matches are one kind of observation seen twice.
+
+**The two-medium rule is an unvalidated operating decision, not a derived
+result.** There is no theoretical reason why M1+M3 constitutes a prerequisite
+while M1 alone does not. It is chosen to favour precision, and it must be
+described that way in writing — e.g. *"candidate edges lacking direct
+prerequisite evidence are accepted only when corroborated by at least two
+distinct indirect indicators; this conservative criterion was selected to reduce
+false-positive prerequisite relationships and is evaluated through expert
+review."* Its advantage over numeric weights is transparency, not correctness.
 
 ### Pipeline pseudocode
 
@@ -286,9 +321,7 @@ only arbitrates between two edges already justified by evidence.
 | `Solid → Changes of State` | S1 — "understanding each state should come first" |
 | `Liquid → Changes of State` | S1 |
 | `Gas → Changes of State` | S1 |
-| `Shape → Solid/Liquid/Gas` | S1 — "To understand the difference between these states, we need to look at… the shape and volume" |
-| `Volume → Solid/Liquid/Gas` | S1 |
-| `Particle arrangement → Solid/Liquid/Gas` | S1 — same sentence |
+| `Shape/Volume/Particles → Comparing the Three States` | S1, corrected — see note below |
 
 **Possible / supporting (accepted only with two medium types)**
 
@@ -308,11 +341,66 @@ only arbitrates between two edges already justified by evidence.
 | `Matter → Everyday Examples` | The examples instantiate the *states*, not matter directly. Transitively implied; not asserted. |
 | `Matter → Particle arrangement` | Current C4 artifact: both are definitions. No relation of substance. |
 | `Comparing → Changes of State` | **Your proposed graph includes this; I think it is wrong.** Changes of State needs the three states, which S1 already gives. It does not need the *comparison* of them. Including it asserts a dependency the text does not support. |
+| `Shape → Solid` | **An error in the first draft of this spec, corrected on review.** The sentence reads "To understand **the difference between** these states, we need to look at… the shape and volume". Its object is the *comparison*, not each state. Shape and volume are the dimensions along which the states are described, not topics a learner must complete first — property-of is not prerequisite-of. Independently, the sentence sits in material 15 while the `Shape` and `Volume` chunks belong to material 14, and derivation is per-material, so the edge could not have formed in any case. |
 
 Estimated output: roughly **12–18 edges for the 10-node lesson**, against 10
 today — but they are different edges, and every one is traceable to a sentence.
 
 ---
+
+## E.2 The sequence builder
+
+Two outputs, from two sources, kept apart:
+
+| | supplies |
+|---|---|
+| **Prerequisite DAG** | what *must* precede what |
+| **Author's presentation order** | the default choice where the DAG is silent |
+
+```python
+def build_generic_sequence(chunks, edges):
+    """Topological order, with the author breaking every tie."""
+    remaining = {c.id: incoming_count(c, edges) for c in chunks}
+    order = []
+    while remaining:
+        eligible = [cid for cid, n in remaining.items() if n == 0]
+        if not eligible:
+            raise GraphCycleError(sorted(remaining))
+        # The graph does not rank eligible chunks; the author does.
+        nxt = min(eligible, key=lambda cid: (
+            not continues_previous(cid, order),   # keep split parts adjacent
+            section_index(cid),                   # keep sections coherent
+            source_order(cid),                    # author's sequence
+        ))
+        order.append(nxt)
+        release_dependents(nxt, edges, remaining)
+    return order
+```
+
+Rules, in priority order:
+
+1. Never violate a prerequisite edge.
+2. Keep continuation chunks ("Part 1 of 3") adjacent.
+3. Keep a section's chunks together where the graph permits.
+4. Among the remaining eligible chunks, follow the author's order.
+
+Rule 4 is the layer reinforcement learning later replaces. It never overrides
+rule 1.
+
+On the sample: after `Matter`, all three states become eligible simultaneously.
+The graph is silent on their order; the author says Solid, Liquid, Gas. Output:
+
+```
+Matter → Solid → Liquid → Gas → Comparing the Three States → Changes of State
+```
+
+The author's sequence is preserved **without any claim that Solid is a
+prerequisite of Liquid**. That is the distinction the whole redesign turns on.
+
+Note this supersedes the current implementation, which teaches in pure document
+order. That was safe only while every edge was forced to run forward; now that
+S1 may run backwards, document order is no longer guaranteed to be a valid
+topological order, and the sequence must be built rather than assumed.
 
 ## F. Why the source document's order matters
 
@@ -416,3 +504,46 @@ exhaustive gold graph. State that limitation rather than implying otherwise.
 Forty judgements is roughly an hour of a teacher's time, which is the realistic
 ceiling for a student project, and it is enough to tell a 40%-precision method
 from an 85% one.
+
+---
+
+## Revision history
+
+**Rev 2 — after external review.** Six changes, five adopted and one refined:
+
+1. **S2 (is-a) is now conditional**, not unconditional. Adopted: taxonomic
+   dependency is not automatically instructional dependency. Refined rather than
+   simply demoted — see the note below.
+2. **`Shape → Solid` removed.** Adopted; it was an error, corrected in section E.
+3. **Suppressors are overridable by S1**, except V2. Adopted: siblings can be
+   deliberately sequenced, and mutual reference makes direction ambiguous rather
+   than disproving dependency.
+4. **The two-medium rule is labelled an unvalidated operating decision.**
+   Adopted, with thesis wording supplied.
+5. **Graph and sequence separated**, with a sequence builder that takes the
+   author's order as the tie-breaker among topologically eligible chunks.
+   Adopted; this is the strongest of the six and it supersedes the current
+   implementation.
+6. **Extraction metadata.** Already flagged; reinforced.
+
+### Where this design departs from the review
+
+The review proposed demoting is-a to "medium-high, requiring instructional
+context". Applied literally, that breaks the graph, and the reason is worth
+recording.
+
+Measured in this corpus: explicit pedagogical language appears in **2 of 67**
+chunks and is-a in **6 of 67**. If is-a can no longer create an edge alone, the
+STRONG tier fires on approximately three chunks in total, and essentially the
+whole graph comes to rest on the two-medium rule — the very rule the review
+identifies as arbitrary. Worse, for `Matter → Solid` the is-a sentence *is* the
+defining sentence, so S2 and M1 are one observation counted twice; under a
+"needs corroboration" rule that edge would fail on a technicality, and it is the
+one edge every reader agrees on.
+
+The condition adopted here — **is-a is strong when the parent concept is itself
+taught in the same material** — answers the objection at its source. The
+whale/mammal problem is an *ontological* is-a, imported from outside the lesson.
+An is-a stated by the author, about a concept the author also teaches, is
+instructional framing. And where the parent is not taught, no edge can form
+anyway, because edges exist only between chunks.
