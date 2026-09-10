@@ -261,6 +261,32 @@ class SemanticIntegrationTests(TestCase):
         self.assertEqual(automatic.status, "accepted")
         self.assertEqual(automatic.confidence, "high")
 
+    @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "auto", "SEMANTIC_GROUPING_AUTO_THRESHOLD": ".60",
+                           "SEMANTIC_GROUPING_CALIBRATION": ""})
+    def test_high_confidence_object_can_join_group_with_multiple_members(self):
+        third_material = LearningMaterial.objects.create(
+            course=self.course,
+            outline_node=self.topic,
+            title="Third",
+            generated_json={"learning_objects_confirmed": True},
+        )
+        LearningObject.objects.create(
+            material=third_material,
+            group=self.group,
+            title="Solid",
+            content="another equivalent definition",
+        )
+
+        with patch.object(semantic, "runtime", return_value=FakeRuntime()):
+            refresh_learning_object_match_suggestions(self.material)
+
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.group_id, self.group.id)
+        self.assertEqual(
+            LearningObject.objects.filter(group=self.group).count(),
+            3,
+        )
+
     @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "auto"})
     def test_separating_automatic_connection_persists_rejection_and_is_fast(self):
         from .tests import authenticated_api_client

@@ -756,11 +756,12 @@ def _is_mutual_best_match(matcher, candidate_object, source_object, cache):
 
 
 def refresh_learning_object_match_suggestions(material: LearningMaterial) -> None:
-    """Persist mutually-best explainable cross-PDF candidates for this material.
+    """Persist explainable cross-PDF candidates for this material.
 
-    A pair reaches the teacher's review queue only when both objects nominate
-    each other -- see :func:`_is_mutual_best_match` for why one-directional
-    nomination floods the queue with mutually exclusive suggestions.
+    High-confidence semantic matches have already been scored against every
+    member of the candidate group, so every qualifying object may join that
+    group. Medium-confidence pair suggestions still require reciprocal
+    nomination to avoid flooding the teacher's queue.
     """
     if material.outline_node_id is None:
         return
@@ -823,12 +824,16 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
         if existing and (existing.evidence or {}).get("teacher_reviewed"):
             retained_ids.append(existing.id)
             continue
-        if not _is_mutual_best_match(
+        is_high_confidence = (
+            decision["confidence"]
+            == LearningObjectMatchSuggestion.Confidence.HIGH
+        )
+        if not is_high_confidence and not _is_mutual_best_match(
             matcher, candidate_object, source_object, reciprocal_cache
         ):
             continue
         if (
-            decision["confidence"] == LearningObjectMatchSuggestion.Confidence.HIGH
+            is_high_confidence
             and candidate_object.group_id
             and (not existing or existing.status != LearningObjectMatchSuggestion.Status.REJECTED)
             and source_object.group_id != candidate_object.group_id
