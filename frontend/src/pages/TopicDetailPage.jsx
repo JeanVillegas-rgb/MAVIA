@@ -2719,10 +2719,6 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
         <span className={`status-pill status-${material.status}`}>{material.status}</span>
       </div>
 
-      {material.status === "failed" && (
-        <div className="error-banner">{material.error_message || "Content extraction failed."}</div>
-      )}
-
       <div className="generated-item-actions" style={{ marginTop: "0.75rem" }}>
         <button
           className="btn btn-danger btn-small"
