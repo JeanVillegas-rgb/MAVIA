@@ -2751,6 +2751,88 @@ class LearningObjectPreservationTests(TestCase):
         self.assertIn("Very close together\nTightly packed", reconstructed)
         self.assertNotIn("Very close together Tightly packed", reconstructed)
 
+    @patch.dict("os.environ", {"LEARNING_OBJECT_MAX_WORDS": "12"})
+    def test_labelled_example_list_is_never_cut_between_its_items(self):
+        content = (
+            "Properties of Solids:\n"
+            "Particles are closely packed\n"
+            "Particles can vibrate in place\n"
+            "Examples of Solids:\n"
+            "Rock\n"
+            "Book\n"
+            "Pencil\n"
+            "Table\n"
+            "Ice\n"
+            "Chair\n"
+            "Coin\n"
+            "Spoon\n"
+            "Brick\n"
+            "Example:\n"
+            "A book remains the same shape when placed on a table.\n"
+            "Its volume also stays approximately the same."
+        )
+
+        balanced = balance_learning_object_chunks(
+            [{"type": "lesson_content", "title": "Solid", "content": content}]
+        )
+        chunks = [item["content"] for item in balanced]
+        examples_chunk = next(chunk for chunk in chunks if "Examples of Solids:" in chunk)
+
+        self.assertIn("Rock\nBook\nPencil\nTable\nIce\nChair\nCoin\nSpoon\nBrick", examples_chunk)
+        self.assertFalse(any(chunk.startswith("Book") for chunk in chunks))
+
+    @patch.dict("os.environ", {"LEARNING_OBJECT_MAX_WORDS": "12"})
+    def test_all_paragraphs_under_example_label_stay_together(self):
+        content = (
+            "Properties of Liquids:\n"
+            "Liquids take the shape of their container.\n"
+            "Example:\n"
+            "Water takes the shape of a glass.\n"
+            "The same water takes the shape of a bowl.\n"
+            "Its volume remains unchanged."
+        )
+
+        balanced = balance_learning_object_chunks(
+            [{"type": "lesson_content", "title": "Liquid", "content": content}]
+        )
+        example_chunks = [item["content"] for item in balanced if "Example:" in item["content"]]
+
+        self.assertEqual(len(example_chunks), 1)
+        self.assertIn("shape of a glass", example_chunks[0])
+        self.assertIn("shape of a bowl", example_chunks[0])
+        self.assertIn("volume remains unchanged", example_chunks[0])
+
+    @patch.dict("os.environ", {"LEARNING_OBJECT_MAX_WORDS": "20"})
+    def test_short_important_idea_is_attached_to_the_preceding_concept(self):
+        objects = [
+            {
+                "type": "lesson_content",
+                "title": "Liquid",
+                "content": (
+                    "A liquid has a definite volume but no definite shape.\n"
+                    "Example:\n"
+                    "Water changes shape to fit its container."
+                ),
+                "source_page": 2,
+                "source_block_id": 10,
+            },
+            {
+                "type": "lesson_content",
+                "title": "Important Idea",
+                "content": "Liquid = no fixed shape + fixed volume",
+                "source_page": 2,
+                "source_block_id": 11,
+            },
+        ]
+
+        balanced = balance_learning_object_chunks(objects)
+        all_content = "\n".join(item["content"] for item in balanced)
+
+        self.assertFalse(any(item["title"] == "Important Idea" for item in balanced))
+        self.assertFalse(any(item["content"].startswith("Important Idea:") for item in balanced))
+        self.assertIn("Important Idea:\nLiquid = no fixed shape + fixed volume", all_content)
+        self.assertTrue(any(11 in item.get("source_block_ids", []) for item in balanced))
+
     @patch.dict("os.environ", {"LEARNING_OBJECT_MAX_WORDS": "8"})
     def test_numbered_list_marker_stays_with_its_text_when_chunked(self):
         content = "The common forms are:\n1. First form\n2. Second form\n3. Third form"

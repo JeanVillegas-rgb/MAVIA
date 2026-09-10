@@ -2131,28 +2131,53 @@ def _learning_object_units(content: str) -> list[str]:
     return units
 
 
+def _cohesive_learning_object_units(content: str) -> list[str]:
+    """Keep a labelled list or example together as one splittable unit.
+
+    PDF extraction commonly represents a section such as ``Examples:`` as a
+    heading followed by one short line per item.  Treating every line as an
+    independent chunk boundary can leave the heading and first item in one
+    learning object and the rest of the list in another.  A word limit is a
+    soft accessibility target, so preserving the complete authored idea takes
+    precedence over splitting that labelled run at the exact limit.
+    """
+    authored_units = _learning_object_units(content)
+    cohesive_units: list[str] = []
+    labelled_run: list[str] = []
+
+    for unit in authored_units:
+        if unit.rstrip().endswith(":"):
+            if labelled_run:
+                cohesive_units.append("\n".join(labelled_run))
+            labelled_run = [unit]
+        elif labelled_run:
+            labelled_run.append(unit)
+        else:
+            cohesive_units.append(unit)
+
+    if labelled_run:
+        cohesive_units.append("\n".join(labelled_run))
+    return cohesive_units
+
+
 def _split_oversized_learning_object(item: dict, maximum_words: int) -> list[dict]:
     if item.get("type") != "lesson_content" or _learning_object_word_count(item) <= maximum_words:
         return [item]
 
-    units = _learning_object_units(item.get("content") or "")
+    units = _cohesive_learning_object_units(item.get("content") or "")
     if len(units) < 2:
         return [item]
 
-    total_words = sum(len(re.findall(r"\b\w+\b", unit)) for unit in units)
-    group_count = max(2, (total_words + maximum_words - 1) // maximum_words)
-    target_words = max(1, (total_words + group_count - 1) // group_count)
     groups: list[list[str]] = []
     current: list[str] = []
     current_words = 0
     for unit in units:
         unit_words = len(re.findall(r"\b\w+\b", unit))
-        groups_still_needed = group_count - len(groups)
         if (
             current
-            and current_words >= target_words
-            and groups_still_needed > 1
+            and current_words + unit_words > maximum_words
             and not current[-1].rstrip().endswith(":")
+            and not _starts_with_continuation_callout(unit)
         ):
             groups.append(current)
             current = []
@@ -2255,6 +2280,75 @@ def _merge_learning_object_group(group: list[dict]) -> dict:
     }
 
 
+def _is_continuation_callout_label(title: str) -> bool:
+    title = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    return bool(
+        re.fullmatch(
+            r"(?:important|key|main|big) (?:idea|point|fact)|remember|takeaway|summary",
+            title,
+        )
+    )
+
+
+def _starts_with_continuation_callout(unit: str) -> bool:
+    first_line = (unit or "").splitlines()[0].rstrip(":").strip()
+    return _is_continuation_callout_label(first_line)
+
+
+def _is_short_continuation_callout(item: dict) -> bool:
+    """Return whether an object is a short conclusion to the prior concept."""
+    if item.get("type") != "lesson_content" or _learning_object_word_count(item) > 20:
+        return False
+    return _is_continuation_callout_label(item.get("title") or "")
+
+
+def _attach_short_continuation_callouts(learning_objects: list[dict]) -> list[dict]:
+    """Attach summary callouts before chunking so they cannot become orphan cards."""
+    attached: list[dict] = []
+    for item in learning_objects:
+        if (
+            attached
+            and _is_short_continuation_callout(item)
+            and attached[-1].get("type") == "lesson_content"
+        ):
+            previous = {**attached[-1]}
+            label = (item.get("title") or "Important idea").strip()
+            callout = (item.get("content") or "").strip()
+            previous["content"] = (
+                f"{(previous.get('content') or '').rstrip()}\n{label}:\n{callout}"
+            ).strip()
+            previous["source_excerpt"] = previous["content"]
+            previous["source_pages"] = list(
+                dict.fromkeys(
+                    page
+                    for page in [
+                        *(previous.get("source_pages") or []),
+                        previous.get("source_page"),
+                        *(item.get("source_pages") or []),
+                        item.get("source_page"),
+                    ]
+                    if page is not None
+                )
+            )
+            previous["source_block_ids"] = list(
+                dict.fromkeys(
+                    block_id
+                    for block_id in [
+                        *(previous.get("source_block_ids") or []),
+                        previous.get("source_block_id"),
+                        *(item.get("source_block_ids") or []),
+                        item.get("source_block_id"),
+                    ]
+                    if block_id is not None
+                )
+            )
+            previous["chunk_operation"] = "attached_continuation_callout"
+            attached[-1] = previous
+            continue
+        attached.append(item)
+    return attached
+
+
 def balance_learning_object_chunks(
     learning_objects: list[dict],
     outline_context: dict | None = None,
@@ -2269,7 +2363,7 @@ def balance_learning_object_chunks(
     )
 
     split_objects = []
-    for item in learning_objects:
+    for item in _attach_short_continuation_callouts(learning_objects):
         split_objects.extend(_split_oversized_learning_object(item, maximum_words))
 
     balanced = []
