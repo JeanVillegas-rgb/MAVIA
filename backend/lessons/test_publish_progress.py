@@ -37,6 +37,9 @@ class TopicPublishServiceTests(TestCase):
             order=0,
         )
         self.events = []
+        version_audio_patch = patch("lessons.services.topic_publish.generate_version_audio", return_value={"generated_count": 0})
+        self.version_audio = version_audio_patch.start()
+        self.addCleanup(version_audio_patch.stop)
 
     def _record(self, event_type, message, **data):
         self.events.append((event_type, message, data))
@@ -73,6 +76,25 @@ class TopicPublishServiceTests(TestCase):
         summary = self._run()
 
         self.assertIn(self.obj.id, summary["incomplete_versions"])
+        self.assertFalse(summary["published"])
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.published)
+        self.assertIsNone(self.node.published_at)
+
+    @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
+    @patch("lessons.services.topic_publish.generate_material_audio_playlist")
+    @patch("course.variant_generator._request_variants")
+    def test_audio_failure_does_not_publish(self, request_variants, audio, images):
+        from .services.audio_generator import AudioGenerationError
+        images.return_value = {"generated_count": 0, "errors": []}
+        request_variants.return_value = {"SIMPLIFIED": "a", "ELABORATED": "b"}
+        audio.side_effect = AudioGenerationError("Audio unavailable")
+        summary = self._run()
+        self.assertFalse(summary["published"])
+        self.assertTrue(summary["audio_errors"])
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.published)
+        self.assertEqual(self.events[-1][0], "publish_failed")
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")

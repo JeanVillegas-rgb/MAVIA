@@ -207,7 +207,7 @@ def generate_standalone_variants(outline_node):
     }
 
 
-def fill_missing_slots(learning_object):
+def fill_missing_slots(learning_object, target_slots=None):
     """Generate only the primary slots real source text did not supply.
 
     Rows whose origin is ``source_pdf`` are never touched: a teacher wrote
@@ -220,12 +220,23 @@ def fill_missing_slots(learning_object):
     if not (learning_object.content or "").strip():
         return {"generated": [], "skipped": [], "errors": []}
 
+    stale = learning_object.variants.filter(
+        variant__in=("SIMPLIFIED", "ELABORATED"), origin=LessonVariant.Origin.GENERATED,
+    ).exclude(source_fingerprint="").exclude(source_fingerprint=_fingerprint(learning_object))
+    if stale.exists():
+        return {"generated": [], "skipped": [], "errors": [{
+            "learning_object_id": learning_object.id,
+            "detail": "The Normal text changed after versions were generated. Review and edit both versions before publishing.",
+        }]}
     existing = set(
         learning_object.variants.filter(
             variant__in=("SIMPLIFIED", "ELABORATED"),
         ).values_list("variant", flat=True)
     )
-    missing = [slot for slot in ("SIMPLIFIED", "ELABORATED") if slot not in existing]
+    requested = tuple(target_slots or ("SIMPLIFIED", "ELABORATED"))
+    if any(slot not in ("SIMPLIFIED", "ELABORATED") for slot in requested):
+        raise ValueError("Unknown adaptive version slot")
+    missing = [slot for slot in requested if slot not in existing]
     if not missing:
         return {"generated": [], "skipped": sorted(existing), "errors": []}
 

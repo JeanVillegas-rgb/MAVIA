@@ -117,7 +117,7 @@ class GenerationRun(models.Model):
     """One teacher-triggered execution of question generation for a material.
 
     When `node` is set, the run covered only that learning object; otherwise
-    it covered every text learning object of the material."""
+    it covered every narrated learning object of the material."""
     STATUS_CHOICES = [
         ("running", "Running"),
         ("finished", "Finished"),

@@ -4,7 +4,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from lessons.models import CourseGroup, LearningMaterial, LearningObject
+from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 from lessons.services.audio_generator import generate_material_audio_playlist
 
 from .models import GeneratedQuestion, GenerationRun
@@ -191,11 +191,36 @@ class QuestionGenerationScopeTests(TestCase):
         finalize_node_questions(self.first_node, classifier)
 
         self.assertFalse(GeneratedQuestion.objects.filter(id=old.id).exists())
+
+    def test_normal_regeneration_removes_question_banks_from_other_group_variants(self):
+        outline_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Matter topic",
+            order=0,
+        )
+        self.material.outline_node = outline_node
+        self.material.save(update_fields=["outline_node"])
+        group = LearningObjectGroup.objects.create(outline_node=outline_node, label="Matter")
+        LearningObject.objects.filter(pk__in=[self.first_node.id, self.second_node.id]).update(
+            group=group,
+        )
+        self.first_node.refresh_from_db()
+        self.second_node.refresh_from_db()
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier(
+            {},
+            default=("remember", "LOT", "Facts and Information"),
+        )
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertFalse(
+            GeneratedQuestion.objects.filter(pk=self.existing_second_question.id).exists(),
+        )
         self.assertEqual(
             list(self.first_node.generated_questions.values_list("question_text", flat=True)),
             ["What is matter?"],
         )
-
     def test_finalize_marks_existing_audio_stale(self):
         _draft(self.first_node, "What is matter?")
 
@@ -231,10 +256,12 @@ class QuestionGenerationScopeTests(TestCase):
         self.assertEqual(result["generated_count"], 1)
         self.material.refresh_from_db()
         playlist = self.material.generated_json["lesson_playlist"]
-        self.assertEqual(
-            playlist[0]["audio_url"],
-            f"/media/audio_lessons/material_{self.material.id}/playlist_item_1.mp3",
+        self.assertTrue(
+            playlist[0]["audio_url"].startswith(
+                f"/media/audio_lessons/material_{self.material.id}/"
+            )
         )
+        self.assertTrue(playlist[0]["audio_url"].endswith(".mp3"))
         self.assertEqual(playlist[1]["audio_url"], "/media/audio_lessons/material_1/question_10.mp3")
         self.assertTrue(self.material.generated_json["lesson_audio_generated"])
         self.assertTrue(self.material.generated_json["question_audio_generated"])
@@ -311,3 +338,90 @@ class StartGenerationViewScopeTests(TestCase):
         run = GenerationRun.objects.get(id=response.data["run_id"])
         self.assertEqual(run.node_id, self.first_node.id)
         self.assertEqual(mock_thread.call_args.kwargs["args"], (run.id, self.material.id, [self.first_node.id]))
+
+    @patch("question_generation.views.assign_group_versions")
+    @patch("question_generation.views.threading.Thread")
+    def test_grouped_non_normal_source_cannot_generate_questions(self, mock_thread, assignment):
+        outline_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Matter topic",
+            order=0,
+        )
+        self.material.outline_node = outline_node
+        self.material.save(update_fields=["outline_node"])
+        group = LearningObjectGroup.objects.create(outline_node=outline_node, label="Matter")
+        self.first_node.group = group
+        self.first_node.save(update_fields=["group"])
+        self.second_node.group = group
+        self.second_node.save(update_fields=["group"])
+        assignment.return_value = {
+            "classification_complete": True,
+            "original_selected": True,
+            "representative_id": self.first_node.id,
+        }
+
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{self.second_node.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["normal_learning_object_id"], self.first_node.id)
+        self.assertIn("Normal version", response.data["error"])
+        mock_thread.assert_not_called()
+
+    @patch("question_generation.views.assign_group_versions")
+    @patch("question_generation.views.threading.Thread")
+    def test_material_generation_scopes_a_group_to_its_normal_source(self, mock_thread, assignment):
+        outline_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Matter topic",
+            order=0,
+        )
+        self.material.outline_node = outline_node
+        self.material.save(update_fields=["outline_node"])
+        group = LearningObjectGroup.objects.create(outline_node=outline_node, label="Matter")
+        LearningObject.objects.filter(pk__in=[self.first_node.id, self.second_node.id]).update(
+            group=group,
+        )
+        assignment.return_value = {
+            "classification_complete": True,
+            "original_selected": True,
+            "representative_id": self.first_node.id,
+        }
+
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        run = GenerationRun.objects.get(id=response.data["run_id"])
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"],
+            (run.id, self.material.id, [self.first_node.id]),
+        )
+
+    @patch("question_generation.views.threading.Thread")
+    def test_narrated_image_can_start_question_generation(self, mock_thread):
+        image_node = LearningObject.objects.create(
+            material=self.material,
+            kind=LearningObject.Kind.IMAGE,
+            title="Particle arrangement diagram",
+            content="The diagram shows tightly packed solid particles and widely spaced gas particles.",
+            order=2,
+        )
+
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{image_node.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["node_id"], image_node.id)
+        run = GenerationRun.objects.get(id=response.data["run_id"])
+        self.assertEqual(run.node_id, image_node.id)
+        self.assertEqual(mock_thread.call_args.kwargs["args"], (run.id, self.material.id, [image_node.id]))

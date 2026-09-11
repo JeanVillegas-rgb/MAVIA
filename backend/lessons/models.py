@@ -148,6 +148,7 @@ class LearningObjectGroup(models.Model):
         on_delete=models.CASCADE,
     )
     label = models.CharField(max_length=255, blank=True)
+    version_selection = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

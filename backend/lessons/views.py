@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+from datetime import timedelta
 import threading
 from time import perf_counter
 
@@ -12,12 +13,16 @@ from rest_framework.response import Response
 from user.permissions import IsTeacherOrAdmin
 
 from course.models import LessonVariant
-from course.bulk_version_generation import generate_all_missing_versions
+from course.bulk_version_generation import classify_all_source_versions
 from course.services import sync_course_outline
 from course.variant_generator import fill_missing_slots, generate_standalone_variants
 from question_generation.models import GenerationRun
 from .services.topic_publish import confirmed_materials_for, run_topic_publish
-from course.version_assignment import assign_group_versions, assign_source_to_slot, settle_group
+from course.version_assignment import (
+    assign_group_versions,
+    assign_source_as_representative,
+    assign_source_to_slot,
+)
 
 from .models import (
     CourseGroup,
@@ -85,6 +90,36 @@ from .services.question_workflow import (
 logger = logging.getLogger(__name__)
 
 
+def _active_topic_run(outline_node, *, stale_after=timedelta(minutes=30)):
+    """Return a live topic run and close runs that stopped reporting progress."""
+    cutoff = timezone.now() - stale_after
+    for run in GenerationRun.objects.filter(
+        outline_node=outline_node,
+        status="running",
+    ).order_by("-id"):
+        latest_event = run.events.order_by("-created_at").first()
+        last_activity = latest_event.created_at if latest_event else run.started_at
+        if last_activity >= cutoff:
+            return run
+
+        from question_generation.models import GenerationEvent
+
+        next_seq = (run.events.aggregate(max_seq=Max("seq"))["max_seq"] or 0) + 1
+        GenerationEvent.objects.create(
+            run=run,
+            seq=next_seq,
+            event_type="topic_task_abandoned",
+            message=(
+                "This task stopped reporting progress and was closed automatically "
+                "so it can be retried."
+            ),
+        )
+        run.status = "failed"
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "finished_at"])
+    return None
+
+
 def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
     """Thread entry point. Owns the run's lifecycle and nothing else."""
     from question_generation.models import GenerationEvent
@@ -101,7 +136,7 @@ def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
     try:
         course = CourseGroup.objects.get(id=course_id)
         node = OutlineNode.objects.get(id=node_id)
-        run_topic_publish(
+        summary = run_topic_publish(
             course, node,
             set_confirmed=lambda material: set_confirmed(material, True),
             on_event=record,
@@ -117,7 +152,7 @@ def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
 
 
 def _run_all_versions_in_background(run_id, node_id):
-    """Generate every missing version while recording pollable progress."""
+    """Classify all existing PDF variants while recording pollable progress."""
     from question_generation.models import GenerationEvent
 
     run = GenerationRun.objects.get(id=run_id)
@@ -131,7 +166,7 @@ def _run_all_versions_in_background(run_id, node_id):
 
     try:
         node = OutlineNode.objects.get(id=node_id)
-        generate_all_missing_versions(node, on_event=record)
+        classify_all_source_versions(node, on_event=record)
         run.status = "finished"
     except Exception as exc:
         logger.exception("Bulk version run %s failed", run_id)
@@ -272,6 +307,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     "versions": {
                         "representative_id": version_state["representative_id"],
                         "original_selected": version_state.get("original_selected", False),
+                        "classification_complete": version_state.get("classification_complete", True),
                         "slots": slot_rows,
                         "extras": extra_rows,
                         "needs_confirmation": version_state["needs_confirmation"],
@@ -290,6 +326,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 }
             )
         payload = {
+            "grouping_warnings": [
+                material.generated_json["grouping_warning"]
+                for material in node.materials.all()
+                if (material.generated_json or {}).get("grouping_warning")
+            ],
             "outline_node": OutlineNodeSerializer(node, context={"request": request}).data,
             "learning_object_groups": groups,
             "matching_debug": learning_object_match_debug_configuration(),
@@ -845,9 +886,43 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     {"detail": "This question already exists in this topic.", "duplicate_question_id": duplicate.id},
                     status=status.HTTP_409_CONFLICT,
                 )
+            update_pairing = "learning_object_group_id" in request.data
+            target_group = None
+            representative = None
+            if update_pairing:
+                raw_group_id = request.data.get("learning_object_group_id")
+                if raw_group_id not in (None, ""):
+                    try:
+                        target_group = LearningObjectGroup.objects.get(pk=int(raw_group_id), outline_node=node)
+                    except (TypeError, ValueError, LearningObjectGroup.DoesNotExist):
+                        return Response(
+                            {"detail": "Selected concept was not found in this outline node."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    representative = target_group.learning_objects.filter(
+                        material__generated_json__learning_objects_confirmed=True,
+                    ).order_by("material_id", "order", "id").first()
+                    if representative is None:
+                        return Response(
+                            {"detail": "The selected concept has no confirmed learning objects."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
             for field, value in values.items():
                 setattr(question, field, value)
             question.save(update_fields=list(values))
+
+            if update_pairing:
+                question.learning_object_links.all().delete()
+                if target_group is not None:
+                    QuestionLearningObjectLink.objects.create(
+                        question=question,
+                        learning_object=representative,
+                        relevance_score=0.0,
+                        method="teacher_selected",
+                        is_primary=True,
+                        review_status=QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
+                        reviewed_at=timezone.now(),
+                    )
             sync_question_to_adaptive(question)
             generated_json = material.generated_json or {}
             generated_json["questions"] = question_snapshots(material)
@@ -1009,12 +1084,32 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        result = fill_missing_slots(learning_object)
+        requested_slot = str(request.data.get("slot") or "").upper()
+        if requested_slot and requested_slot not in ("SIMPLIFIED", "ELABORATED"):
+            return Response(
+                {"detail": "Choose Simplified or Elaborated."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if learning_object.group_id:
+            version_state = assign_group_versions(learning_object.group)
+            if not version_state.get("classification_complete"):
+                return Response(
+                    {"detail": "Classify the existing PDF variants before generating a missing version."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            learning_object = LearningObject.objects.get(
+                pk=version_state["representative_id"],
+            )
+        result = fill_missing_slots(
+            learning_object,
+            target_slots=[requested_slot] if requested_slot else None,
+        )
         payload = self._learning_resources_payload(node, request)
         payload["version_generation"] = {
             "learning_object_id": learning_object.id,
             "generated": result["generated"],
-            "skipped": result["skipped"],
+            "skipped": result.get("skipped", []),
             "errors": result["errors"],
         }
         return Response(payload)
@@ -1025,7 +1120,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/generate-all-versions",
     )
     def generate_all_versions(self, request, pk=None, node_id=None):
-        """Start background generation for all missing version slots in a topic."""
+        """Start background classification of all existing PDF variants."""
         course = self.get_object()
         try:
             node = course.nodes.get(pk=node_id)
@@ -1035,10 +1130,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        active = GenerationRun.objects.filter(
-            outline_node=node,
-            status="running",
-        ).order_by("-id").first()
+        active = _active_topic_run(node)
         if active is not None:
             return Response(
                 {"detail": "Another topic task is already running.", "run_id": active.id},
@@ -1088,10 +1180,13 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             )
 
         variant.narration = narration
+        variant.audio_url = ""
+        from course.variant_generator import _fingerprint
+        variant.source_fingerprint = _fingerprint(variant.learning_object)
         # origin records where the wording came from and stays put; assigned_by
         # is what records that a teacher has since had a hand in it.
         variant.assigned_by = LessonVariant.AssignedBy.TEACHER
-        variant.save(update_fields=["narration", "assigned_by"])
+        variant.save(update_fields=["narration", "assigned_by", "audio_url", "source_fingerprint"])
 
         return Response(self._learning_resources_payload(node, request))
 
@@ -1109,9 +1204,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
 
         slot = str(request.data.get("slot", "")).upper()
-        if slot not in ("SIMPLIFIED", "ELABORATED", "EXTRA"):
+        if slot not in ("NORMAL", "SIMPLIFIED", "ELABORATED", "EXTRA"):
             return Response(
-                {"detail": "slot must be SIMPLIFIED, ELABORATED or EXTRA."},
+                {"detail": "slot must be NORMAL, SIMPLIFIED, ELABORATED or EXTRA."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1134,16 +1229,42 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
         state = assign_group_versions(learning_object.group)
         representative_id = state["representative_id"]
-        if representative_id is None or representative_id == learning_object.id:
+        if representative_id is None:
             return Response(
-                {"detail": "This object is the original and cannot fill another slot."},
+                {"detail": "This concept has no Normal version."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if slot == "NORMAL":
+            try:
+                assign_source_as_representative(learning_object.group, learning_object)
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            payload = self._learning_resources_payload(node, request)
+            payload["version_assignment"] = {
+                "slot": slot,
+                "source_learning_object_id": learning_object.id,
+                "moved_to_extra": None,
+            }
+            return Response(payload)
+
+        if representative_id == learning_object.id:
+            return Response(
+                {"detail": "Choose another PDF source as Normal before moving this one."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         representative = LearningObject.objects.get(pk=representative_id)
+        previous = LessonVariant.objects.filter(learning_object=representative, variant=slot).first() if slot != "EXTRA" else None
+        displaced_id = previous.source_learning_object_id if previous else None
         assign_source_to_slot(representative, learning_object, slot)
-
-        return Response(self._learning_resources_payload(node, request))
+        payload = self._learning_resources_payload(node, request)
+        payload["version_assignment"] = {
+            "slot": slot,
+            "source_learning_object_id": learning_object.id,
+            "moved_to_extra": displaced_id if displaced_id != learning_object.id else None,
+        }
+        return Response(payload)
 
     @action(
         detail=True,

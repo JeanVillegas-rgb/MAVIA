@@ -334,8 +334,11 @@ export function updateTopicQuestion(courseId, nodeId, questionId, data) {
   );
 }
 
-export function startQuestionGeneration(materialId) {
-  return request(`/generation/materials/${materialId}/start/`, { method: "POST" });
+export function startQuestionGeneration(materialId, learningObjectId = null) {
+  const path = learningObjectId
+    ? `/generation/materials/${materialId}/nodes/${learningObjectId}/start/`
+    : `/generation/materials/${materialId}/start/`;
+  return request(path, { method: "POST" });
 }
 
 export function fetchQuestionGenerationTrace(runId) {
@@ -405,10 +408,14 @@ export function assignVersionSlot(courseId, nodeId, learningObjectId, slot) {
 
 // One object at a time: a single Gemma call runs for minutes, so this request
 // is deliberately slow and the caller must show that it is working.
-export function generateObjectVersions(courseId, nodeId, learningObjectId) {
+export function generateObjectVersions(courseId, nodeId, learningObjectId, slot) {
   return request(
     `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/generate-versions/`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot }),
+    },
   );
 }
 

@@ -277,7 +277,7 @@ No category/title heuristics and no best-member/transitive chaining shortcut.
     engine = runtime_instance or runtime()
     config = thresholds or policy()
     if not engine.supports(content):
-        return []
+        raise SemanticUnavailable("This learning object is empty or exceeds the model's text limit. Review its connection manually; it has not been scored.")
     candidates = [item for item in candidates if engine.supports(item.content)]
     if not candidates:
         return []

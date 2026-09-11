@@ -290,6 +290,22 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
             )
 
     with transaction.atomic():
+        # A concept owns one question bank, grounded in its Normal source.
+        # When that bank is regenerated, remove older generated banks attached
+        # to Simplified, Elaborated, or Extra source objects in the same group.
+        if node.group_id:
+            obsolete = GeneratedQuestion.objects.filter(
+                node__group_id=node.group_id,
+            ).exclude(node=node)
+            obsolete_ids = list(obsolete.values_list("id", flat=True))
+            if obsolete_ids:
+                from lessons.models import Question
+                Question.objects.filter(
+                    source_type=Question.SourceType.GENERATED,
+                    adaptive_question_id__in=obsolete_ids,
+                ).delete()
+                obsolete.delete()
+
         # the previous run's questions are replaced only now, once this run
         # actually has something to replace them with
         replaced, _ = GeneratedQuestion.objects.filter(node=node, status="final").delete()
@@ -366,7 +382,6 @@ def generate_questions_for_material(material, on_event=None, node_ids=None):
 
     nodes_qs = (
         material.learning_objects
-        .filter(kind="text")
         .exclude(content="")
         .order_by("order")
     )

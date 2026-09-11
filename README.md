@@ -28,8 +28,23 @@ lower scores are ignored. Question pairing uses configurable TF-IDF, source-bloc
 proximity, and same-page evidence. High-confidence question pairs can be automatic;
 uncertain or unmatched pairs require a teacher decision.
 
-Sentence-BERT is not currently implemented. It is a possible future semantic signal,
-not part of the present methodology.
+The paragraph above describes the optional legacy matcher. The default semantic
+mode uses `sentence-transformers/all-MiniLM-L6-v2` to shortlist groups and
+`cross-encoder/stsb-roberta-base` to compare their members. Defaults are 0.60
+cross-encoder similarity, 0.60 minimum SBERT cosine, and 0.05 winner margin for
+automatic grouping; 0.30 starts the review range. Environment settings override
+these defaults. Scores are not accuracy percentages. Model availability and
+performance on real teacher-labeled content must be verified separately.
+
+Teacher content versions use Gemma to propose a Normal baseline and source roles.
+Readability checks gate automatic Simplified/Elaborated assignments. Teachers can
+correct assignments; displaced sources remain under Other source versions.
+Publishing reports failure when required content or audio generation fails.
+Normal narration and active Simplified/Elaborated audio are prepared by the
+backend, with reuse for unchanged text and voice settings.
+
+See [Teacher publishing validation](docs/TEACHER_PUBLISHING_VALIDATION.md) for
+the milestone scope and evaluation still needed before making accuracy claims.
 
 ## Verification
 

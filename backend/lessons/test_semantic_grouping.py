@@ -60,7 +60,8 @@ class SemanticPureTests(SimpleTestCase):
         a = SimpleNamespace(id=1, group_id=4, content="definition")
         for text in ("", "TOO LONG"):
             engine = FakeRuntime()
-            self.assertEqual(semantic.rank_groups(text, [a], {4: [a]}, runtime_instance=engine), [])
+            with self.assertRaises(semantic.SemanticUnavailable):
+                semantic.rank_groups(text, [a], {4: [a]}, runtime_instance=engine)
             self.assertEqual(engine.inputs, [])
 
     @patch.dict(os.environ, {

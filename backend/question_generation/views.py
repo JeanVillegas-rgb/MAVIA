@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from lessons.models import LearningMaterial
 from lessons.services.audio_generator import mark_material_audio_stale
+from course.version_assignment import assign_group_versions
 
 from .models import GeneratedQuestion, GenerationEvent, GenerationRun, LearnerResponse
 from .serializers import QuestionSerializer
@@ -139,6 +140,21 @@ class QuestionStatsView(APIView):
 STALE_RUN_SECONDS = 300
 
 
+def _normal_question_source(node):
+    """Return the sole question source for a concept, or an actionable error."""
+    if node.group_id is None:
+        return node, ""
+    state = assign_group_versions(node.group)
+    if not state.get("classification_complete") or not state.get("original_selected"):
+        return None, "Classify this concept's PDF variants before generating questions."
+    normal = node.group.learning_objects.filter(
+        pk=state["representative_id"],
+    ).first()
+    if normal is None or not (normal.content or "").strip():
+        return None, "This concept has no usable Normal version."
+    return normal, ""
+
+
 def _run_pipeline(run_id, material_id, node_ids=None):
     """Thread target: run the pipeline, streaming trace events to the DB."""
     from .services.pipeline import generate_questions_for_material
@@ -175,9 +191,10 @@ class StartGenerationView(APIView):
     POST /api/generation/materials/<material_id>/start/
     Body (optional): {"node_id": <learning_object_id>}
 
-    Teacher-triggered: generate questions for every text learning object of
-    a completed material, or for a single learning object when node_id is
-    given. Runs in the background; poll the trace endpoint.
+    Teacher-triggered: generate questions for every narrated learning object
+    of a completed material, or for a single learning object when node_id is
+    given. Image objects are valid when their narration has been written.
+    Runs in the background; poll the trace endpoint.
     """
     def post(self, request, material_id, node_id=None):
         try:
@@ -192,22 +209,49 @@ class StartGenerationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        text_nodes = material.learning_objects.filter(kind="text").exclude(content="")
-        if not text_nodes.exists():
+        content_nodes = material.learning_objects.exclude(content="")
+        if not content_nodes.exists():
             return Response(
-                {"error": "Material has no text learning objects to generate from"},
+                {"error": "Material has no narrated learning objects to generate from"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         node = None
         requested_node_id = node_id if node_id is not None else request.data.get("node_id")
         if requested_node_id is not None:
-            node = text_nodes.filter(id=requested_node_id).first()
+            node = content_nodes.filter(id=requested_node_id).first()
             if node is None:
                 return Response(
                     {"error": "Learning object not found for this material "
-                              "(or it has no text content)"},
+                              "(or it has no narration content)"},
                     status=status.HTTP_404_NOT_FOUND,
+                )
+            normal, normal_error = _normal_question_source(node)
+            if normal_error:
+                return Response({"error": normal_error}, status=status.HTTP_409_CONFLICT)
+            if normal.id != node.id:
+                return Response(
+                    {"error": "Questions can only be generated from this concept's Normal version.",
+                     "normal_learning_object_id": normal.id},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            normal_ids = []
+            seen_groups = set()
+            for candidate in content_nodes.select_related("group"):
+                scope_key = candidate.group_id or f"object:{candidate.id}"
+                if scope_key in seen_groups:
+                    continue
+                seen_groups.add(scope_key)
+                normal, normal_error = _normal_question_source(candidate)
+                if normal_error:
+                    return Response({"error": normal_error}, status=status.HTTP_409_CONFLICT)
+                if normal.material_id == material.id:
+                    normal_ids.append(normal.id)
+            if not normal_ids:
+                return Response(
+                    {"error": "This material contains no Normal learning objects to generate from."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
         # one run at a time; unstick runs orphaned by a server restart
@@ -227,7 +271,7 @@ class StartGenerationView(APIView):
         run = GenerationRun.objects.create(material=material, node=node)
         threading.Thread(
             target=_run_pipeline,
-            args=(run.id, material.id, [node.id] if node else None),
+            args=(run.id, material.id, [node.id] if node else normal_ids),
             daemon=True,
         ).start()
         return Response(
@@ -252,7 +296,7 @@ class MaterialQuestionsView(APIView):
             return Response({"error": "Material not found"},
                             status=status.HTTP_404_NOT_FOUND)
 
-        nodes = material.learning_objects.filter(kind="text").order_by("order", "id")
+        nodes = material.learning_objects.exclude(content="").order_by("order", "id")
         payload = []
         for node in nodes:
             questions = sorted(

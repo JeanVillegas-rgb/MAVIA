@@ -53,6 +53,7 @@ class VersionReviewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         group = response.data["learning_object_groups"][0]
         self.assertEqual(group["versions"]["representative_id"], self.first.id)
+        self.assertFalse(group["versions"]["classification_complete"])
         self.assertEqual(len(group["versions"]["needs_confirmation"]), 1)
         self.assertFalse(group["versions"]["complete"])
 
@@ -112,10 +113,65 @@ class VersionReviewTests(TestCase):
     def test_invalid_slot_is_rejected(self):
         response = self.client.post(
             f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/",
-            {"learning_object_id": self.second.id, "slot": "NORMAL"},
+            {"learning_object_id": self.second.id, "slot": "ORIGINAL"},
             format="json",
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_teacher_can_swap_a_pdf_source_into_normal(self):
+        url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
+        self.client.post(
+            url,
+            {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"},
+            format="json",
+        )
+        LessonVariant.objects.create(
+            learning_object=self.first,
+            variant="ELABORATED",
+            narration="Generated from the old Normal.",
+            origin=LessonVariant.Origin.GENERATED,
+        )
+
+        response = self.client.post(
+            url,
+            {"learning_object_id": self.second.id, "slot": "NORMAL"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        group = response.data["learning_object_groups"][0]
+        self.assertEqual(group["versions"]["representative_id"], self.second.id)
+        self.first.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertEqual(self.first.represented_by, self.second)
+        self.assertIsNone(self.second.represented_by)
+        swapped = LessonVariant.objects.get(
+            learning_object=self.second,
+            variant="SIMPLIFIED",
+        )
+        self.assertEqual(swapped.source_learning_object, self.first)
+        self.assertFalse(
+            LessonVariant.objects.filter(
+                learning_object=self.second,
+                variant="ELABORATED",
+            ).exists()
+        )
+
+    def test_replacing_simplified_preserves_previous_source_as_extra(self):
+        third = self._object("PDF three", timezone.now(), "A solid keeps its own shape.")
+        url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
+        first_response = self.client.post(url, {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"}, format="json")
+        self.assertEqual(first_response.status_code, 200)
+        response = self.client.post(url, {"learning_object_id": third.id, "slot": "SIMPLIFIED"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["version_assignment"]["moved_to_extra"], self.second.id)
+        self.assertEqual(LessonVariant.objects.get(learning_object=self.first, variant="SIMPLIFIED").source_learning_object_id, third.id)
+        extra = LessonVariant.objects.get(learning_object=self.first, variant="EXTRA")
+        self.assertEqual(extra.source_learning_object_id, self.second.id)
+        self.assertEqual(extra.narration, self.second.content)
+        response = self.client.post(url, {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LessonVariant.objects.filter(learning_object=self.first).count(), 2)
 
     def test_object_outside_the_topic_is_rejected(self):
         other_course = CourseGroup.objects.create(title="Other")

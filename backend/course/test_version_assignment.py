@@ -75,9 +75,17 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(row.origin, "source_pdf")
         self.assertEqual(row.source_learning_object, second)
         self.assertEqual(row.assigned_by, "llm_validated")
+        self.assertTrue(result["classification_complete"])
+
+        # The model result is durable: opening the review payload again does
+        # not make another expensive classification request.
+        refreshed = assign_group_versions(self.group)
+        self.assertTrue(refreshed["classification_complete"])
+        self.assertEqual(refreshed["representative_id"], first.id)
+        classify.assert_called_once()
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_llm_disagreement_is_routed_to_teacher(self, classify):
+    def test_llm_classification_is_applied_when_readability_disagrees(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
         classify.return_value = {
@@ -87,9 +95,10 @@ class VersionAssignmentTests(TestCase):
 
         result = assign_group_versions(self.group, use_llm=True)
 
-        self.assertEqual(result["assigned"], [])
-        self.assertEqual(result["needs_confirmation"][0]["llm_slot"], "SIMPLIFIED")
-        self.assertFalse(LessonVariant.objects.exists())
+        self.assertEqual(result["needs_confirmation"], [])
+        self.assertEqual(result["assigned"][0]["slot"], "SIMPLIFIED")
+        row = LessonVariant.objects.get(learning_object=first, variant="SIMPLIFIED")
+        self.assertEqual(row.source_learning_object, second)
 
     @patch("course.version_assignment.classify_group_versions")
     def test_grouped_original_is_selected_by_llm_not_upload_order(self, classify):
@@ -109,6 +118,21 @@ class VersionAssignmentTests(TestCase):
         )
         self.assertEqual(simplified.source_learning_object, first)
 
+    @patch("course.version_assignment.classify_group_versions")
+    def test_llm_extra_is_stored_automatically(self, classify):
+        first = self._object(self._material("PDF one", 0), SHORT)
+        second = self._object(self._material("PDF two", 5), MIDDLING)
+        classify.return_value = {
+            first.id: {"slot": "ORIGINAL", "confidence": 0.91, "reason": "Baseline."},
+            second.id: {"slot": "EXTRA", "confidence": 0.72, "reason": "Equivalent wording."},
+        }
+
+        result = assign_group_versions(self.group, use_llm=True)
+
+        self.assertEqual(result["needs_confirmation"], [])
+        extra = LessonVariant.objects.get(learning_object=first, variant="EXTRA")
+        self.assertEqual(extra.source_learning_object, second)
+
     def test_thin_margin_is_routed_to_the_teacher_not_stored(self):
         first = self._object(self._material("PDF one", 0), SHORT)
         self._object(self._material("PDF two", 5), MIDDLING)
@@ -118,6 +142,7 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(result["assigned"], [])
         self.assertEqual(len(result["needs_confirmation"]), 1)
         self.assertFalse(result["needs_confirmation"][0]["confident"])
+        self.assertFalse(result["classification_complete"])
         self.assertFalse(LessonVariant.objects.filter(learning_object=first).exists())
 
     @patch("course.version_assignment.classify_group_versions")
@@ -182,3 +207,17 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(result["needs_confirmation"], [])
         self.assertEqual(result["assigned"][0]["learning_object_id"], second.id)
         self.assertTrue(result["assigned"][0]["persisted"])
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_old_singleton_generation_does_not_choose_group_baseline(self, classify):
+        first = self._object(self._material("First PDF", 0), SHORT)
+        LessonVariant.objects.create(learning_object=first, variant="SIMPLIFIED", narration="Previously generated.")
+        second = self._object(self._material("New PDF", 5), MIDDLING)
+        classify.return_value = {
+            first.id: {"slot": "EXTRA", "confidence": 0.9, "reason": "Alternative."},
+            second.id: {"slot": "ORIGINAL", "confidence": 0.9, "reason": "Balanced."},
+        }
+        result = assign_group_versions(self.group, use_llm=True)
+        self.assertEqual(result["representative_id"], second.id)
+        self.assertFalse(LessonVariant.objects.filter(learning_object=first).exists())
+        self.assertEqual(assign_group_versions(self.group)["representative_id"], second.id)

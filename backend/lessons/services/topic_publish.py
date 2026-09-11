@@ -15,8 +15,9 @@ from course.services import sync_course_outline
 from course.version_assignment import settle_group
 
 from ..models import LearningMaterial, LearningObject
-from .audio_generator import AudioGenerationError, generate_material_audio_playlist
+from .audio_generator import AudioGenerationError, generate_material_audio_playlist, generate_version_audio
 from .image_describer import populate_missing_image_descriptions
+from .content_generator import build_narration_script_from_learning_objects, build_lesson_playlist
 
 
 def _noop(event_type, message, **data):
@@ -44,6 +45,8 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
     """
     emit = on_event or _noop
     materials = list(confirmed_materials_for(course, node))
+    if not materials:
+        raise ValueError("Confirm at least one lesson file before publishing.")
 
     emit(
         "publish_started",
@@ -75,7 +78,7 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
     # Assignment normally happened at review; this is a backstop for content
     # edited afterwards. Settled groups generate nothing.
     sync_course_outline(course.id)
-    groups = list(node.learning_object_groups.all())
+    groups = list(node.learning_object_groups.filter(learning_objects__material__in=materials).distinct())
     variant_generated = []
     variant_errors = []
     for index, group in enumerate(groups, start=1):
@@ -100,12 +103,11 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
     incomplete_versions = []
     for candidate in LearningObject.objects.filter(
         material__outline_node=node,
+        material__in=materials,
         represented_by__isnull=True,
     ).prefetch_related("variants"):
-        if not (candidate.content or "").strip():
-            continue
-        slots = {row.variant for row in candidate.variants.all()}
-        if not {"SIMPLIFIED", "ELABORATED"}.issubset(slots):
+        slots = {row.variant for row in candidate.variants.all() if row.narration.strip()}
+        if not (candidate.content or "").strip() or not {"SIMPLIFIED", "ELABORATED"}.issubset(slots):
             incomplete_versions.append(candidate.id)
     if incomplete_versions:
         emit(
@@ -123,7 +125,19 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
             index=index, total=len(materials), material_id=material.id,
         )
         try:
-            result = generate_material_audio_playlist(material, scope="lessons")
+            active_objects = list(material.learning_objects.filter(represented_by__isnull=True).order_by("order", "id"))
+            narration = build_narration_script_from_learning_objects([
+                {"learning_object_id": item.id, "title": item.title, "content": item.content,
+                 "type": "image_description" if item.kind == "image" else "teacher_text",
+                 "section_title": item.section_title, "source_page": item.source_page}
+                for item in active_objects
+            ])
+            material.generated_json = {**(material.generated_json or {}),
+                "narration_script": narration, "lesson_playlist": build_lesson_playlist(narration)}
+            material.save(update_fields=["generated_json"])
+            result = generate_material_audio_playlist(material, scope="lessons") if active_objects else {"generated_count": 0}
+            version_audio = generate_version_audio(material)
+            result["generated_count"] += version_audio["generated_count"]
             audio_generated += result["generated_count"]
             emit(
                 "audio_finished",
@@ -139,13 +153,14 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
                 index=index, total=len(materials), material_id=material.id,
             )
 
-    node.published = True
-    node.published_at = timezone.now()
+    ready = not (image_errors or variant_errors or incomplete_versions or audio_errors)
+    node.published = ready
+    node.published_at = timezone.now() if ready else None
     node.save(update_fields=["published", "published_at"])
 
     summary = {
-        "published": True,
-        "published_at": node.published_at.isoformat(),
+        "published": ready,
+        "published_at": node.published_at.isoformat() if node.published_at else None,
         "audio_generated_count": audio_generated,
         "materials_processed": len(materials),
         "audio_errors": audio_errors,
@@ -155,5 +170,9 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
         "image_descriptions_generated": image_generated,
         "image_description_errors": image_errors,
     }
-    emit("publish_finished", f"{node.title} published", node_id=node.id, summary=summary)
+    emit(
+        "publish_finished" if ready else "publish_failed",
+        f"{node.title} published" if ready else "Publishing incomplete. Resolve the reported content or audio errors and retry.",
+        node_id=node.id, summary=summary,
+    )
     return summary

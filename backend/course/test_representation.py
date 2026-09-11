@@ -161,7 +161,7 @@ class RepresentationTests(TestCase):
         )
 
     @patch("course.variant_generator._request_variants")
-    def test_unconfident_member_is_not_flagged(self, request_variants):
+    def test_llm_classified_member_is_represented_despite_thin_readability_margin(self, request_variants):
         request_variants.return_value = {"SIMPLIFIED": "a", "ELABORATED": "b"}
         LearningObject.objects.filter(pk=self.second.pk).update(group=None)
         middling = self._object(
@@ -171,4 +171,4 @@ class RepresentationTests(TestCase):
         settle_group(self.group)
 
         middling.refresh_from_db()
-        self.assertIsNone(middling.represented_by)
+        self.assertEqual(middling.represented_by, self.first)

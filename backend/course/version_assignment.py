@@ -1,15 +1,16 @@
 """Decide which grouped text becomes which version of a learning object.
 
 A group's members are alternative presentations of one concept, written by
-different teachers. The earliest upload is the original. Gemma may propose
-roles for the remaining versions, but an automatic assignment is made only
-when independent readability evidence agrees with that proposal.
+different teachers. Gemma chooses the baseline and assigns the remaining
+versions. Readability evidence is retained for review, and a teacher can move
+any source version after the automatic assignment.
 """
 
 import logging
+import hashlib
 
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 
 from .models import LessonVariant
 from .readability import compare
@@ -30,11 +31,11 @@ def choose_representative(members):
 
 
 def assign_group_versions(group, *, use_llm=False):
-    """Fill this group's primary slots from its own members.
+    """Classify this group's source members and fill its version slots.
 
-    Confident comparisons are written immediately. Unconfident ones are
-    returned for a teacher to settle and are deliberately NOT stored: an
-    unreviewed guess in the database is indistinguishable from a decision.
+    When requested, Gemma's assignments are stored automatically. Calls that
+    do not invoke the model expose unresolved members without guessing, so the
+    review screen can wait for the teacher-triggered Generate all run.
     """
     members = [
         item
@@ -45,6 +46,7 @@ def assign_group_versions(group, *, use_llm=False):
         return {
             "representative_id": members[0].id if members else None,
             "original_selected": bool(members),
+            "classification_complete": True,
             "assigned": [],
             "needs_confirmation": [],
             "extras": 0,
@@ -52,22 +54,40 @@ def assign_group_versions(group, *, use_llm=False):
         }
 
     member_ids = {item.id for item in members}
+    signature = hashlib.sha256("|".join(
+        f"{item.id}:{item.content}" for item in sorted(members, key=lambda item: item.id)
+    ).encode()).hexdigest()
+    selection = group.version_selection or {}
+    classification_complete = selection.get("classification_signature") == signature
     # Once source/generated slots have been stored, their owner is the durable
     # original. This prevents a later refresh from silently reshuffling the
     # learning path. Before that first classification, upload order is only a
     # UI fallback and is not treated as a version decision.
     stored_owner_id = (
         LessonVariant.objects.filter(learning_object_id__in=member_ids)
+        .filter(models.Q(source_learning_object__isnull=False) | models.Q(assigned_by="teacher"))
         .order_by("-assigned_by", "id")
         .values_list("learning_object_id", flat=True)
         .first()
     )
+    if stored_owner_id is None and selection.get("signature") == signature:
+        stored_owner_id = selection.get("representative_id")
     representative = next(
         (item for item in members if item.id == stored_owner_id),
         None,
     )
     original_selected = representative is not None
     classifications = {}
+    if classification_complete:
+        try:
+            classifications = {
+                int(item_id): result
+                for item_id, result in (selection.get("classification_assignments") or {}).items()
+                if int(item_id) in member_ids
+            }
+        except (TypeError, ValueError):
+            classifications = {}
+            classification_complete = False
     classification_error = ""
 
     if use_llm and representative is None:
@@ -80,6 +100,21 @@ def assign_group_versions(group, *, use_llm=False):
             )
             representative = next(item for item in members if item.id == original_id)
             original_selected = True
+            with transaction.atomic():
+                # Remove only obsolete, unedited generated placements after a
+                # successful new selection. Uploaded source objects remain.
+                LessonVariant.objects.filter(
+                    learning_object_id__in=member_ids,
+                    origin=LessonVariant.Origin.GENERATED,
+                ).exclude(assigned_by=LessonVariant.AssignedBy.TEACHER).exclude(
+                    learning_object_id=representative.id,
+                ).delete()
+                group.version_selection = {
+                    **selection,
+                    "representative_id": original_id,
+                    "signature": signature,
+                }
+                group.save(update_fields=["version_selection"])
         except (VersionClassificationError, StopIteration) as exc:
             classification_error = str(exc)
             logger.warning(
@@ -131,13 +166,10 @@ def assign_group_versions(group, *, use_llm=False):
         llm = classifications.get(candidate.id)
         llm_slot = llm["slot"] if llm else None
         llm_confidence = llm["confidence"] if llm else None
-        validated = bool(
-            llm
-            and llm_slot in PRIMARY_SLOTS
-            and llm_confidence >= settings.CONTENT_VERSION_LLM_AUTO_THRESHOLD
-            and verdict["confident"]
-            and verdict["slot"] == llm_slot
-        )
+        # Gemma owns the source-version classification. Readability remains
+        # visible evidence for teacher review, but it no longer vetoes the
+        # model's role assignment; teachers can move any source afterward.
+        validated = bool(llm and llm_slot in (*PRIMARY_SLOTS, "EXTRA"))
         proposals.append({
             "learning_object_id": candidate.id,
             "object": candidate,
@@ -176,6 +208,15 @@ def assign_group_versions(group, *, use_llm=False):
             needs_confirmation.append(_public(proposal))
             continue
         slot = proposal["slot"]
+        if slot == "EXTRA":
+            _store(
+                representative,
+                proposal["object"],
+                "EXTRA",
+                assigned_by=LessonVariant.AssignedBy.LLM_VALIDATED,
+            )
+            extras += 1
+            continue
         if slot in claimed:
             _store(
                 representative,
@@ -194,9 +235,26 @@ def assign_group_versions(group, *, use_llm=False):
         )
         assigned.append(_public(proposal))
 
+    if use_llm and settings.CONTENT_VERSION_LLM_ENABLED and not classification_error:
+        # Persist both completion and the model evidence. A later GET can then
+        # render only genuine review cases without making another slow LLM call.
+        selection = group.version_selection or {}
+        selection.update({
+            "representative_id": representative.id,
+            "signature": signature,
+            "classification_signature": signature,
+            "classification_assignments": {
+                str(item_id): result for item_id, result in classifications.items()
+            },
+        })
+        group.version_selection = selection
+        group.save(update_fields=["version_selection"])
+        classification_complete = True
+
     return {
         "representative_id": representative.id,
         "original_selected": original_selected,
+        "classification_complete": classification_complete,
         "assigned": assigned,
         "needs_confirmation": needs_confirmation,
         "extras": extras,
@@ -225,7 +283,7 @@ def assign_source_to_slot(representative, source, slot):
         ).select_related("source_learning_object").first()
         if displaced is not None:
             displaced_source = displaced.source_learning_object
-            if displaced_source is not None and displaced_source_id != source.id:
+            if displaced_source is not None and displaced_source.id != source.id:
                 # The teacher's new choice wins the primary slot, but wording
                 # from another PDF is retained as an extra rather than erased.
                 LessonVariant.objects.create(
@@ -250,6 +308,92 @@ def assign_source_to_slot(representative, source, slot):
         source.represented_by = representative
         source.save(update_fields=["represented_by"])
     return row
+
+
+@transaction.atomic
+def assign_source_as_representative(group, source):
+    """Make a source-PDF member Normal and swap the old Normal into its role."""
+    state = assign_group_versions(group)
+    representative_id = state["representative_id"]
+    if representative_id is None:
+        raise ValueError("This group has no Normal version")
+    if source.group_id != group.id:
+        raise ValueError("The selected source is not in this concept group")
+    if source.id == representative_id:
+        return source
+
+    representative = group.learning_objects.get(pk=representative_id)
+    selected_row = LessonVariant.objects.filter(
+        learning_object=representative,
+        source_learning_object=source,
+    ).first()
+    if selected_row is None:
+        raise ValueError("Classify this PDF source before making it Normal")
+    previous_slot = selected_row.variant
+
+    # Generated wording was grounded in the old Normal and must be regenerated
+    # against the new baseline. Teacher-edited generated wording is preserved.
+    preserved_rows = list(
+        LessonVariant.objects.filter(learning_object=representative)
+        .exclude(pk=selected_row.pk)
+        .exclude(
+            origin=LessonVariant.Origin.GENERATED,
+            assigned_by__in=(
+                LessonVariant.AssignedBy.HEURISTIC,
+                LessonVariant.AssignedBy.LLM_VALIDATED,
+            ),
+        )
+    )
+    LessonVariant.objects.filter(learning_object_id__in=[
+        item.id for item in group.learning_objects.all()
+    ]).delete()
+
+    for row in preserved_rows:
+        LessonVariant.objects.create(
+            learning_object=source,
+            variant=row.variant,
+            narration=row.narration,
+            audio_url=row.audio_url,
+            source_fingerprint=row.source_fingerprint,
+            generator_model=row.generator_model,
+            generated_at=row.generated_at,
+            origin=row.origin,
+            source_learning_object=row.source_learning_object,
+            assigned_by=row.assigned_by,
+        )
+
+    LessonVariant.objects.create(
+        learning_object=source,
+        variant=previous_slot,
+        narration=representative.content,
+        origin=LessonVariant.Origin.SOURCE_PDF,
+        source_learning_object=representative,
+        assigned_by=LessonVariant.AssignedBy.TEACHER,
+    )
+
+    group.learning_objects.exclude(pk=source.pk).update(represented_by=source)
+    source.represented_by = None
+    source.save(update_fields=["represented_by"])
+
+    selection = group.version_selection or {}
+    assignments = dict(selection.get("classification_assignments") or {})
+    assignments[str(source.id)] = {
+        "slot": "ORIGINAL",
+        "confidence": 1.0,
+        "reason": "Teacher selected as Normal.",
+    }
+    assignments[str(representative.id)] = {
+        "slot": previous_slot,
+        "confidence": 1.0,
+        "reason": "Moved from Normal when the teacher selected a new baseline.",
+    }
+    selection.update({
+        "representative_id": source.id,
+        "classification_assignments": assignments,
+    })
+    group.version_selection = selection
+    group.save(update_fields=["version_selection"])
+    return source
 
 
 def _public(proposal):
@@ -280,6 +424,9 @@ def _store(
         variant=slot,
         defaults={
             "narration": source.content,
+            "audio_url": "",
+            "source_fingerprint": "",
+            "generator_model": "",
             "origin": LessonVariant.Origin.SOURCE_PDF,
             "source_learning_object": source,
             "assigned_by": assigned_by,

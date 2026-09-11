@@ -24,6 +24,6 @@ class Command(BaseCommand):
             with output.open("x", encoding="utf-8") as stream:
                 json.dump(report, stream, indent=2, ensure_ascii=False)
             self.stdout.write(json.dumps(report["validation"], indent=2))
-            self.stdout.write(f"Report: {output}. Auto remains disabled pending group-level review.")
+            self.stdout.write(f"Report: {output}. This command did not change the active grouping mode or thresholds.")
         except (ValueError, OSError, RuntimeError, KeyError) as exc:
             raise CommandError(str(exc)) from exc

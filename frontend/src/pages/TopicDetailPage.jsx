@@ -421,53 +421,17 @@ function ReviewQueuePanel({
   materialById,
   busyAction,
   onReviewStepChange,
-  onReviewQuestion,
-  onEditQuestion,
+  generationProps,
 }) {
-  const [editingQuestionId, setEditingQuestionId] = useState(null);
-  const [editingContentId, setEditingContentId] = useState(null);
-  const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [questionIndex, setQuestionIndex] = useState(0);
-
-  const pendingQuestions = useMemo(
-    () => questionPairings.filter((question) => questionReviewState(question).isPending),
-    [questionPairings],
-  );
-  const reviewedQuestions = useMemo(
-    () => questionPairings.filter((question) => !questionReviewState(question).isPending),
-    [questionPairings],
-  );
-
-  // Acting on a question removes it from `pendingQuestions`, so whatever came
-  // next shifts into the current index -- holding the index still is what
-  // advances the queue. Only the final item needs the clamp.
-  useEffect(() => {
-    setQuestionIndex((current) => Math.max(0, Math.min(current, pendingQuestions.length - 1)));
-  }, [pendingQuestions.length]);
-
-  const currentQuestionId = pendingQuestions[questionIndex]?.id;
-  useEffect(() => {
-    setEditingQuestionId(null);
-    setSelectedGroupId("");
-  }, [currentQuestionId]);
-
-  function beginConceptChange(question) {
-    const link = question.learning_object_links?.[0];
-    setEditingQuestionId(question.id);
-    setSelectedGroupId(link?.learning_object_group_id ? String(link.learning_object_group_id) : "");
-  }
-
   return (
     <section className="connection-review-panel" aria-labelledby="match-suggestion-title">
       <div className="connection-review-heading">
         <div>
-          <span className="connection-eyebrow">Review queue</span>
-          <h3 id="match-suggestion-title">Review question pairs</h3>
-          <p>
-            Review one uncertain question at a time. Accept the suggested concept, change it, or decline it.
-          </p>
+          <span className="connection-eyebrow">Question generation</span>
+          <h3 id="match-suggestion-title">Generate and review questions</h3>
+          <p>Generate questions from confirmed lesson content, then check and edit the saved question list.</p>
         </div>
-        <span className="connection-source-count">{pendingQuestions.length} to review</span>
+        <span className="connection-source-count">{questionPairings.length} question{questionPairings.length === 1 ? "" : "s"}</span>
       </div>
       <div className="review-step-indicator has-four-steps" aria-label="Review progress">
         <span className="is-complete">1</span>
@@ -480,281 +444,11 @@ function ReviewQueuePanel({
         <strong>Question pairs</strong>
       </div>
 
-      {!pendingQuestions.length ? (
-        <div className="review-queue-empty">
-          {reviewedQuestions.length
-            ? "All question pairs reviewed."
-            : "No question pairs need review."}
-        </div>
-      ) : (
-        <>
-      <ReviewQueueNavigator
-        index={questionIndex}
-        count={pendingQuestions.length}
-        onChange={setQuestionIndex}
-        disabled={Boolean(busyAction)}
-        itemLabel="Question pair"
+      <QuestionGenerationTool
+        {...generationProps}
+        groups={groups}
+        materialById={materialById}
       />
-      <div className={`question-review-list ${editingContentId ? "is-editing" : ""}`.trim()}>
-        {pendingQuestions.map((question, index) => {
-          const link = question.learning_object_links?.[0];
-          const suggestedGroup = groups.find(
-            (group) => Number(group.id) === Number(link?.learning_object_group_id),
-          );
-          const suggestedObject = suggestedGroup?.learning_objects?.find(
-            (item) => Number(item.id) === Number(link?.learning_object),
-          ) || suggestedGroup?.learning_objects?.[0];
-          const suggestedLabel = suggestedGroup?.label
-            || suggestedGroup?.learning_objects?.[0]?.title
-            || link?.learning_object_title
-            || "No suggested concept";
-          const material = materialById.get(Number(question.material));
-          const suggestedMaterial = materialById.get(Number(suggestedObject?.material));
-          const isUnmatched = link?.review_status === "unmatched";
-          const isEditing = editingQuestionId === question.id;
-          const pairingStatus = link?.review_status || "unmatched";
-          const isApproved = ["auto_confirmed", "teacher_confirmed"].includes(pairingStatus);
-          return (
-          <article
-            className={[
-              "question-review-card",
-              index === questionIndex ? "" : "is-hidden",
-              editingContentId === question.id ? "is-editing-content" : "",
-            ].filter(Boolean).join(" ")}
-            key={question.id}
-          >
-            <div className="question-review-meta">
-              <span className={`question-review-status ${isUnmatched ? "is-unmatched" : ""}`}>
-                {isApproved ? "Approved" : isUnmatched ? "No confident match" : "Needs review"}
-              </span>
-              <span className={`question-origin-pill is-${question.source_type || "pdf"}`}>
-                {question.source_type === "manual" ? "Manual" : question.source_type === "generated" ? "Generated" : "PDF"}
-              </span>
-              {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
-              <small title={material?.filename || ""}>
-                {material?.filename || material?.title || `PDF ${question.material}`}
-              </small>
-            </div>
-            <div className="question-review-prompt">
-              <span aria-hidden="true">Q</span>
-              <strong>{question.prompt}</strong>
-            </div>
-            {question.validation_status === "needs_review" && (
-              <div className="question-validation-warning" role="alert">
-                <strong>Question details required</strong>
-                <ul>{(question.validation_issues || []).map((issue) => <li key={issue}>{issue}</li>)}</ul>
-              </div>
-            )}
-            {question.choices?.length > 0 && editingContentId !== question.id && (
-              <ul className="question-review-choices">
-                {question.choices.map((choice, choiceIndex) => <li key={choiceIndex}>{choice}</li>)}
-              </ul>
-            )}
-            {editingContentId === question.id && (
-              <QuestionEditForm
-                key={question.id}
-                question={question}
-                busy={Boolean(busyAction)}
-                onCancel={() => setEditingContentId(null)}
-                onSave={async (values) => {
-                  const saved = await onEditQuestion(question, values);
-                  if (saved) setEditingContentId(null);
-                }}
-              />
-            )}
-            <div className="question-review-suggestion">
-              <div className="question-review-suggestion-heading">
-                <small>{isUnmatched ? "Best available concept" : "Suggested concept"}</small>
-                {suggestedMaterial && <span>{suggestedMaterial.filename || suggestedMaterial.title}</span>}
-              </div>
-              <strong>{suggestedLabel}</strong>
-              {suggestedObject?.image_url && (
-                <img
-                  className="review-source-image"
-                  src={suggestedObject.image_url}
-                  alt={suggestedObject.title || suggestedLabel}
-                />
-              )}
-              <p>{suggestedObject?.content || "No learning-object content is available."}</p>
-            </div>
-
-            {isEditing && (
-              <div className="question-concept-picker">
-                <label htmlFor={`question-concept-${question.id}`}>Choose the correct concept</label>
-                <select
-                  id={`question-concept-${question.id}`}
-                  value={selectedGroupId}
-                  onChange={(event) => setSelectedGroupId(event.target.value)}
-                >
-                  <option value="">Select a concept...</option>
-                  {groups.map((group) => (
-                    <option value={group.id} key={group.id}>
-                      {group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
-                    </option>
-                  ))}
-                </select>
-                <div className="question-concept-picker-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-small"
-                    disabled={Boolean(busyAction)}
-                    onClick={() => setEditingQuestionId(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-small"
-                    disabled={!selectedGroupId || Boolean(busyAction)}
-                    onClick={async () => {
-                      const completed = await onReviewQuestion(
-                        question,
-                        "change",
-                        selectedGroupId,
-                      );
-                      if (completed) setEditingQuestionId(null);
-                    }}
-                  >
-                    {busyAction === `question-change-${question.id}`
-                      ? "Saving..."
-                      : "Save concept"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {!isEditing && (
-              <div className="question-review-actions">
-                <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busyAction)} onClick={() => setEditingContentId(question.id)}>
-                  Edit question
-                </button>
-                {!isApproved && (
-                  <>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-small"
-                  disabled={Boolean(busyAction)}
-                  onClick={() => onReviewQuestion(question, "unpair")}
-                >
-                  {busyAction === `question-unpair-${question.id}`
-                    ? "Declining..."
-                    : "Decline"}
-                </button>
-                  </>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-small"
-                  disabled={Boolean(busyAction)}
-                  onClick={() => beginConceptChange(question)}
-                >
-                  Change concept
-                </button>
-                {!isApproved && (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-small"
-                  disabled={!link || Boolean(busyAction)}
-                  onClick={() => onReviewQuestion(question, "confirm")}
-                >
-                  {busyAction === `question-confirm-${question.id}`
-                    ? "Accepting..."
-                    : "Accept"}
-                </button>
-                )}
-              </div>
-            )}
-            </article>
-          );
-        })}
-      </div>
-        </>
-      )}
-
-      {reviewedQuestions.length > 0 && (
-        <details className="reviewed-question-block">
-          <summary>
-            Reviewed questions
-            <span className="reviewed-count">{reviewedQuestions.length}</span>
-          </summary>
-          <ul className="reviewed-question-list">
-            {reviewedQuestions.map((question) => {
-              const { status, label } = questionReviewState(question);
-              const link = question.learning_object_links?.[0];
-              const group = groups.find(
-                (item) => Number(item.id) === Number(link?.learning_object_group_id),
-              );
-              const conceptLabel = status === "teacher_unpaired"
-                ? "Not attached to a concept"
-                : group?.label
-                  || group?.learning_objects?.[0]?.title
-                  || link?.learning_object_title
-                  || "No concept";
-              return (
-                <li key={question.id} className="reviewed-question-row">
-                  <div className="reviewed-question-head">
-                    <span className={`reviewed-status-chip is-${status}`}>{label}</span>
-                    <small>{conceptLabel}</small>
-                  </div>
-                  <p className="reviewed-question-prompt">{question.prompt}</p>
-                  {editingQuestionId === question.id ? (
-                    <div className="reviewed-question-picker">
-                      <select
-                        aria-label="Move to concept"
-                        value={selectedGroupId}
-                        onChange={(event) => setSelectedGroupId(event.target.value)}
-                      >
-                        <option value="">Select a concept...</option>
-                        {groups.map((group) => (
-                          <option value={group.id} key={group.id}>
-                            {group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="reviewed-question-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          disabled={Boolean(busyAction)}
-                          onClick={() => setEditingQuestionId(null)}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-small"
-                          disabled={!selectedGroupId || Boolean(busyAction)}
-                          onClick={async () => {
-                            const completed = await onReviewQuestion(
-                              question,
-                              "change",
-                              selectedGroupId,
-                            );
-                            if (completed) setEditingQuestionId(null);
-                          }}
-                        >
-                          {busyAction === `question-change-${question.id}` ? "Saving..." : "Move"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="reviewed-question-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        disabled={Boolean(busyAction)}
-                        onClick={() => beginConceptChange(question)}
-                      >
-                        Change concept
-                      </button>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      )}
 
       <div className="review-step-actions-row">
         <button
@@ -778,13 +472,17 @@ function ReviewQueuePanel({
   );
 }
 
-function QuestionEditForm({ question, busy, onCancel, onSave }) {
+function QuestionEditForm({ question, groups, busy, onCancel, onSave }) {
   const [prompt, setPrompt] = useState(question.prompt || "");
   const [type, setType] = useState(
     question.question_type === "open_ended" ? "multiple_choice" : question.question_type,
   );
   const [choices, setChoices] = useState(() => [...(question.choices || []), "", "", "", ""].slice(0, 4));
   const [answer, setAnswer] = useState(question.correct_answer || "");
+  const [conceptGroupId, setConceptGroupId] = useState(() => {
+    const link = question.learning_object_links?.[0];
+    return link?.learning_object_group_id ? String(link.learning_object_group_id) : "";
+  });
 
   function changeType(next) {
     setType(next);
@@ -802,10 +500,15 @@ function QuestionEditForm({ question, busy, onCancel, onSave }) {
         question_type: type,
         choices: type === "true_false" ? ["True", "False"] : choices.filter((choice) => choice.trim()),
         correct_answer: answer,
+        learning_object_group_id: conceptGroupId || null,
       });
     }}>
       <label>Question<textarea required rows="3" value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
       <label>Type<select value={type} onChange={(event) => changeType(event.target.value)}><option value="true_false">True/False</option><option value="multiple_choice">Multiple choice</option></select></label>
+      <label>Concept to tie to<select value={conceptGroupId} onChange={(event) => setConceptGroupId(event.target.value)}>
+        <option value="">No concept assigned</option>
+        {groups.map((group) => <option value={group.id} key={group.id}>{group.label || group.learning_objects?.[0]?.title || "Untitled concept"}</option>)}
+      </select></label>
       {type === "multiple_choice" && choices.map((choice, index) => (
         <label key={index}>Choice {String.fromCharCode(65 + index)}<input required={index < 2} value={choice} onChange={(event) => {
           const next = [...choices];
@@ -817,7 +520,7 @@ function QuestionEditForm({ question, busy, onCancel, onSave }) {
       <label>Correct answer<select required value={answer} onChange={(event) => setAnswer(event.target.value)}>
         {type === "true_false" ? <><option value="True">True</option><option value="False">False</option></> : <><option value="">Select answer</option>{choices.filter((choice) => choice.trim()).map((choice, index) => <option value={choice.trim()} key={index}>{choice}</option>)}</>}
       </select></label>
-      <div className="question-inline-editor-actions"><button type="button" className="btn btn-secondary btn-small" onClick={onCancel} disabled={busy}>Cancel</button><button type="submit" className="btn btn-primary btn-small" disabled={busy}>Save question</button></div>
+      <div className="question-inline-editor-actions"><button type="button" className="btn btn-secondary btn-small" onClick={onCancel} disabled={busy}>Back</button><button type="submit" className="btn btn-primary btn-small" disabled={busy}>{busy ? "Saving..." : "Save"}</button></div>
     </form>
   );
 }
@@ -830,7 +533,7 @@ export function versionOriginLabel(entry, materialTitle) {
     ? `From ${materialTitle || "another PDF"}`
     : "AI generated";
   if (entry.assigned_by === "teacher") return `${source} · Teacher confirmed`;
-  if (entry.assigned_by === "llm_validated") return `${source} · AI classified, rules checked`;
+  if (entry.assigned_by === "llm_validated") return `${source} · AI classified`;
   return source;
 }
 
@@ -847,6 +550,7 @@ function VersionSlotCard({
   onCancelEdit,
   onSave,
   onGenerate,
+  actions,
 }) {
   const [draft, setDraft] = useState(text || "");
   useEffect(() => { setDraft(text || ""); }, [text, isEditing]);
@@ -856,6 +560,7 @@ function VersionSlotCard({
       <header className="version-slot-head">
         <span className={`version-slot-label is-${slotKey}`}>{heading}</span>
         {originLabel && <small className="version-slot-origin">{originLabel}</small>}
+        {actions && <div className="version-slot-role-top">{actions}</div>}
       </header>
 
       {text ? (
@@ -905,6 +610,32 @@ function VersionSlotCard({
   );
 }
 
+function VersionRoleSelect({ sourceId, currentSlot, busy, onAssign }) {
+  const roles = ["NORMAL", "SIMPLIFIED", "ELABORATED", "EXTRA"]
+    .filter((slot) => slot !== currentSlot);
+  return (
+    <label className="version-role-select">
+      <span>Change role</span>
+      <select
+        value=""
+        disabled={busy}
+        onChange={(event) => {
+          if (event.target.value) onAssign(sourceId, event.target.value);
+        }}
+      >
+        <option value="">Select a role…</option>
+        {roles.map((slot) => (
+          <option value={slot} key={slot}>
+            {slot === "NORMAL" ? "Make Normal"
+              : slot === "EXTRA" ? "Keep as Extra"
+              : `Move to ${slot === "SIMPLIFIED" ? "Simplified" : "Elaborated"}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function VersionReviewPanel({
   groups,
   materialById,
@@ -932,10 +663,25 @@ function VersionReviewPanel({
   useEffect(() => { setEditingSlot(null); }, [chunk?.id]);
 
   const versions = chunk?.versions;
-  const conceptsMissingVersions = chunks.filter((item) => {
+  const extraCount = chunks.reduce(
+    (count, item) => count + (item.versions?.extras?.length || 0),
+    0,
+  );
+  const pdfVariantCount = chunks.reduce(
+    (count, item) => count + (item.learning_objects?.length || 0),
+    0,
+  );
+  const classificationComplete = chunks.every(
+    (item) => item.versions?.classification_complete !== false,
+  );
+  const conceptsToClassify = chunks.filter(
+    (item) => item.versions?.classification_complete === false,
+  ).length;
+  const missingSlotCount = chunks.reduce((count, item) => {
+    if (item.versions?.classification_complete === false) return count;
     const slots = item.versions?.slots || {};
-    return !slots.simplified || !slots.elaborated;
-  }).length;
+    return count + (slots.simplified ? 0 : 1) + (slots.elaborated ? 0 : 1);
+  }, 0);
   const latestGenerationEvent = generationEvents[generationEvents.length - 1];
   const generationProgress = [...generationEvents].reverse().find((event) => event.data?.total);
   const representative = chunk?.learning_objects?.find(
@@ -959,31 +705,41 @@ function VersionReviewPanel({
           <span className="connection-eyebrow">Review queue</span>
           <h3 id="version-review-title">Review content versions</h3>
           <p>
-            Gemma suggests how grouped PDF wording should be used. MAVIA assigns it automatically
-            only when the readability checks agree; uncertain choices stay here for confirmation.
-            Missing versions are generated from the original.
+            Gemma automatically assigns every existing PDF variant to Normal, Simplified, Elaborated,
+            or Extra. You can change a source's role, then generate missing versions individually or all
+            at once.
           </p>
         </div>
         <div className="version-review-heading-actions">
-          <span className="connection-source-count">{chunks.length} concepts</span>
-          <button
-            type="button"
-            className="btn btn-primary btn-small"
-            disabled={Boolean(busyAction) || conceptsMissingVersions === 0}
-            onClick={onGenerateAll}
-            title="Generate only missing Simplified and Elaborated versions; existing versions are reused."
-          >
-            {busyAction === "version-generate-all"
-              ? "Generating all..."
-              : conceptsMissingVersions === 0
-                ? "All generated"
-                : `Generate all (${conceptsMissingVersions})`}
-          </button>
+          <span className="connection-source-count">
+            {chunks.length} concepts · {pdfVariantCount} PDF variants · {extraCount} extra{extraCount === 1 ? "" : "s"}
+          </span>
+          {!classificationComplete ? (
+            <span className="connection-source-count">
+              {busyAction === "version-generate-all"
+                ? "Classifying automatically…"
+                : `${conceptsToClassify} awaiting classification`}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary btn-small"
+              disabled={Boolean(busyAction) || missingSlotCount === 0}
+              onClick={onGenerateAll}
+              title="Generate every missing Simplified and Elaborated version."
+            >
+              {busyAction === "version-generate-missing-all"
+                ? "Generating missing…"
+                : missingSlotCount === 0
+                  ? "All versions complete"
+                  : `Generate all missing (${missingSlotCount})`}
+            </button>
+          )}
         </div>
       </div>
       {(busyAction === "version-generate-all" || generationEvents.length > 0) && (
         <div className="version-generation-progress" role="status" aria-live="polite">
-          <strong>{busyAction === "version-generate-all" ? "Generating missing versions" : "Generation finished"}</strong>
+          <strong>{busyAction === "version-generate-all" ? "Classifying existing PDF variants" : "Classification finished"}</strong>
           {generationProgress?.data?.index && (
             <span>{generationProgress.data.index} of {generationProgress.data.total} concepts</span>
           )}
@@ -1014,8 +770,38 @@ function VersionReviewPanel({
           />
 
           <h4 className="version-chunk-title">{representative?.title || "Untitled concept"}</h4>
+          <p className="muted-text">
+            {chunk.learning_objects.length} grouped PDF variant{chunk.learning_objects.length === 1 ? "" : "s"}
+            {versions?.classification_complete === false
+              ? " awaiting Gemma classification"
+              : " classified into Normal, Simplified, Elaborated, or Extra"}.
+          </p>
 
-          {(versions?.needs_confirmation || []).map((pending) => {
+          {versions?.classification_complete === false ? (
+            <div className="review-queue-empty">
+              <strong>Existing PDF variants — not generated:</strong>
+              <div className="version-slot-grid">
+                {chunk.learning_objects.map((item, index) => {
+                  const material = materialById.get(Number(item.material));
+                  return (
+                    <VersionSlotCard
+                      key={item.id}
+                      slotKey="extra"
+                      heading={`PDF variant ${index + 1} · Unclassified`}
+                      text={item.content}
+                      originLabel={`From ${material?.filename || material?.title || `PDF ${item.material}`}`}
+                      readOnly
+                      busy={false}
+                    />
+                  );
+                })}
+              </div>
+              <p>
+                Gemma is assigning these existing texts to roles automatically. Afterward, each missing
+                Simplified or Elaborated role will have its own Generate button.
+              </p>
+            </div>
+          ) : (versions?.needs_confirmation || []).map((pending) => {
             const candidate = chunk.learning_objects.find(
               (item) => Number(item.id) === Number(pending.learning_object_id),
             );
@@ -1023,9 +809,16 @@ function VersionReviewPanel({
             return (
               <div className="version-pending-decision" key={pending.learning_object_id}>
                 <p>
-                  A second PDF also teaches this. Its wording is too close to call automatically
-                  &mdash; where does it belong?
+                  This source version needs your decision. Choose how to use it below.
                 </p>
+                {pending.llm_slot && (
+                  <small className="muted-text">
+                    AI suggested {pending.llm_slot.toLowerCase()}
+                    {pending.llm_confidence != null ? ` (${Math.round(pending.llm_confidence * 100)}% confidence)` : ""};
+                    readability checks suggested {pending.readability_slot?.toLowerCase() || "no clear role"}
+                    {pending.readability_confident ? "." : " but did not clear the automatic threshold."}
+                  </small>
+                )}
                 <blockquote>{candidate.content}</blockquote>
                 <div className="version-slot-actions">
                   {["SIMPLIFIED", "ELABORATED", "EXTRA"].map((slot) => (
@@ -1036,8 +829,8 @@ function VersionReviewPanel({
                       disabled={Boolean(busyAction)}
                       onClick={() => onAssignSlot(pending.learning_object_id, slot)}
                     >
-                      {slot === "SIMPLIFIED" ? "This is simpler"
-                        : slot === "ELABORATED" ? "This is fuller"
+                      {slot === "SIMPLIFIED" ? "Use as Simplified"
+                        : slot === "ELABORATED" ? "Use as Elaborated"
                         : "Keep as extra"}
                     </button>
                   ))}
@@ -1046,14 +839,14 @@ function VersionReviewPanel({
             );
           })}
 
-          <div className="version-slot-grid">
+          {versions?.classification_complete !== false && <div className="version-slot-grid">
             <VersionSlotCard
               slotKey="original"
-              heading={versions?.original_selected ? "Original" : "Original candidate"}
+              heading={versions?.original_selected ? "Normal" : "Normal candidate"}
               text={representative?.content}
               originLabel={versions?.original_selected
                 ? `Selected from ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`
-                : "Gemma will choose the original when versions are generated"}
+                : "The Normal version will be selected during source classification"}
               readOnly
               busy={false}
             />
@@ -1061,7 +854,7 @@ function VersionReviewPanel({
               const entry = versions?.slots?.[slotKey];
               const busyKey = entry
                 ? `version-edit-${entry.id}`
-                : `version-generate-${versions?.representative_id}`;
+                : `version-generate-${versions?.representative_id}-${slotKey}`;
               return (
                 <VersionSlotCard
                   key={slotKey}
@@ -1078,21 +871,28 @@ function VersionReviewPanel({
                     const done = await onEditVersion(entry.id, narration);
                     if (done) setEditingSlot(null);
                   }}
-                  onGenerate={() => onGenerate(versions.representative_id)}
+                  onGenerate={() => onGenerate(versions.representative_id, slotKey.toUpperCase())}
+                  actions={entry?.source_learning_object_id ? (
+                    <VersionRoleSelect
+                      sourceId={entry.source_learning_object_id}
+                      currentSlot={slotKey.toUpperCase()}
+                      busy={Boolean(busyAction)}
+                      onAssign={onAssignSlot}
+                    />
+                  ) : null}
                 />
               );
             })}
-          </div>
+          </div>}
 
-          {(versions?.extras || []).length > 0 && (
-            <div className="version-extra-block">
-              <h5>Extra versions</h5>
+          {versions?.classification_complete !== false && (versions?.extras || []).length > 0 && (
+            <details className="version-extra-block">
+              <summary>Other source versions ({versions.extras.length})</summary>
               <p>
-                Kept for the learning path to use later. They are not shown to students as one of
-                the three versions.
+                Preserved as alternatives. Select a source below to replace a main version.
               </p>
               {versions.extras.map((entry) => (
-                <VersionSlotCard
+                <div key={entry.id}><VersionSlotCard
                   key={entry.id}
                   slotKey="extra"
                   heading="Extra"
@@ -1102,8 +902,17 @@ function VersionReviewPanel({
                   readOnly
                   busy={false}
                 />
+                  {entry.source_learning_object_id && (
+                    <VersionRoleSelect
+                      sourceId={entry.source_learning_object_id}
+                      currentSlot="EXTRA"
+                      busy={Boolean(busyAction)}
+                      onAssign={onAssignSlot}
+                    />
+                  )}
+                </div>
               ))}
-            </div>
+            </details>
           )}
         </>
       )}
@@ -1130,6 +939,133 @@ function VersionReviewPanel({
   );
 }
 
+function QuestionGenerationTool({
+  courseId,
+  topicId,
+  lessonMaterials,
+  groups,
+  materialById,
+  onResourcesChange,
+  onError,
+  onMessage,
+}) {
+  const [generatingKey, setGeneratingKey] = useState("");
+  const [generationProgress, setGenerationProgress] = useState("");
+  const learningObjects = useMemo(
+    () => (groups || []).flatMap((group) => {
+      const representative = (group.learning_objects || []).find(
+        (item) => Number(item.id) === Number(group.versions?.representative_id),
+      );
+      if (!representative) return [];
+      return [{
+        ...representative,
+        conceptLabel: group.label || representative.title || "Untitled concept",
+        canGenerate: Boolean(
+          representative.content?.trim()
+          && group.versions?.classification_complete !== false,
+        ),
+      }];
+    }),
+    [groups],
+  );
+
+  async function waitForGeneration(runId) {
+    let result;
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      result = await fetchQuestionGenerationTrace(runId);
+      if (["finished", "failed"].includes(result.run.status)) break;
+    }
+    if (!result || result.run.status === "running") {
+      throw new Error("Question generation is still running. Refresh this page shortly.");
+    }
+    if (result.run.status === "failed") {
+      const failure = [...(result.events || [])].reverse().find((event) => event.event_type === "error");
+      throw new Error(failure?.message || "Question generation failed.");
+    }
+  }
+
+  async function handleGenerateObject(item) {
+    if (!item.canGenerate) return;
+    setGeneratingKey(`object-${item.id}`);
+    setGenerationProgress("");
+    onError("");
+    onMessage(`Generating and classifying questions for “${item.title}”.`);
+    try {
+      const started = await startQuestionGeneration(item.material, item.id);
+      await waitForGeneration(started.run_id);
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
+      onMessage(`Questions for “${item.title}” were generated, classified as LOTS/HOTS, and saved.`);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setGeneratingKey("");
+    }
+  }
+
+  async function handleGenerateAll() {
+    const eligibleObjects = learningObjects.filter((item) => item.canGenerate);
+    if (!eligibleObjects.length) return;
+    setGeneratingKey("all");
+    onError("");
+    onMessage("Generating one question bank from the Normal version of each concept.");
+    try {
+      for (let index = 0; index < eligibleObjects.length; index += 1) {
+        const item = eligibleObjects[index];
+        setGenerationProgress(`${index + 1} of ${eligibleObjects.length}: ${item.conceptLabel}`);
+        const started = await startQuestionGeneration(item.material, item.id);
+        await waitForGeneration(started.run_id);
+      }
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
+      onMessage("One LOTS/HOTS question bank was generated for each concept from its Normal version.");
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setGeneratingKey("");
+      setGenerationProgress("");
+    }
+  }
+
+  return (
+    <div className="question-generation-board">
+      <div className="question-generation-board-heading">
+        <div>
+          <span className="connection-eyebrow">AI question generator</span>
+          <h4>Learning objects</h4>
+          <p>Generate questions from one concept's Normal version, or generate one question bank for every concept.</p>
+        </div>
+        <button type="button" className="btn btn-primary" disabled={Boolean(generatingKey) || !learningObjects.some((item) => item.canGenerate)} onClick={handleGenerateAll}>
+          {generatingKey === "all" ? "Generating all…" : "Generate all questions"}
+        </button>
+      </div>
+      {generationProgress && <div className="question-generation-progress" role="status">Processing {generationProgress}</div>}
+      {!learningObjects.length ? <div className="review-queue-empty">No confirmed learning objects are available yet.</div> : (
+        <div className="question-learning-object-list">
+          {learningObjects.map((item) => {
+            const material = materialById.get(Number(item.material));
+            const isGenerating = generatingKey === `object-${item.id}`;
+            return (
+              <article className="question-learning-object-card" key={item.id}>
+                <div className="question-learning-object-copy">
+                  <div className="question-learning-object-title">
+                    <span aria-hidden="true">LO</span>
+                    <div><small>{item.conceptLabel}</small><strong>{item.title}</strong></div>
+                  </div>
+                  <FormattedLearningObjectContent content={item.content} className="question-learning-object-preview" />
+                  <small>Normal source: {material?.filename || material?.title || `PDF ${item.material}`}</small>
+                </div>
+                <button type="button" className="btn btn-secondary" disabled={Boolean(generatingKey) || !item.canGenerate} onClick={() => handleGenerateObject(item)}>
+                  {isGenerating ? "Generating…" : item.canGenerate ? "Generate questions" : "Normal classification required"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ManualQuestionPanel({
   courseId,
   topicId,
@@ -1139,6 +1075,11 @@ function ManualQuestionPanel({
   onError,
   onMessage,
   lessonMaterials,
+  questionPairings,
+  materialById,
+  busyAction,
+  onEditQuestion,
+  onDeleteQuestion,
 }) {
   const [uploading, setUploading] = useState(false);
   const [questionType, setQuestionType] = useState("true_false");
@@ -1147,42 +1088,7 @@ function ManualQuestionPanel({
   const [correctAnswer, setCorrectAnswer] = useState("True");
   const [conceptGroupId, setConceptGroupId] = useState("");
   const [saving, setSaving] = useState(false);
-  const [generationMaterialId, setGenerationMaterialId] = useState("");
-  const [generating, setGenerating] = useState(false);
-
-  useEffect(() => {
-    if (!generationMaterialId && lessonMaterials?.length) {
-      setGenerationMaterialId(String(lessonMaterials[0].id));
-    }
-  }, [generationMaterialId, lessonMaterials]);
-
-  async function handleGenerateQuestions() {
-    if (!generationMaterialId) return;
-    setGenerating(true);
-    onError("");
-    onMessage("Generating and classifying questions. You may continue reviewing while this runs.");
-    try {
-      const started = await startQuestionGeneration(generationMaterialId);
-      let result;
-      for (let attempt = 0; attempt < 300; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        result = await fetchQuestionGenerationTrace(started.run_id);
-        if (["finished", "failed"].includes(result.run.status)) break;
-      }
-      if (!result || result.run.status === "running") throw new Error("Question generation is still running. Refresh this page shortly.");
-      if (result.run.status === "failed") {
-        const failure = [...(result.events || [])].reverse().find((event) => event.event_type === "error");
-        throw new Error(failure?.message || "Question generation failed.");
-      }
-      onResourcesChange(await fetchLearningResources(courseId, topicId));
-      onMessage("Questions generated, classified as LOTS/HOTS, and added to the approved question list.");
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setGenerating(false);
-    }
-  }
-
+  const [editingQuestion, setEditingQuestion] = useState(null);
   function switchType(type) {
     setQuestionType(type);
     setChoices(["", "", "", ""]);
@@ -1247,24 +1153,51 @@ function ManualQuestionPanel({
   }
 
   return (
-    <aside className="match-suggestion-panel panel-aside" aria-labelledby="manual-question-panel-title">
+    <aside className="match-suggestion-panel panel-aside question-tools-panel" aria-labelledby="manual-question-panel-title">
+      <section className="saved-question-sidebar" aria-labelledby="saved-question-title">
+        <div className="match-suggestion-heading">
+          <div>
+            <span className="connection-eyebrow">Question bank</span>
+            <h4 id="saved-question-title">Saved questions</h4>
+          </div>
+          <span>{questionPairings.length}</span>
+        </div>
+        <p className="question-source-prompt">PDF, manual, and generated questions appear together.</p>
+        {!questionPairings.length ? <div className="review-queue-empty">No saved questions yet.</div> : (
+          <div className="saved-question-list is-sidebar">
+            {questionPairings.map((question) => {
+              const link = question.learning_object_links?.[0];
+              const group = groups.find((item) => Number(item.id) === Number(link?.learning_object_group_id));
+              const material = materialById.get(Number(question.material));
+              const concept = group?.label || group?.learning_objects?.[0]?.title || link?.learning_object_title || "No concept assigned";
+              return (
+                <article className="saved-question-card" key={question.id}>
+                  <div className="question-review-meta">
+                    <span className={`question-origin-pill is-${question.source_type || "pdf"}`}>
+                      {question.source_type === "manual" ? "Manual" : question.source_type === "generated" ? "Generated" : "PDF"}
+                    </span>
+                    {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
+                  </div>
+                  <strong>{question.prompt}</strong>
+                  <small>{concept}{material?.filename || material?.title ? ` · ${material?.filename || material?.title}` : ""}</small>
+                  {question.validation_status === "needs_review" && <span className="saved-question-warning">Details required</span>}
+                  <div className="saved-question-actions">
+                    <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busyAction)} onClick={() => setEditingQuestion(question)}>Edit</button>
+                    <button type="button" className="btn btn-danger btn-small" disabled={Boolean(busyAction)} onClick={() => onDeleteQuestion(question)}>Delete</button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="question-source-divider" role="separator"><span>ADD QUESTIONS</span></div>
       <div className="match-suggestion-heading">
         <div>
           <span className="connection-eyebrow">Question tools</span>
           <h4 id="manual-question-panel-title">Add questions</h4>
         </div>
-      </div>
-
-      <div className="question-generation-tool">
-        <strong>Generate questions</strong>
-        <p>Create an editable LOTS/HOTS question set from confirmed lesson content.</p>
-        <select value={generationMaterialId} disabled={generating || !lessonMaterials?.length} onChange={(event) => setGenerationMaterialId(event.target.value)}>
-          {!lessonMaterials?.length && <option value="">Confirm a lesson file first</option>}
-          {(lessonMaterials || []).map((material) => <option value={material.id} key={material.id}>{material.title || material.filename}</option>)}
-        </select>
-        <button type="button" className="btn btn-primary btn-small" disabled={generating || !generationMaterialId} onClick={handleGenerateQuestions}>
-          {generating ? "Generating..." : "Generate questions"}
-        </button>
       </div>
 
       <div className="question-source-upload">
@@ -1383,6 +1316,18 @@ function ManualQuestionPanel({
           {saving ? "Adding question..." : "Add question"}
         </button>
       </form>
+
+      {editingQuestion && (
+        <div className="question-edit-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingQuestion(null); }}>
+          <div className="question-edit-modal" role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
+            <div className="question-edit-modal-head"><div><span className="connection-eyebrow">Edit question</span><h3 id="question-edit-title">Question details</h3></div></div>
+            <QuestionEditForm question={editingQuestion} groups={groups} busy={Boolean(busyAction)} onCancel={() => setEditingQuestion(null)} onSave={async (values) => {
+              const saved = await onEditQuestion(editingQuestion, values);
+              if (saved) setEditingQuestion(null);
+            }} />
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -1520,7 +1465,7 @@ ${question.prompt}`,
         setPublishing(false);
         const summary = incoming.find((e) => e.event_type === "publish_finished")?.data?.summary;
         if (status === "failed") {
-          onError("Publishing stopped before it finished. The trace below shows how far it got.");
+          onError("Publishing did not complete. Resolve the content or audio errors in the trace below, then retry.");
         } else if (summary) {
           const audio = summary.audio_generated_count || 0;
           const materials = summary.materials_processed || 0;
@@ -1707,6 +1652,7 @@ function LearningObjectConnections({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [groupLabel, setGroupLabel] = useState("");
+  const automaticClassificationRef = useRef("");
 
   const materialSignature = useMemo(
     () => materials
@@ -1772,6 +1718,10 @@ function LearningObjectConnections({
   }, [groups]);
   const connectedGroups = groups.filter((group) => group.learning_objects.length > 1);
   const singletonGroups = groups.filter((group) => group.learning_objects.length === 1);
+  const unclassifiedGroupSignature = groups
+    .filter((group) => group.versions?.classification_complete === false)
+    .map((group) => group.id)
+    .join(",");
   const visibleGroups = groups.filter((group) => {
     if (filter === "connected" && group.learning_objects.length <= 1) return false;
     if (filter === "single" && group.learning_objects.length !== 1) return false;
@@ -1793,7 +1743,21 @@ function LearningObjectConnections({
 
   useEffect(() => {
     if (reviewStep === "questions") setSelectedIds([]);
+    if (reviewStep !== "versions") automaticClassificationRef.current = "";
   }, [reviewStep]);
+
+  useEffect(() => {
+    if (
+      reviewStep !== "versions"
+      || loading
+      || busyAction
+      || !unclassifiedGroupSignature
+    ) return;
+    const runKey = `${topicId}:${unclassifiedGroupSignature}`;
+    if (automaticClassificationRef.current === runKey) return;
+    automaticClassificationRef.current = runKey;
+    generateAllVersions();
+  }, [reviewStep, loading, busyAction, topicId, unclassifiedGroupSignature]);
 
   function toggleSelection(objectId) {
     if (reviewStep !== "objects") return;
@@ -1899,7 +1863,8 @@ function LearningObjectConnections({
       onMessage(
         slot === "EXTRA"
           ? "Kept as an extra version for the learning path."
-          : `Set as the ${slot.toLowerCase()} version.`,
+          : `Set as the ${slot.toLowerCase()} version.`
+            + (data.version_assignment?.moved_to_extra ? " The previous source is now under Other source versions." : ""),
       );
       return true;
     } catch (err) {
@@ -1912,12 +1877,12 @@ function LearningObjectConnections({
 
   // One object per request. The model takes minutes, so the button this drives
   // says so rather than looking hung.
-  async function generateVersions(learningObjectId) {
-    setBusyAction(`version-generate-${learningObjectId}`);
+  async function generateVersions(learningObjectId, slot) {
+    setBusyAction(`version-generate-${learningObjectId}-${slot.toLowerCase()}`);
     onError("");
     onMessage("");
     try {
-      const data = await generateObjectVersions(courseId, topicId, learningObjectId);
+      const data = await generateObjectVersions(courseId, topicId, learningObjectId, slot);
       setResources(data);
       const result = data.version_generation || {};
       if (result.errors?.length) {
@@ -1925,7 +1890,7 @@ function LearningObjectConnections({
       } else if (result.generated?.length) {
         onMessage(`Wrote the ${result.generated.map((s) => s.toLowerCase()).join(" and ")} version.`);
       } else {
-        onMessage("Both versions already exist.");
+        onMessage(`The ${slot.toLowerCase()} version already exists.`);
       }
       return true;
     } catch (err) {
@@ -1936,11 +1901,60 @@ function LearningObjectConnections({
     }
   }
 
+  async function generateAllMissingVersions() {
+    const targets = groups.flatMap((group) => {
+      if (
+        group.versions?.classification_complete === false
+        || !group.versions?.representative_id
+      ) return [];
+      const slots = group.versions?.slots || {};
+      const missingCount = (slots.simplified ? 0 : 1) + (slots.elaborated ? 0 : 1);
+      return missingCount
+        ? [{ id: group.versions.representative_id, missingCount }]
+        : [];
+    });
+    if (!targets.length) return;
+    const totalMissing = targets.reduce((count, target) => count + target.missingCount, 0);
+
+    setBusyAction("version-generate-missing-all");
+    onError("");
+    onMessage(`Generating ${totalMissing} missing version${totalMissing === 1 ? "" : "s"}.`);
+    let generatedCount = 0;
+    const failures = [];
+    try {
+      for (const target of targets) {
+        try {
+          const data = await generateObjectVersions(
+            courseId,
+            topicId,
+            target.id,
+          );
+          setResources(data);
+          const result = data.version_generation || {};
+          generatedCount += result.generated?.length || 0;
+          failures.push(...(result.errors || []));
+        } catch (err) {
+          failures.push({ detail: err.message });
+        }
+      }
+      onMessage(
+        `Generated ${generatedCount} missing version${generatedCount === 1 ? "" : "s"}.`,
+      );
+      if (failures.length) {
+        onError(
+          `${failures.length} version${failures.length === 1 ? "" : "s"} could not be generated. ${failures[0].detail || ""}`.trim(),
+        );
+      }
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function generateAllVersions() {
     setBusyAction("version-generate-all");
     setVersionGenerationEvents([]);
     onError("");
-    onMessage("Generating missing content versions in the background.");
+    onMessage("Classifying existing PDF source variants in the background.");
     try {
       const started = await generateAllObjectVersions(courseId, topicId);
       let after = 0;
@@ -1958,7 +1972,7 @@ function LearningObjectConnections({
             const failure = [...allEvents].reverse().find(
               (event) => event.event_type === "versions_bulk_failed",
             );
-            throw new Error(failure?.message || "Version generation failed.");
+            throw new Error(failure?.message || "PDF variant classification failed.");
           }
           const finished = [...allEvents].reverse().find(
             (event) => event.event_type === "versions_bulk_finished",
@@ -1966,7 +1980,8 @@ function LearningObjectConnections({
           const summary = finished?.data?.summary || {};
           setResources(await fetchLearningResources(courseId, topicId));
           onMessage(
-            `Generated ${summary.generated_count || 0} missing version${summary.generated_count === 1 ? "" : "s"}.`
+            `${summary.source_variant_count || 0} PDF variant${summary.source_variant_count === 1 ? " was" : "s were"} classified, including ${summary.extra_count || 0} extra${summary.extra_count === 1 ? "" : "s"}. `
+            + "Use Generate only on any Simplified or Elaborated slot that is still missing."
             + (summary.errors?.length ? ` ${summary.errors.length} concept${summary.errors.length === 1 ? "" : "s"} could not be completed.` : ""),
           );
           break;
@@ -2064,6 +2079,23 @@ function LearningObjectConnections({
     }
   }
 
+  async function deleteQuestion(question) {
+    if (!window.confirm(`Delete this question permanently?\n\n${question.prompt}`)) return false;
+    setBusyAction(`question-delete-${question.id}`);
+    onError("");
+    onMessage("");
+    try {
+      setResources(await deleteTopicQuestion(courseId, topicId, question.id));
+      onMessage("Question deleted.");
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   return (
     <div className={`connection-review-layout ${reviewStep === "publish" ? "" : "has-recommendations"}`.trim()}>
       {reviewStep === "objects" && (
@@ -2075,6 +2107,9 @@ function LearningObjectConnections({
         <div>
           <span className="connection-eyebrow">Teacher review</span>
           <h3 id="connection-review-title">Related Concepts</h3>
+          {(resources?.grouping_warnings || []).map((warning) => (
+            <p role="alert" key={warning}>{warning}</p>
+          ))}
           <p>
             Review learning objects from every PDF and connect equivalent content into one concept group.
             Each object remains a separate variation for the learning-path module.
@@ -2325,7 +2360,7 @@ function LearningObjectConnections({
           onReviewStepChange={onReviewStepChange}
           onAssignSlot={assignVersion}
           onGenerate={generateVersions}
-          onGenerateAll={generateAllVersions}
+          onGenerateAll={generateAllMissingVersions}
           generationEvents={versionGenerationEvents}
           onEditVersion={saveVersionText}
         />
@@ -2338,8 +2373,16 @@ function LearningObjectConnections({
             materialById={materialById}
             busyAction={busyAction}
             onReviewStepChange={onReviewStepChange}
-            onReviewQuestion={reviewQuestion}
-            onEditQuestion={editQuestion}
+            generationProps={{
+              courseId,
+              topicId,
+              onResourcesChange: setResources,
+              onError,
+              onMessage,
+              lessonMaterials: materials.filter(
+                (material) => material.generated_json?.learning_objects_confirmed && material.learning_objects?.length,
+              ),
+            }}
           />
           <ManualQuestionPanel
             courseId={courseId}
@@ -2352,6 +2395,11 @@ function LearningObjectConnections({
             lessonMaterials={materials.filter(
               (material) => material.generated_json?.learning_objects_confirmed && material.learning_objects?.length,
             )}
+            questionPairings={allQuestionPairings}
+            materialById={materialById}
+            busyAction={busyAction}
+            onEditQuestion={editQuestion}
+            onDeleteQuestion={deleteQuestion}
           />
         </>
       )}

@@ -770,8 +770,12 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
         try:
             semantic_grouping.policy()
             semantic_grouping.runtime()
-        except Exception:
+        except Exception as exc:
             logger.exception("Semantic grouping unavailable; preserving the existing review queue")
+            data = dict(material.generated_json or {})
+            data["grouping_warning"] = f"Connections could not be evaluated for {material.title}: {exc}"
+            material.generated_json = data
+            material.save(update_fields=["generated_json"])
             return
     if not learning_objects_are_confirmed(material):
         LearningObjectMatchSuggestion.objects.filter(
@@ -806,12 +810,16 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
                 section_title=source_object.section_title,
                 source_object_id=source_object.id,
             )
-        except Exception:
+        except Exception as exc:
             if not semantic_active:
                 raise
             # An inference/cache failure is not a low-confidence decision.
             # In particular, do not delete existing pending suggestions below.
             logger.exception("Semantic inference failed; preserving the remaining review queue")
+            data = dict(material.generated_json or {})
+            data["grouping_warning"] = f"Connections could not be fully evaluated for {material.title}: {exc}"
+            material.generated_json = data
+            material.save(update_fields=["generated_json"])
             return
         if not decision or decision["confidence"] is None:
             continue
@@ -878,6 +886,11 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
     if retained_ids:
         stale_pending = stale_pending.exclude(id__in=retained_ids)
     stale_pending.delete()
+    if (material.generated_json or {}).get("grouping_warning"):
+        data = dict(material.generated_json)
+        data.pop("grouping_warning", None)
+        material.generated_json = data
+        material.save(update_fields=["generated_json"])
 
 
 def remove_empty_learning_object_groups(material: LearningMaterial) -> None:

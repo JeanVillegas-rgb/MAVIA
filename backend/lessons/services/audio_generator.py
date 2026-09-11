@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -191,14 +192,14 @@ def generate_material_audio_playlist(material: LearningMaterial, scope: str = "l
         if not text:
             continue
         position = len(updated_playlist)
-        audio_path = synthesize_text_to_audio(text, audio_dir / f"playlist_item_{position + 1}")
+        audio_path, created = cached_audio(text, audio_dir)
         relative_path = audio_path.relative_to(settings.MEDIA_ROOT).as_posix()
         updated_item["order"] = position
         updated_item["audio_status"] = "generated"
         updated_item["audio_url"] = f"{settings.MEDIA_URL}{relative_path}"
         updated_item["audio_file"] = relative_path
         updated_playlist.append(updated_item)
-        generated_count += 1
+        generated_count += int(created)
 
     if not updated_playlist:
         raise AudioGenerationError(
@@ -216,3 +217,35 @@ def generate_material_audio_playlist(material: LearningMaterial, scope: str = "l
         "lesson_playlist": updated_playlist,
         "scope": "lessons",
     }
+
+
+def cached_audio(text, directory):
+    """Reuse audio only for the same narration and configured voice/provider."""
+    provider = os.getenv("AUDIO_TTS_PROVIDER", "edge").strip().lower()
+    voice = os.getenv("EDGE_TTS_VOICE", "en-US-AriaNeural")
+    digest = hashlib.sha256(f"{provider}|{voice}|{text}".encode()).hexdigest()
+    base = directory / digest
+    suffixes = (".mp3",) if provider in {"edge", "edge-tts"} else (".mp3", ".wav") if provider == "auto" else (".wav",)
+    for suffix in suffixes:
+        candidate = base.with_suffix(suffix)
+        if candidate.is_file() and candidate.stat().st_size:
+            return candidate, False
+    return synthesize_text_to_audio(text, base), True
+
+
+def generate_version_audio(material):
+    """Prepare audio for the two active source/generated versions; omit Extras."""
+    from course.models import LessonVariant
+    generated = 0
+    for row in LessonVariant.objects.filter(
+        learning_object__material=material,
+        learning_object__represented_by__isnull=True,
+        variant__in=("SIMPLIFIED", "ELABORATED"),
+    ):
+        if not row.narration.strip():
+            raise AudioGenerationError(f"{row.variant.title()} version {row.id} has no narration.")
+        path, created = cached_audio(row.narration, Path(settings.MEDIA_ROOT) / "audio_versions")
+        url = f"{settings.MEDIA_URL}{path.relative_to(settings.MEDIA_ROOT).as_posix()}"
+        LessonVariant.objects.filter(pk=row.pk, narration=row.narration).update(audio_url=url)
+        generated += int(created)
+    return {"generated_count": generated}

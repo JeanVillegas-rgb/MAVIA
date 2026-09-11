@@ -39,6 +39,14 @@ class VersionEditingTests(TestCase):
         now = timezone.now()
         self.first = self._object("PDF one", now, SHORT)
         self.second = self._object("PDF two", now + timedelta(minutes=5), LONG)
+        classifier = patch("course.version_assignment.classify_group_versions", return_value={
+            self.first.id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
+            self.second.id: {"slot": "ELABORATED", "confidence": 0.95, "reason": "More detail."},
+        })
+        classifier.start()
+        self.addCleanup(classifier.stop)
+        from course.version_assignment import assign_group_versions
+        assign_group_versions(self.group, use_llm=True)
 
     def _object(self, title, created_at, content):
         material = LearningMaterial.objects.create(
@@ -63,7 +71,11 @@ class VersionEditingTests(TestCase):
     def test_generates_the_missing_slot_for_a_representative(self, request_variants):
         request_variants.return_value = {"SIMPLIFIED": "Solid keeps shape.", "ELABORATED": "ignored"}
 
-        response = self.client.post(self._generate_url(self.first), {}, format="json")
+        response = self.client.post(
+            self._generate_url(self.first),
+            {"slot": "SIMPLIFIED"},
+            format="json",
+        )
 
         self.assertEqual(response.status_code, 200)
         row = LessonVariant.objects.get(learning_object=self.first, variant="SIMPLIFIED")
