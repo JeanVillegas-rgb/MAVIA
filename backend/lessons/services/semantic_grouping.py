@@ -13,6 +13,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import sqlite3
 from threading import RLock
 from time import perf_counter
@@ -25,6 +26,40 @@ ENCODER_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 RERANKER = "cross-encoder/stsb-roberta-base"
 RERANKER_REVISION = "d576534b67143e2c70ee9966d7fdbf5835728d13"
 FINGERPRINT = f"content-sts-v1:{ENCODER}@{ENCODER_REVISION}:{RERANKER}@{RERANKER_REVISION}"
+
+_GENERIC_INSTRUCTIONAL_LABELS = {
+    "activity",
+    "additional information",
+    "conclusion",
+    "definition",
+    "diagram",
+    "everyday examples",
+    "example",
+    "examples",
+    "exercise",
+    "glossary",
+    "introduction",
+    "key facts",
+    "key facts to remember",
+    "key points",
+    "key points for students",
+    "note",
+    "notes",
+    "objectives",
+    "overview",
+    "practice questions",
+    "questions",
+    "recap",
+    "remember",
+    "review",
+    "summary",
+    "vocabulary",
+    "worksheet",
+}
+_GENERIC_NUMBERED_LABEL = re.compile(
+    r"(?:figure|table|diagram|worksheet)(?:\s+\d+)?$",
+    re.IGNORECASE,
+)
 
 
 class SemanticUnavailable(RuntimeError):
@@ -317,6 +352,130 @@ No category/title heuristics and no best-member/transitive chaining shortcut.
     return sorted(ranked, key=lambda row: (-row["evidence"]["score"], row["candidate"].id))
 
 
+def label_corroboration_enabled() -> bool:
+    return os.getenv("SEMANTIC_GROUPING_LABEL_CORROBORATION", "True").lower() in {
+        "1", "true", "yes",
+    }
+
+
+def _specific_normalized_label(title: str) -> str:
+    # Local imports avoid making the content extraction and linking modules part
+    # of semantic model startup. Both helpers are established lessons-app rules.
+    from .content_generator import is_structural_metadata_label
+    from .learning_resource_linker import normalize_learning_object_title
+
+    label = normalize_learning_object_title(title)
+    if (
+        not label
+        or is_structural_metadata_label(title)
+        or label in _GENERIC_INSTRUCTIONAL_LABELS
+        or _GENERIC_NUMBERED_LABEL.fullmatch(label)
+    ):
+        return ""
+    return label
+
+
+def _label_corroborated_decision(
+    *,
+    source,
+    content,
+    kind,
+    all_objects,
+    eligible_groups,
+    members,
+    config,
+    started_at,
+):
+    """Promote an already-supported exact-label twin without adding review work."""
+    # Review mode is a deliberate no-auto-grouping safety setting used while
+    # collecting teacher labels. Corroboration must not bypass that contract.
+    if not label_corroboration_enabled() or mode() != "auto":
+        return None
+    if (
+        source is None
+        or source.kind != kind
+        or source.represented_by_id is not None
+        or not (source.material.generated_json or {}).get("learning_objects_confirmed")
+    ):
+        return None
+
+    label = _specific_normalized_label(source.title)
+    if not label:
+        return None
+
+    from .learning_resource_linker import normalize_learning_object_title
+
+    # Count all eligible, active objects rather than only the cosine shortlist.
+    # Duplicate same-label objects within either material make the label
+    # ambiguous and therefore disable this automatic path.
+    label_objects = [
+        item for item in all_objects
+        if item.kind == kind
+        and item.group_id is not None
+        and item.represented_by_id is None
+        and (item.material.generated_json or {}).get("learning_objects_confirmed")
+        and normalize_learning_object_title(item.title) == label
+    ]
+    source_matches = [item for item in label_objects if item.material_id == source.material_id]
+    if len(source_matches) != 1 or source_matches[0].id != source.id:
+        return None
+
+    twins = [
+        item for item in label_objects
+        if item.material_id != source.material_id and item.group_id in eligible_groups
+    ]
+    if not twins:
+        return None
+    by_material = defaultdict(list)
+    for twin in twins:
+        by_material[twin.material_id].append(twin)
+    if any(len(rows) != 1 for rows in by_material.values()):
+        return None
+
+    # With three or more PDFs, identical labels may already point at competing
+    # groups. Do not choose one arbitrarily; ordinary semantic behavior remains.
+    destination_group_ids = {twin.group_id for twin in twins}
+    if len(destination_group_ids) != 1:
+        return None
+    destination_group_id = next(iter(destination_group_ids))
+    destination_members = members[destination_group_id]
+    if any(item.represented_by_id is not None for item in destination_members):
+        return None
+
+    # Explicitly score the exact-label destination group. It may not have
+    # survived the ordinary cosine top-k shortlist.
+    ranked = rank_groups(
+        content,
+        twins,
+        {destination_group_id: destination_members},
+        thresholds={**config, "top_k": 1},
+    )
+    if not ranked:
+        return None
+    match = ranked[0]
+    evidence = dict(match["evidence"])
+    if (
+        not evidence["all_members_checked"]
+        or evidence["score"] < config["review_threshold"]
+    ):
+        return None
+
+    evidence.update(
+        method="label_corroborated_sbert_cross_encoder",
+        title_used=True,
+        normalized_label=label,
+        label_corroborated=True,
+        auto_eligible=True,
+        review_threshold=config["review_threshold"],
+        auto_threshold=config["auto_threshold"],
+        auto_calibrated=config["auto_threshold_source"] == "validated_calibration",
+        minimum_sbert_cosine=config["minimum_sbert_cosine"],
+        auto_threshold_source=config["auto_threshold_source"],
+        elapsed_ms=round((perf_counter() - started_at) * 1000, 1),
+    )
+    return {**match, "evidence": evidence, "confidence": "high"}
+
+
 def semantic_decision(material, title, content, kind, order, section_title="", source_object_id=None):
     from lessons.models import LearningObject, LearningObjectMatchSuggestion
     # Automatic matching may add a standalone object to a group, but must never
@@ -330,7 +489,7 @@ def semantic_decision(material, title, content, kind, order, section_title="", s
     config = policy()
     all_objects = list(LearningObject.objects.filter(
         material__outline_node_id=material.outline_node_id, group__isnull=False,
-    ).select_related("material", "group"))
+    ).select_related("material", "group", "represented_by"))
     members = defaultdict(list)
     for item in all_objects:
         if item.id != source_object_id:
@@ -351,24 +510,52 @@ def semantic_decision(material, title, content, kind, order, section_title="", s
     eligible_groups -= {group_id for group_id, rows in members.items() if any(row.id in rejected_ids for row in rows)}
     candidates = [row for row in all_objects if row.group_id in eligible_groups and row.id != source_object_id]
     ranked = rank_groups(content, candidates, members, thresholds=config)
-    if not ranked:
-        return None
-    best = ranked[0]
-    runner = ranked[1]["evidence"]["score"] if len(ranked) > 1 else 0.0
-    evidence = best["evidence"]
-    margin = evidence["score"] - runner
-    auto = config["auto_threshold"]
-    high = (mode() == "auto" and auto is not None and evidence["score"] >= auto
-            and evidence["minimum_group_sbert_cosine"] >= config["minimum_sbert_cosine"]
-            and evidence["all_members_checked"] and margin >= config["minimum_margin"])
-    review = evidence["score"] >= config["review_threshold"]
-    evidence.update(runner_up_score=runner, winner_margin=margin,
-                    auto_eligible=high, review_threshold=config["review_threshold"],
-                    auto_threshold=auto,
-                    auto_calibrated=config["auto_threshold_source"] == "validated_calibration",
-                    minimum_sbert_cosine=config["minimum_sbert_cosine"],
-                    auto_threshold_source=config["auto_threshold_source"],
-                    elapsed_ms=round((perf_counter() - start) * 1000, 1))
-    logger.info("Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
-                material.id, source_object_id, best["candidate"].id, evidence["score"], high, evidence["elapsed_ms"])
-    return {**best, "confidence": "high" if high else "medium" if review else None}
+    normal_decision = None
+    if ranked:
+        best = ranked[0]
+        runner = ranked[1]["evidence"]["score"] if len(ranked) > 1 else 0.0
+        evidence = best["evidence"]
+        margin = evidence["score"] - runner
+        auto = config["auto_threshold"]
+        high = (mode() == "auto" and auto is not None and evidence["score"] >= auto
+                and evidence["minimum_group_sbert_cosine"] >= config["minimum_sbert_cosine"]
+                and evidence["all_members_checked"] and margin >= config["minimum_margin"])
+        review = evidence["score"] >= config["review_threshold"]
+        evidence.update(runner_up_score=runner, winner_margin=margin,
+                        auto_eligible=high, review_threshold=config["review_threshold"],
+                        auto_threshold=auto,
+                        auto_calibrated=config["auto_threshold_source"] == "validated_calibration",
+                        minimum_sbert_cosine=config["minimum_sbert_cosine"],
+                        auto_threshold_source=config["auto_threshold_source"],
+                        elapsed_ms=round((perf_counter() - start) * 1000, 1))
+        normal_decision = {
+            **best,
+            "confidence": "high" if high else "medium" if review else None,
+        }
+        if high:
+            logger.info(
+                "Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
+                material.id, source_object_id, best["candidate"].id,
+                evidence["score"], high, evidence["elapsed_ms"],
+            )
+            return normal_decision
+
+    corroborated = _label_corroborated_decision(
+        source=source if source_object_id else None,
+        content=content,
+        kind=kind,
+        all_objects=all_objects,
+        eligible_groups=eligible_groups,
+        members=members,
+        config=config,
+        started_at=start,
+    )
+    decision = corroborated or normal_decision
+    if decision:
+        evidence = decision["evidence"]
+        logger.info(
+            "Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
+            material.id, source_object_id, decision["candidate"].id,
+            evidence["score"], decision["confidence"] == "high", evidence["elapsed_ms"],
+        )
+    return decision
