@@ -16,7 +16,11 @@ with IMAGE_DESCRIPTION_ENABLED=False.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
+import sqlite3
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -28,6 +32,11 @@ logger = logging.getLogger(__name__)
 _SKIP = "SKIP"
 _MAX_VISIBLE_TEXT = 400
 _MAX_NEARBY_TEXT = 600
+_CACHE_VERSION = "1"
+_CACHE_SKIP = "__SKIP__"
+_cache_lock = threading.Lock()
+_reachability_lock = threading.Lock()
+_reachable_until = 0.0
 
 
 def _cfg(name: str, default):
@@ -39,16 +48,92 @@ def _base_url() -> str:
 
 
 def _service_reachable() -> bool:
-    """Check now so starting Ollama later does not require restarting Django."""
+    """Cache successful checks briefly; failures remain immediately retryable."""
+    global _reachable_until
+    now = time.monotonic()
+    with _reachability_lock:
+        if now < _reachable_until:
+            return True
     try:
         response = requests.get(f"{_base_url()}/api/tags", timeout=2)
-        return response.status_code == 200
+        reachable = response.status_code == 200
+        if reachable:
+            ttl = max(0, int(_cfg("IMAGE_DESCRIPTION_REACHABILITY_TTL", 15)))
+            with _reachability_lock:
+                _reachable_until = time.monotonic() + ttl
+        return reachable
     except requests.RequestException:
         return False
 
 
+def _cache_path() -> Path:
+    configured = _cfg(
+        "IMAGE_DESCRIPTION_CACHE_PATH",
+        Path(settings.BASE_DIR) / "image_description_cache" / "descriptions.sqlite3",
+    )
+    return Path(configured)
+
+
+def _cache_key(image_bytes: bytes, prompt: str, model: str) -> str:
+    digest = hashlib.sha256()
+    for value in (_CACHE_VERSION.encode(), model.encode(), prompt.encode(), image_bytes):
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+    return digest.hexdigest()
+
+
+def _cached_description(key: str) -> str | None:
+    if not _cfg("IMAGE_DESCRIPTION_CACHE_ENABLED", True):
+        return None
+    try:
+        path = _cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _cache_lock, sqlite3.connect(path, timeout=5) as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS descriptions "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            row = connection.execute(
+                "SELECT value FROM descriptions WHERE key = ?", (key,)
+            ).fetchone()
+        return row[0] if row else None
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("figure description cache read failed: %s", exc)
+        return None
+
+
+def _store_cached_description(key: str, value: str) -> None:
+    if not _cfg("IMAGE_DESCRIPTION_CACHE_ENABLED", True):
+        return
+    try:
+        path = _cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _cache_lock, sqlite3.connect(path, timeout=5) as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS descriptions "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO descriptions (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("figure description cache write failed: %s", exc)
+
+
 def reset_reachability_cache() -> None:
-    return None
+    """Clear local test/runtime caches without changing extracted lesson data."""
+    global _reachable_until
+    with _reachability_lock:
+        _reachable_until = 0.0
+    try:
+        path = _cache_path()
+        if not path.exists():
+            return
+        with _cache_lock, sqlite3.connect(path, timeout=5) as connection:
+            connection.execute("DELETE FROM descriptions")
+    except (OSError, sqlite3.Error):
+        return
 
 
 def build_prompt(
@@ -104,17 +189,25 @@ def describe_image_for_lesson(
         return ""
     if not _cfg("IMAGE_DESCRIPTION_ENABLED", True):
         return ""
+
+    model = _cfg("IMAGE_DESCRIPTION_MODEL", "gemma3:4b")
+    prompt = build_prompt(
+        lesson_title=lesson_title,
+        nearby_text=nearby_text,
+        caption=caption,
+        visible_text=visible_text,
+    )
+    cache_key = _cache_key(image_bytes, prompt, model)
+    cached = _cached_description(cache_key)
+    if cached is not None:
+        return "" if cached == _CACHE_SKIP else cached
+
     if not _service_reachable():
         return ""
 
     payload = {
-        "model": _cfg("IMAGE_DESCRIPTION_MODEL", "gemma3:4b"),
-        "prompt": build_prompt(
-            lesson_title=lesson_title,
-            nearby_text=nearby_text,
-            caption=caption,
-            visible_text=visible_text,
-        ),
+        "model": model,
+        "prompt": prompt,
         "images": [base64.b64encode(image_bytes).decode("ascii")],
         "stream": False,
         "options": {"temperature": 0.2},
@@ -135,8 +228,12 @@ def describe_image_for_lesson(
         )
         return ""
 
-    if not text or _looks_like_skip(text):
+    if not text:
         return ""
+    if _looks_like_skip(text):
+        _store_cached_description(cache_key, _CACHE_SKIP)
+        return ""
+    _store_cached_description(cache_key, text)
     return text
 
 

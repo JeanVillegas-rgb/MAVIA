@@ -137,6 +137,25 @@ class CumulativeCourseOutlineTests(TestCase):
 
     @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
     @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
+    def test_validated_outline_parse_is_reused_when_building_hierarchy(
+        self,
+        validate_outline,
+        build_outline,
+    ):
+        course = CourseGroup.objects.create(title="Science")
+        parsed_nodes = [ParsedOutlineNode(title="Matter", depth=0, order=0)]
+        validate_outline.return_value = parsed_nodes
+
+        upload_course_outline(
+            course=course,
+            outline_file=SimpleUploadedFile("outline.pdf", b"%PDF-1.4 course outline"),
+        )
+
+        self.assertEqual(build_outline.call_args.kwargs["parsed_nodes"], parsed_nodes)
+        course.outlines.get().outline_file.delete(save=False)
+
+    @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
+    @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
     def test_identical_outline_can_be_used_in_a_different_course(
         self,
         _validate_outline,

@@ -66,6 +66,39 @@ class DescribeImageTests(TestCase):
 
     @patch("lessons.services.image_describer.requests.post")
     @patch("lessons.services.image_describer.requests.get")
+    def test_identical_request_reuses_cached_description(self, mock_get, mock_post):
+        mock_get.return_value = _ok_response({})
+        mock_post.return_value = _ok_response(
+            {"response": "Particles in a solid remain close together and vibrate in place."}
+        )
+
+        first = image_describer.describe_image_for_lesson(
+            PNG, lesson_title="States of matter", caption="Solid particles"
+        )
+        second = image_describer.describe_image_for_lesson(
+            PNG, lesson_title="States of matter", caption="Solid particles"
+        )
+
+        self.assertEqual(second, first)
+        mock_get.assert_called_once()
+        mock_post.assert_called_once()
+
+    @patch("lessons.services.image_describer.requests.post")
+    @patch("lessons.services.image_describer.requests.get")
+    def test_successful_reachability_check_is_reused_for_different_images(
+        self, mock_get, mock_post
+    ):
+        mock_get.return_value = _ok_response({})
+        mock_post.return_value = _ok_response({"response": "A useful explanation."})
+
+        image_describer.describe_image_for_lesson(PNG, caption="First figure")
+        image_describer.describe_image_for_lesson(PNG + b"2", caption="Second figure")
+
+        mock_get.assert_called_once()
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch("lessons.services.image_describer.requests.post")
+    @patch("lessons.services.image_describer.requests.get")
     def test_skip_sentinel_becomes_empty(self, mock_get, mock_post):
         mock_get.return_value = _ok_response({})
         mock_post.return_value = _ok_response({"response": "SKIP"})

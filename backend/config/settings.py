@@ -55,6 +55,16 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 IMAGE_DESCRIPTION_ENABLED = os.getenv("IMAGE_DESCRIPTION_ENABLED", "True").lower() in ("1", "true", "yes")
 IMAGE_DESCRIPTION_MODEL = os.getenv("IMAGE_DESCRIPTION_MODEL", "gemma3:4b")
 IMAGE_DESCRIPTION_TIMEOUT = int(os.getenv("IMAGE_DESCRIPTION_TIMEOUT", "300"))
+IMAGE_DESCRIPTION_REACHABILITY_TTL = int(
+    os.getenv("IMAGE_DESCRIPTION_REACHABILITY_TTL", "15")
+)
+IMAGE_DESCRIPTION_CACHE_ENABLED = os.getenv(
+    "IMAGE_DESCRIPTION_CACHE_ENABLED", "True"
+).lower() in ("1", "true", "yes")
+IMAGE_DESCRIPTION_CACHE_PATH = os.getenv(
+    "IMAGE_DESCRIPTION_CACHE_PATH",
+    str(BASE_DIR / "image_description_cache" / "descriptions.sqlite3"),
+)
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

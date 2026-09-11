@@ -1473,15 +1473,15 @@ def is_course_outline_pdf(file_path: str) -> bool:
     return is_course_outline_document(visible_text)
 
 
-def validate_course_outline_pdf(file_path: str) -> None:
-    """Reject lesson PDFs before they can replace the saved course outline."""
-    if not is_course_outline_pdf(file_path):
+def validate_course_outline_pdf(file_path: str) -> list[ParsedOutlineNode]:
+    """Validate and return the parsed hierarchy from one PDF extraction pass."""
+    extracted_text = extract_outline_text(file_path, ".pdf")
+    if not is_course_outline_document(extracted_text):
         raise ValueError(
             "This PDF appears to be lesson material, not a course outline. "
             "Upload a course outline containing modules, lessons, topics, or a curriculum schedule."
         )
 
-    extracted_text = extract_outline_text(file_path, ".pdf")
     marker = re.search(r"weekly course outline", extracted_text, flags=re.IGNORECASE)
     parse_text = extracted_text[marker.start():] if marker else extracted_text
     parsed = parse_outline_text(parse_text)
@@ -1494,6 +1494,7 @@ def validate_course_outline_pdf(file_path: str) -> None:
             "This PDF does not contain enough course-outline structure. "
             "At least two identifiable module, lesson, or topic nodes are required."
         )
+    return parsed
 
 
 def _render_pdf_pages_as_images(document: fitz.Document, max_pages: int | None = None) -> list[dict]:
@@ -1744,16 +1745,19 @@ def build_dag_from_outline(
     extension: str,
     *,
     replace: bool = False,
+    parsed_nodes: list[ParsedOutlineNode] | None = None,
 ) -> list[OutlineNode]:
-    text = extract_outline_text(file_path, extension)
-    # Prefer parsing the weekly course outline section when present to avoid
-    # capturing course-info sections such as "Intended Learning Outcomes",
-    # which sometimes contain bulleted verbs that look like lesson titles.
-    marker = re.search(r"weekly course outline", text, flags=re.IGNORECASE)
-    if marker:
-        # slice from the marker onward to focus parsing on the actual weekly outline
-        text = text[marker.start():]
-    parsed = parse_outline_text(text)
+    parsed = parsed_nodes
+    if parsed is None:
+        text = extract_outline_text(file_path, extension)
+        # Prefer parsing the weekly course outline section when present to avoid
+        # capturing course-info sections such as "Intended Learning Outcomes",
+        # which sometimes contain bulleted verbs that look like lesson titles.
+        marker = re.search(r"weekly course outline", text, flags=re.IGNORECASE)
+        if marker:
+            # slice from the marker onward to focus parsing on the actual weekly outline
+            text = text[marker.start():]
+        parsed = parse_outline_text(text)
     logger.debug("Parsed course-outline roots: %s", [node.title for node in parsed])
     if not parsed:
         raise ValueError("No course-outline topics could be extracted from this PDF.")

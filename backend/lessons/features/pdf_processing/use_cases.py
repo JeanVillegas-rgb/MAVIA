@@ -91,7 +91,7 @@ def upload_course_outline(
 
     try:
         with _temporary_pdf_copy(outline_file) as temporary_path:
-            validate_course_outline_pdf(str(temporary_path))
+            parsed_nodes = validate_course_outline_pdf(str(temporary_path))
     except Exception as exc:
         raise PdfProcessingUseCaseError(str(exc)) from exc
 
@@ -106,6 +106,7 @@ def upload_course_outline(
             outline.outline_file.path,
             Path(outline_file.name).suffix,
             replace=False,
+            parsed_nodes=parsed_nodes,
         )
     except Exception as exc:
         outline.outline_file.delete(save=False)
