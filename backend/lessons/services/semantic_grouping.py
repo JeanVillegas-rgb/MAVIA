@@ -62,6 +62,37 @@ _GENERIC_NUMBERED_LABEL = re.compile(
 )
 
 
+def _singular_label(label: str) -> str:
+    """Fold a trailing plural so "Solids" and "Solid" read as one label.
+
+    Source PDFs title the same concept both ways -- one numbers its sections
+    "2. Solids" while another defines "solid" -- and exact-string corroboration
+    cannot see through that. Only the final word is folded: the label arrives
+    lowercased and punctuation-stripped, so the head noun is what distinguishes
+    one concept from another. The length guard keeps short nouns intact, without
+    which "gas" would erode to "ga".
+    """
+    if not label:
+        return label
+    words = label.split()
+    word = words[-1]
+    if len(word) > 3 and word.endswith("ies"):
+        word = word[:-3] + "y"
+    elif len(word) > 3 and re.search(r"(?:ss|sh|ch|x|z|s)es$", word):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        word = word[:-1]
+    return " ".join(words[:-1] + [word])
+
+
+# Folded through the same rule as the labels they are compared against.
+# Otherwise "everyday examples" singularizes to "everyday example", falls out of
+# the generic set, and a generic heading becomes eligible for corroboration.
+_GENERIC_SINGULAR_LABELS = {
+    _singular_label(label) for label in _GENERIC_INSTRUCTIONAL_LABELS
+}
+
+
 class SemanticUnavailable(RuntimeError):
     pass
 
@@ -352,6 +383,62 @@ No category/title heuristics and no best-member/transitive chaining shortcut.
     return sorted(ranked, key=lambda row: (-row["evidence"]["score"], row["candidate"].id))
 
 
+_PART_MARKER = re.compile(r"\bpart\s+(\d+)\s*(?:of|/)\s*(\d+)\b", re.I)
+
+
+def _split_series_representative(rows):
+    """Return the first piece when these rows are one heading split into parts.
+
+    A long section is chunked into "SOLID (Part 1 of 3)", "(Part 2 of 3)" and so
+    on, and the part suffix is stripped before labels are compared -- so one
+    concept arrives looking like three objects sharing a name. That is not the
+    ambiguity the duplicate-label guard defends against.
+
+    Every condition has to hold: each title carries a part marker, they agree on
+    the total, they sit under one section, they number 1..N with none missing,
+    and they are consecutive. Two headings that merely share a label -- m8's
+    "SOLID" section and its "Solid" particle-arrangement item -- satisfy none of
+    this and stay ambiguous.
+    """
+    if len(rows) < 2:
+        return None
+    markers = [_PART_MARKER.search(item.title or "") for item in rows]
+    if not all(markers):
+        return None
+    if len({marker.group(2) for marker in markers}) != 1:
+        return None
+    # Every declared piece has to be present. Two rows claiming "of 3" are a
+    # truncated heading, and the missing piece may be the one that differs.
+    total = int(markers[0].group(2))
+    if len(rows) != total:
+        return None
+    if len({(item.section_title or "").strip() for item in rows}) != 1:
+        return None
+    if {int(marker.group(1)) for marker in markers} != set(range(1, total + 1)):
+        return None
+    orders = sorted(item.order for item in rows)
+    if orders != list(range(orders[0], orders[0] + len(orders))):
+        return None
+    return min(rows, key=lambda item: int(_PART_MARKER.search(item.title).group(1)))
+
+
+def _collapsed_label_rows(rows):
+    """Reduce one split heading to its first piece; leave anything else alone."""
+    representative = _split_series_representative(rows)
+    if representative:
+        return [representative]
+    rows = list(rows)
+    if len(rows) == 1:
+        marker = _PART_MARKER.search(rows[0].title or "")
+        if marker and int(marker.group(2)) > 1 and int(marker.group(1)) != 1:
+            # A later piece of a split heading, reached without its siblings --
+            # they sit in groups this decision cannot see, so the series never
+            # forms and the piece would otherwise pass through untouched. A
+            # continuation speaks for its own passage, never for the concept.
+            return []
+    return rows
+
+
 def label_corroboration_enabled() -> bool:
     return os.getenv("SEMANTIC_GROUPING_LABEL_CORROBORATION", "True").lower() in {
         "1", "true", "yes",
@@ -364,11 +451,11 @@ def _specific_normalized_label(title: str) -> str:
     from .content_generator import is_structural_metadata_label
     from .learning_resource_linker import normalize_learning_object_title
 
-    label = normalize_learning_object_title(title)
+    label = _singular_label(normalize_learning_object_title(title))
     if (
         not label
         or is_structural_metadata_label(title)
-        or label in _GENERIC_INSTRUCTIONAL_LABELS
+        or label in _GENERIC_SINGULAR_LABELS
         or _GENERIC_NUMBERED_LABEL.fullmatch(label)
     ):
         return ""
@@ -414,9 +501,14 @@ def _label_corroborated_decision(
         and item.group_id is not None
         and item.represented_by_id is None
         and (item.material.generated_json or {}).get("learning_objects_confirmed")
-        and normalize_learning_object_title(item.title) == label
+        and _singular_label(normalize_learning_object_title(item.title)) == label
     ]
-    source_matches = [item for item in label_objects if item.material_id == source.material_id]
+    # Only the first piece of a split heading may corroborate. Later pieces are
+    # continuations, and joining each of them to the same group would put three
+    # objects from one PDF into one concept.
+    source_matches = _collapsed_label_rows(
+        [item for item in label_objects if item.material_id == source.material_id]
+    )
     if len(source_matches) != 1 or source_matches[0].id != source.id:
         return None
 
@@ -429,8 +521,13 @@ def _label_corroborated_decision(
     by_material = defaultdict(list)
     for twin in twins:
         by_material[twin.material_id].append(twin)
-    if any(len(rows) != 1 for rows in by_material.values()):
-        return None
+    collapsed = []
+    for rows in by_material.values():
+        reduced = _collapsed_label_rows(rows)
+        if len(reduced) != 1:
+            return None
+        collapsed.extend(reduced)
+    twins = collapsed
 
     # With three or more PDFs, identical labels may already point at competing
     # groups. Do not choose one arbitrarily; ordinary semantic behavior remains.
@@ -520,7 +617,13 @@ def semantic_decision(material, title, content, kind, order, section_title="", s
         high = (mode() == "auto" and auto is not None and evidence["score"] >= auto
                 and evidence["minimum_group_sbert_cosine"] >= config["minimum_sbert_cosine"]
                 and evidence["all_members_checked"] and margin >= config["minimum_margin"])
-        review = evidence["score"] >= config["review_threshold"]
+        # A near-tie is not a finding. The margin floor already gates automatic
+        # grouping; without it here, a 0.0015 win over the runner-up reaches the
+        # teacher looking exactly like a real match.
+        review = (
+            evidence["score"] >= config["review_threshold"]
+            and margin >= config["minimum_margin"]
+        )
         evidence.update(runner_up_score=runner, winner_margin=margin,
                         auto_eligible=high, review_threshold=config["review_threshold"],
                         auto_threshold=auto,

@@ -231,6 +231,137 @@ class LabelCorroborationTests(TestCase):
         self.assertFalse(decision["evidence"].get("label_corroborated", False))
 
     @patch.dict(os.environ, LABEL_ENV)
+    def test_plural_and_singular_titles_corroborate_as_one_label(self):
+        # One PDF numbers its sections "2. Solids"; another defines "solid".
+        self.source.title = "Solids"
+        self.source.save(update_fields=["title"])
+        decision = self.decision({self.twin.content: .40})
+        self.assertEqual(decision["candidate"].id, self.twin.id)
+        self.assertEqual(decision["confidence"], "high")
+        self.assertTrue(decision["evidence"]["label_corroborated"])
+        self.assertEqual(decision["evidence"]["normalized_label"], "solid")
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_short_nouns_are_not_eroded_by_plural_folding(self):
+        self.source.title, self.twin.title = "Gases", "gas"
+        self.source.save(update_fields=["title"])
+        self.twin.save(update_fields=["title"])
+        decision = self.decision({self.twin.content: .40})
+        self.assertEqual(decision["evidence"]["normalized_label"], "gas")
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_generic_label_stays_generic_after_plural_folding(self):
+        # "everyday examples" singularizes to "everyday example"; it must still
+        # be recognised as generic rather than falling out of the excluded set.
+        for label in ("Everyday Examples", "Examples", "Key Points", "Notes"):
+            self.source.title = self.twin.title = label
+            self.source.save(update_fields=["title"])
+            self.twin.save(update_fields=["title"])
+            decision = self.decision({self.twin.content: .40})
+            self.assertFalse(
+                decision["evidence"].get("label_corroborated", False), label
+            )
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_near_tie_is_not_offered_for_review(self):
+        # Without a margin floor a 0.001 win reaches the teacher's queue looking
+        # exactly like a real match.
+        self.source.title = "Alpha"
+        self.source.save(update_fields=["title"])
+        rival_material = self.material("Third lesson")
+        rival_group = LearningObjectGroup.objects.create(outline_node=self.topic)
+        rival = self.object(rival_material, rival_group, "Beta", "near tie content")
+
+        decision = self.decision({self.twin.content: .40, rival.content: .401})
+
+        self.assertIsNone(decision["confidence"])
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_clear_winner_is_still_offered_for_review(self):
+        self.source.title = "Alpha"
+        self.source.save(update_fields=["title"])
+        rival_material = self.material("Third lesson")
+        rival_group = LearningObjectGroup.objects.create(outline_node=self.topic)
+        rival = self.object(rival_material, rival_group, "Beta", "clearly weaker content")
+
+        decision = self.decision({self.twin.content: .45, rival.content: .20})
+
+        self.assertEqual(decision["confidence"], "medium")
+
+    def _split_twin_into_parts(self, section="SOLID", total=2, sections=None):
+        """Replace the twin with `total` consecutive pieces of one heading."""
+        self.twin.title = f"solid (Part 1 of {total})"
+        self.twin.section_title = section
+        self.twin.order = 0
+        self.twin.save(update_fields=["title", "section_title", "order"])
+        extra = []
+        for number in range(2, total + 1):
+            extra.append(
+                LearningObject.objects.create(
+                    material=self.twin_material,
+                    group=self.twin_group,
+                    title=f"solid (Part {number} of {total})",
+                    content=f"continuation piece {number}",
+                    section_title=(sections or {}).get(number, section),
+                    order=number - 1,
+                )
+            )
+        return extra
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_one_heading_split_into_parts_is_not_ambiguous(self):
+        extra = self._split_twin_into_parts()
+
+        decision = self.decision({self.twin.content: .40, extra[0].content: .40})
+
+        self.assertTrue(decision["evidence"]["label_corroborated"])
+        self.assertEqual(decision["candidate"].id, self.twin.id)
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_parts_under_different_sections_stay_ambiguous(self):
+        # Same label, same part numbering, but two different headings.
+        extra = self._split_twin_into_parts(sections={2: "PARTICLE ARRANGEMENT"})
+
+        decision = self.decision({self.twin.content: .40, extra[0].content: .40})
+
+        self.assertFalse(decision["evidence"].get("label_corroborated", False))
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_a_gap_in_the_numbering_stays_ambiguous(self):
+        # "Part 1 of 3" and "Part 2 of 3" with the third piece missing is not a
+        # whole heading, so the label is still ambiguous.
+        self._split_twin_into_parts(total=3)
+        LearningObject.objects.filter(title="solid (Part 3 of 3)").delete()
+
+        decision = self.decision({self.twin.content: .40})
+
+        self.assertFalse(decision["evidence"].get("label_corroborated", False))
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_a_lone_continuation_piece_does_not_speak_for_the_concept(self):
+        # Its siblings sit in groups this decision cannot see, so the series
+        # never forms and the piece arrives alone.
+        self.twin.title = "solid (Part 3 of 3)"
+        self.twin.section_title = "SOLID"
+        self.twin.order = 2
+        self.twin.save(update_fields=["title", "section_title", "order"])
+
+        decision = self.decision({self.twin.content: .40})
+
+        self.assertFalse(decision["evidence"].get("label_corroborated", False))
+
+    @patch.dict(os.environ, LABEL_ENV)
+    def test_a_lone_first_piece_still_speaks_for_the_concept(self):
+        self.twin.title = "solid (Part 1 of 3)"
+        self.twin.section_title = "SOLID"
+        self.twin.order = 0
+        self.twin.save(update_fields=["title", "section_title", "order"])
+
+        decision = self.decision({self.twin.content: .40})
+
+        self.assertTrue(decision["evidence"]["label_corroborated"])
+
+    @patch.dict(os.environ, LABEL_ENV)
     def test_multiple_destination_groups_with_same_label_are_ambiguous(self):
         third_material = self.material("Third lesson")
         other_group = LearningObjectGroup.objects.create(outline_node=self.topic)
