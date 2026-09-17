@@ -5,11 +5,41 @@ that reads mavia's own data instead of the ported ``course`` app: modules are
 top-level ``OutlineNode``s, a lesson is a child topic, tracks come straight
 from each material's ``generated_json["lesson_playlist"]``, and questions are
 ``lessons.Question`` rows.
+
+``learning_path`` (below) is the one piece of this payload that does *not*
+come from the ``lessons`` app's own rows: it is the topic's published
+prerequisite path (see ``learning_path/HANDOFF.md``), included here so a
+client reading one lesson's package also learns the concept order and
+prerequisite structure the adaptive rules use, without a second request.
+It is ``None`` until the topic has been published with a learning path.
 """
 
 from lessons.models import LearningMaterial, OutlineNode, Question
 
 from .audio_generator import _playlist_text_by_order
+
+
+def _learning_path_summary(lesson_node):
+    """Student-safe (no answers) prerequisite path for one topic, or ``None``."""
+    from learning_path.services import get_published_path
+
+    path = get_published_path(lesson_node, include_answers=False)
+    if path is None:
+        return None
+    return {
+        "published_at": path["published_at"],
+        "steps": [
+            {
+                "position": step["position"],
+                "depth": step["depth"],
+                "concept_id": step["concept_id"],
+                "title": step["title"],
+                "prerequisites": step["prerequisites"],
+                "leads_to": step["leads_to"],
+            }
+            for step in path["steps"]
+        ],
+    }
 
 
 def _module_lesson_nodes(module_node, *, published_only=False):
@@ -101,6 +131,7 @@ def build_lesson_payload(lesson_node):
         "has_questions": bool(questions),
         "track_count": len(tracks),
         "question_count": len(questions),
+        "learning_path": _learning_path_summary(lesson_node),
     }
 
 

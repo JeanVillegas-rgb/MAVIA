@@ -1,15 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
 import IconButton from "@/components/IconButton";
 import GradientTile from "@/components/GradientTile";
 import Button from "@/components/Button";
-import QuestionCard, { SubmitResult } from "@/components/QuestionCard";
+import QuestionCard, { Question as LegacyQuestion, SubmitResult } from "@/components/QuestionCard";
 import { useAudioPlayer } from "@/hooks/useAudioPlayer";
 import {
   ApiLesson,
+  ApiStep,
+  ApiSubmitResult,
+  ApiTrack,
+  Variant,
   fetchLessonPackage,
   resolveMediaUrl,
   startLearning,
@@ -27,6 +32,77 @@ function fmt(millis: number) {
 
 type Phase = "audio" | "questions" | "done";
 
+// --- learning-path ("path mode") adapters -----------------------------------
+// A concept step is content-shaped like one track (one narration, one
+// audio_url per variant) with 2 questions (1 LOT + 1 HOT) attached, rather
+// than a lesson's whole playlist. These adapt it to the two shapes this
+// screen already knows how to play, so nothing below needs a second render
+// path — only where a step transitions to the next one differs.
+// See backend/adaptive/PATH_MODE.md for the ruling this mirrors.
+
+function stepTrack(step: ApiStep, variant: Variant): ApiTrack {
+  const version = step.versions[variant] ?? step.versions.normal;
+  return {
+    id: `step-${step.position}`,
+    order: 0,
+    title: step.title,
+    type: "lesson_content",
+    audio_url: version?.audio_url ?? "",
+    audio_ready: Boolean(version?.audio_url),
+    text: version?.text ?? "",
+  };
+}
+
+// GeneratedQuestion never carries a correct_answer to the student (see
+// learning_path/HANDOFF.md § 3), so the mapped correct_answer is always "" —
+// QuestionCard's per-option "this was correct" highlight simply never
+// matches, which is the desired behavior here, not a bug.
+function stepQuestions(step: ApiStep): LegacyQuestion[] {
+  return step.questions.map((q, index) => ({
+    id: q.id,
+    order: index,
+    prompt: q.text,
+    question_type: q.format === "TF" ? "true_false" : "multiple_choice",
+    choices:
+      q.format === "MCQ" && q.choices
+        ? Object.keys(q.choices).sort().map((key) => q.choices![key])
+        : [],
+    correct_answer: "",
+  }));
+}
+
+const VARIANT_INFO: Record<Variant, { icon: keyof typeof Ionicons.glyphMap; label: string } | null> = {
+  normal: null,
+  simplified: { icon: "reader-outline", label: "Simplified explanation" },
+  elaborated: { icon: "sparkles-outline", label: "Extra detail" },
+};
+
+// A quiet, wide colored strip — used both for the "reviewing a prerequisite"
+// notice and the variant badge. Always paired with an accessible label so a
+// screen reader announces the same thing a sighted student sees.
+function Notice({
+  icon,
+  tone,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: "review" | "variant";
+  children: string;
+}) {
+  const palette = tone === "review" ? styles.noticeReview : styles.noticeVariant;
+  return (
+    <View style={[styles.notice, palette]} accessible accessibilityRole="text" accessibilityLabel={children}>
+      <Ionicons name={icon} size={16} color={tone === "review" ? colors.brand600 : colors.brand700} />
+      <Text style={[styles.noticeText, tone === "variant" && { color: colors.brand700 }]}>{children}</Text>
+    </View>
+  );
+}
+
+const THINKING_LABEL: Record<string, string> = {
+  LOT: "Quick check",
+  HOT: "Think it through",
+};
+
 export default function LessonPlayerScreen() {
   const router = useRouter();
   const { courseId, lessonId } = useLocalSearchParams<{ courseId: string; lessonId: string }>();
@@ -40,10 +116,22 @@ export default function LessonPlayerScreen() {
   const [trackIndex, setTrackIndex] = useState(0);
   const [questionIndex, setQuestionIndex] = useState(0);
 
-  const tracks = lesson?.tracks ?? [];
-  const questions = lesson?.questions ?? [];
+  // Path mode: which concept the student is on, its variant, and whether
+  // they're mid-detour through an earlier prerequisite (non-null while so).
+  const [pathStep, setPathStep] = useState<ApiStep | null>(null);
+  const [variant, setVariant] = useState<Variant>("normal");
+  const [remediationTarget, setRemediationTarget] = useState<number | null>(null);
+  // The last submit-response result, read by nextQuestion() once the student
+  // taps past the feedback QuestionCard shows — the state transition (which
+  // concept/variant comes next) was already decided server-side by then.
+  const lastResult = useRef<ApiSubmitResult | null>(null);
+
+  const inPathMode = pathStep !== null;
+  const tracks = inPathMode ? [stepTrack(pathStep, variant)] : lesson?.tracks ?? [];
+  const questions = inPathMode ? stepQuestions(pathStep) : lesson?.questions ?? [];
   const track = tracks[trackIndex];
-  const canGrade = Boolean(learningStateId) && (lesson?.has_questions ?? false);
+  const hasQuestions = inPathMode ? questions.length > 0 : lesson?.has_questions ?? false;
+  const canGrade = Boolean(learningStateId) && hasQuestions;
 
   const goToQuestions = useCallback(() => {
     setPhase(canGrade ? "questions" : "done");
@@ -71,7 +159,20 @@ export default function LessonPlayerScreen() {
         if (cancelled) return;
         setLesson(pkg);
         setLearningStateId(start?.learning_state?.id ?? null);
-        if (pkg.tracks.length === 0) setPhase(pkg.has_questions ? "questions" : "done");
+
+        const step = start?.current_step ?? null;
+        setPathStep(step);
+        if (step) {
+          const startVariant = start!.learning_state.current_variant || "normal";
+          const assignedId = start!.learning_state.current_generated_question;
+          const idx = step.questions.findIndex((q) => q.id === assignedId);
+          setQuestionIndex(idx >= 0 ? idx : 0);
+          setVariant(startVariant);
+          setRemediationTarget(start!.learning_state.remediation_target_position ?? null);
+          setPhase(stepTrack(step, startVariant).audio_ready ? "audio" : "questions");
+        } else if (pkg.tracks.length === 0) {
+          setPhase(pkg.has_questions ? "questions" : "done");
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Couldn't load this lesson.");
@@ -105,10 +206,63 @@ export default function LessonPlayerScreen() {
       question_id: questions[questionIndex].id,
       selected_answer: answer,
     });
+    if (inPathMode) lastResult.current = res;
     return { is_correct: res.is_correct, mastery: res.mastery, completed: res.completed };
   }
 
+  // The ruling (backend/adaptive_portal/services.py::AdaptiveEngine.evaluate_path,
+  // mirrored here as pure state transition, no re-computation):
+  //   correct, more questions left in this concept -> next question, same concept
+  //   correct, concept cleared               -> next concept in path order (or
+  //                                              resume the one being detoured
+  //                                              through, if any), variant "normal"
+  //   wrong x3, concept has a prerequisite    -> jump to the nearest prerequisite
+  //                                              concept as a refresher
+  //   wrong x3, no prerequisite to fall back  -> same concept, de-escalated
+  //   on                                        variant (normal -> simplified ->
+  //                                              elaborated)
+  function nextQuestionPathMode() {
+    const res = lastResult.current;
+    lastResult.current = null;
+    if (!res || res.completed || !res.current_step) {
+      setPathStep(null);
+      setPhase("done");
+      return;
+    }
+
+    const newStep = res.current_step;
+    const sameConcept = pathStep?.concept_id === newStep.concept_id;
+    const nextVariant = res.current_variant ?? "normal";
+
+    setPathStep(newStep);
+    setVariant(nextVariant);
+    setRemediationTarget(res.remediation_target_position ?? null);
+
+    if (sameConcept) {
+      // Still the same chunk: either the LOT->HOT move within it, or a
+      // de-escalated variant re-teaching the same pair. Stay on questions.
+      const idx = newStep.questions.findIndex((q) => q.id === res.next_question);
+      setQuestionIndex(idx >= 0 ? idx : 0);
+      setPhase("questions");
+      return;
+    }
+
+    // A different concept: advanced forward, detoured to a prerequisite, or
+    // resumed the one that was struggled on. res.next_question is whichever
+    // of its questions the server assigned first (not necessarily index 0 —
+    // a resumed concept may already have its LOT question answered, in which
+    // case the server assigns the HOT one directly).
+    const idx = newStep.questions.findIndex((q) => q.id === res.next_question);
+    setQuestionIndex(idx >= 0 ? idx : 0);
+    setTrackIndex(0);
+    setPhase(stepTrack(newStep, nextVariant).audio_ready ? "audio" : "questions");
+  }
+
   function nextQuestion() {
+    if (inPathMode) {
+      nextQuestionPathMode();
+      return;
+    }
     setQuestionIndex((current) => {
       if (current + 1 < questions.length) return current + 1;
       setPhase("done");
@@ -150,6 +304,17 @@ export default function LessonPlayerScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+        {inPathMode && phase !== "done" && remediationTarget !== null && (
+          <Notice icon="return-up-back-outline" tone="review">
+            Quick review before you continue — you'll pick back up where you left off.
+          </Notice>
+        )}
+        {inPathMode && phase !== "done" && VARIANT_INFO[variant] && (
+          <Notice icon={VARIANT_INFO[variant]!.icon} tone="variant">
+            {VARIANT_INFO[variant]!.label}
+          </Notice>
+        )}
+
         {phase === "audio" && track && (
           <>
             <View style={styles.artWrap}>
@@ -159,9 +324,11 @@ export default function LessonPlayerScreen() {
             <Text style={styles.trackTitle} numberOfLines={2} accessibilityRole="header">
               {track.title}
             </Text>
-            <Text style={styles.trackMeta}>
-              Track {trackIndex + 1} of {tracks.length}
-            </Text>
+            {!inPathMode && (
+              <Text style={styles.trackMeta}>
+                Track {trackIndex + 1} of {tracks.length}
+              </Text>
+            )}
 
             {!track.audio_ready && (
               <Text style={styles.warn}>Audio for this track hasn’t been generated yet.</Text>
@@ -229,22 +396,39 @@ export default function LessonPlayerScreen() {
               style={{ marginTop: spacing.lg }}
             />
 
-            <View style={styles.playlist}>
-              {tracks.map((t, i) => (
-                <Pressable
-                  key={t.id}
-                  onPress={() => setTrackIndex(i)}
-                  style={[styles.playlistItem, i === trackIndex && styles.playlistItemActive]}
-                >
-                  <Text style={styles.playlistIndex}>{i + 1}</Text>
-                  <Text style={styles.playlistTitle} numberOfLines={1}>
-                    {t.title}
-                  </Text>
-                  {!t.audio_ready && <Text style={styles.playlistFlag}>no audio</Text>}
-                </Pressable>
-              ))}
-            </View>
+            {!inPathMode && (
+              <View style={styles.playlist}>
+                {tracks.map((t, i) => (
+                  <Pressable
+                    key={t.id}
+                    onPress={() => setTrackIndex(i)}
+                    style={[styles.playlistItem, i === trackIndex && styles.playlistItemActive]}
+                  >
+                    <Text style={styles.playlistIndex}>{i + 1}</Text>
+                    <Text style={styles.playlistTitle} numberOfLines={1}>
+                      {t.title}
+                    </Text>
+                    {!t.audio_ready && <Text style={styles.playlistFlag}>no audio</Text>}
+                  </Pressable>
+                ))}
+              </View>
+            )}
           </>
+        )}
+
+        {phase === "questions" && inPathMode && pathStep && (
+          <View style={styles.conceptHeader}>
+            <Text style={styles.conceptTitle} numberOfLines={2} accessibilityRole="header">
+              {pathStep.title}
+            </Text>
+            {pathStep.questions[questionIndex] && (
+              <View style={styles.thinkingTag}>
+                <Text style={styles.thinkingTagText}>
+                  {THINKING_LABEL[pathStep.questions[questionIndex].thinking_order] ?? "Question"}
+                </Text>
+              </View>
+            )}
+          </View>
         )}
 
         {phase === "questions" && questions[questionIndex] && (
@@ -289,6 +473,40 @@ const styles = StyleSheet.create({
   },
   headerTitle: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "800", color: colors.ink },
   body: { paddingBottom: spacing.xl, gap: spacing.xs },
+  notice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    alignSelf: "center",
+  },
+  noticeReview: { backgroundColor: colors.brand100 },
+  noticeVariant: { backgroundColor: colors.brand50, borderWidth: 1, borderColor: colors.brand200 },
+  noticeText: { fontSize: 13, fontWeight: "700", color: colors.brand600 },
+  conceptHeader: {
+    marginTop: spacing.lg,
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  conceptTitle: { fontSize: 18, fontWeight: "800", color: colors.ink, textAlign: "center" },
+  thinkingTag: {
+    paddingVertical: 4,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.pill,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  thinkingTagText: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    color: colors.muted,
+  },
   artWrap: { alignItems: "center", marginTop: spacing.lg },
   trackTitle: { marginTop: spacing.lg, fontSize: 20, fontWeight: "800", color: colors.ink, textAlign: "center" },
   trackMeta: { marginTop: 4, fontSize: 12, color: colors.faint, textAlign: "center" },

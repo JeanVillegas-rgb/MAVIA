@@ -14,6 +14,7 @@ from lessons.services.lesson_package import (
     build_lesson_payload,
     build_module_package,
 )
+from question_generation.models import GeneratedQuestion
 from user.models import User
 from user.permissions import IsStudent, IsTeacherOrAdmin
 
@@ -25,12 +26,38 @@ from .serializers import (
     StudentBriefSerializer,
     SubmitResponseSerializer,
 )
-from .services import AdaptiveEngine, ordered_course_steps, resolve_start, top_level_ancestor
+from .services import (
+    AdaptiveEngine,
+    ordered_course_steps,
+    published_path_for,
+    resolve_learning_start,
+    resolve_start,
+    student_safe_question,
+    student_safe_step,
+    top_level_ancestor,
+)
 
 
 # ---------------------------------------------------------------------------
 # student-facing (adopted by the mobile app)
 # ---------------------------------------------------------------------------
+
+def _in_progress(state):
+    """True once a start has assigned either kind of current question."""
+    return state.current_question_id is not None or state.current_generated_question_id is not None
+
+
+def _current_step_payload(state):
+    """The active learning-path step, answers stripped, or ``None`` when the
+    state is in legacy mode (or has no current node)."""
+    if state.current_generated_question_id is None or not state.current_lesson_node_id:
+        return None
+    path = published_path_for(state.current_lesson_node)
+    if path is None:
+        return None
+    step = next((s for s in path["steps"] if s["position"] == state.current_step_position), None)
+    return student_safe_step(step) if step else None
+
 
 class StartLearningView(APIView):
     permission_classes = [IsStudent]
@@ -51,11 +78,18 @@ class StartLearningView(APIView):
             course=course,
             defaults={"mastery": AdaptiveConfig.load().starting_mastery},
         )
-        if created or state.current_question_id is None and not state.completed:
-            module, node, question = resolve_start(course)
-            state.current_module = module
-            state.current_lesson_node = node
-            state.current_question = question
+        if created or not _in_progress(state) and not state.completed:
+            start = resolve_learning_start(course)
+            state.current_module = start["module"]
+            state.current_lesson_node = start["node"]
+            if start["mode"] == "path":
+                state.current_step_position = start["step"]["position"]
+                state.current_generated_question = GeneratedQuestion.objects.get(pk=start["question"]["id"])
+                state.current_question = None
+            else:
+                state.current_step_position = None
+                state.current_generated_question = None
+                state.current_question = start["question"]
             state.save()
 
         lesson = (
@@ -67,6 +101,7 @@ class StartLearningView(APIView):
             {
                 "learning_state": LearningStateSerializer(state).data,
                 "lesson": lesson,
+                "current_step": _current_step_payload(state),
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
@@ -86,19 +121,39 @@ class SubmitResponseView(APIView):
         )
         if not Enrollment.objects.filter(student=request.user, course=state.course).exists():
             return Response({"detail": "Not enrolled."}, status=403)
-        if state.completed or state.current_question_id != data["question_id"]:
+        if state.completed:
             return Response({"detail": "Answer the currently assigned question."}, status=400)
         if not state.current_lesson_node or not state.current_lesson_node.published:
             return Response({"detail": "This lesson is no longer published."}, status=400)
-        question = get_object_or_404(Question, pk=data["question_id"])
 
-        result = AdaptiveEngine.evaluate(state, question, data["selected_answer"])
-        StudentResponse.objects.create(
-            learning_state=state,
-            question=question,
-            selected_answer=data["selected_answer"],
-            is_correct=result["is_correct"],
-        )
+        if state.current_generated_question_id is not None:
+            if state.current_generated_question_id != data["question_id"]:
+                return Response({"detail": "Answer the currently assigned question."}, status=400)
+            path = published_path_for(state.current_lesson_node)
+            step = next(s for s in path["steps"] if s["position"] == state.current_step_position)
+            question = next(q for q in step["questions"] if q["id"] == data["question_id"])
+
+            result = AdaptiveEngine.evaluate_path(state, path, question, data["selected_answer"])
+            StudentResponse.objects.create(
+                learning_state=state,
+                generated_question_id=data["question_id"],
+                selected_answer=data["selected_answer"],
+                is_correct=result["is_correct"],
+            )
+            result["current_step"] = _current_step_payload(state)
+        else:
+            if state.current_question_id != data["question_id"]:
+                return Response({"detail": "Answer the currently assigned question."}, status=400)
+            question = get_object_or_404(Question, pk=data["question_id"])
+
+            result = AdaptiveEngine.evaluate(state, question, data["selected_answer"])
+            StudentResponse.objects.create(
+                learning_state=state,
+                question=question,
+                selected_answer=data["selected_answer"],
+                is_correct=result["is_correct"],
+            )
+            result["current_step"] = _current_step_payload(state)
 
         next_lesson = (
             build_lesson_payload(state.current_lesson_node)

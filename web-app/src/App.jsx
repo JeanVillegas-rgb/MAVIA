@@ -13,6 +13,7 @@ import NewCoursePage from "./pages/teacher/NewCoursePage";
 import TeacherShell from "./pages/teacher/TeacherShell";
 import CourseDetailPage from "./pages/CourseDetailPage";
 import TopicDetailPage from "./pages/TopicDetailPage";
+import LearningPathPage from "./pages/LearningPathPage";
 import ReviewCoursesPage from "./pages/teacher/ReviewCoursesPage";
 import CourseReviewPage from "./pages/teacher/CourseReviewPage";
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -49,7 +50,7 @@ export default function App() {
         path="/contact"
         element={
           <MarketingPage title="Contact us">
-            Reach the MAVIA team at hello@mavia.example — we would love to hear
+            Reach the MAVIA team at mavia.official.contact@gmail.com — we would love to hear
             from schools and educators.
           </MarketingPage>
         }
@@ -126,6 +127,16 @@ export default function App() {
           <RequireRole allow={[ROLES.TEACHER, ROLES.ADMIN]}>
             <div className="app-shell">
               <TopicDetailPage />
+            </div>
+          </RequireRole>
+        }
+      />
+      <Route
+        path="/courses/:courseId/topics/:topicId/path"
+        element={
+          <RequireRole allow={[ROLES.TEACHER, ROLES.ADMIN]}>
+            <div className="app-shell">
+              <LearningPathPage />
             </div>
           </RequireRole>
         }

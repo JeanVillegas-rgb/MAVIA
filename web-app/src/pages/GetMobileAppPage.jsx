@@ -12,7 +12,7 @@ export default function GetMobileAppPage() {
   return (
     <AppShell nav={[]}>
       <div className="mv-page-head">
-        <h1>Hi {firstName} 👋</h1>
+        <h1>Hi {firstName} </h1>
         <p>MAVIA for students lives on your phone.</p>
       </div>
 

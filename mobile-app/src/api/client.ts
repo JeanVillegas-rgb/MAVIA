@@ -99,7 +99,7 @@ export type RegisterPayload = {
 
 export function register(
   data: RegisterPayload
-): Promise<{ message?: string; user: User; verification_required?: boolean }> {
+): Promise<{ message: string; user: User; verification_required?: boolean }> {
   return request("/auth/register/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -158,6 +158,69 @@ export type ApiTrack = {
   text: string;
 };
 
+// --- learning-path ("path mode") -------------------------------------------
+// A topic published with a learning path (backend: learning_path app) walks
+// concepts in prerequisite order instead of a flat question list. Present
+// only once a topic has been published that way; a lesson/course otherwise
+// stays on the plain question list above (ApiLesson.questions).
+// See backend/adaptive_portal/PATH_MODE.md for the full ruling this mirrors.
+
+export type Variant = "normal" | "simplified" | "elaborated";
+
+export type ApiStepQuestion = {
+  id: number;
+  text: string;
+  format: "MCQ" | "TF" | string;
+  choices: Record<string, string> | null;
+  bloom_level: string;
+  thinking_order: "LOT" | "HOT" | string;
+  difficulty: string;
+  category: string;
+};
+
+export type ApiStepVersion = { text: string; audio_url: string } | null;
+
+export type ApiStep = {
+  position: number;
+  depth: number;
+  concept_id: number;
+  title: string;
+  section_title: string;
+  learning_object_id: number;
+  sources: { material_id: number; title: string }[];
+  versions: {
+    normal: ApiStepVersion;
+    simplified: ApiStepVersion;
+    elaborated: ApiStepVersion;
+  };
+  // 2 questions per concept, 1 LOT + 1 HOT — never includes correct_answer,
+  // per learning_path/HANDOFF.md: answers never reach a student's device.
+  questions: ApiStepQuestion[];
+  prerequisites: number[];
+  leads_to: number[];
+};
+
+export type ApiLearningState = {
+  id: number;
+  course: number;
+  current_module: number | null;
+  current_lesson_node: number | null;
+  current_question: number | null;
+  current_question_attempts: number;
+  // Path-mode fields — null/"normal" while a topic is in the legacy flat mode.
+  current_step_position: number | null;
+  current_generated_question: number | null;
+  remediation_target_position: number | null;
+  current_variant: Variant;
+  mastery: number;
+  attempts: number;
+  completed: boolean;
+  started_at: string;
+  updated_at: string;
+};
+
+// -----------------------------------------------------------------------
+
 export type ApiLesson = {
   id: number;
   title: string;
@@ -198,7 +261,15 @@ export function fetchLessonPackage(lessonId: number | string): Promise<ApiLesson
   return request(`/adaptive-portal/lessons/${lessonId}/`);
 }
 
-export function startLearning(courseId: number | string) {
+export type ApiStartResult = {
+  learning_state: ApiLearningState;
+  lesson: ApiLesson | null;
+  // Present only when this student's next content is a published-path
+  // concept rather than the plain question list on `lesson`.
+  current_step: ApiStep | null;
+};
+
+export function startLearning(courseId: number | string): Promise<ApiStartResult> {
   return request("/adaptive-portal/start/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -206,11 +277,26 @@ export function startLearning(courseId: number | string) {
   });
 }
 
+export type ApiSubmitResult = {
+  is_correct: boolean;
+  mastery: number;
+  completed: boolean;
+  next_module: number | null;
+  next_lesson_node: number | null;
+  next_question: number | null;
+  // Path-mode only (undefined in legacy mode):
+  next_step_position?: number | null;
+  remediation_target_position?: number | null;
+  current_variant?: Variant;
+  current_step: ApiStep | null;
+  lesson: ApiLesson | null;
+};
+
 export function submitResponse(params: {
   learning_state_id: number;
   question_id: number;
   selected_answer: string;
-}) {
+}): Promise<ApiSubmitResult> {
   return request("/adaptive-portal/submit-response/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
