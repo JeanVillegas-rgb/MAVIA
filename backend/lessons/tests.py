@@ -1359,6 +1359,46 @@ class LearningResourceRelationshipTests(TestCase):
         )
         self.assertEqual(response.data["match_suggestions"], [])
 
+    def test_accepting_a_suggestion_groups_an_ungrouped_source_too(self):
+        """Regression: the plain-connect branch of `_accept_suggestion` built
+        a new group for an ungrouped source but only assigned it to
+        `candidate`, leaving the source out of the very concept the teacher
+        just connected it to. Not reachable through normal grouping -- every
+        object is grouped by `ensure_learning_object_groups` -- but a bug
+        this direct is worth pinning regardless."""
+        first_material = self._material("first")
+        second_material = self._material("second")
+        first = LearningObject.objects.create(
+            material=first_material,
+            title="Shape",
+            content="A solid keeps its shape.",
+        )
+        second = LearningObject.objects.create(
+            material=second_material,
+            group=LearningObjectGroup.objects.create(outline_node=self.node, label="Form"),
+            title="Form of a solid",
+            content="Rigid matter retains its form.",
+        )
+        suggestion = LearningObjectMatchSuggestion.objects.create(
+            outline_node=self.node,
+            source_learning_object=first,
+            candidate_learning_object=second,
+            similarity_score=0.48,
+            confidence=LearningObjectMatchSuggestion.Confidence.MEDIUM,
+            evidence={"method": "hybrid_tfidf_v2"},
+        )
+
+        response = self.client.post(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/match-suggestions/{suggestion.id}/accept/",
+            format="json",
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(first.group_id)
+        self.assertEqual(first.group_id, second.group_id)
+
     def test_teacher_can_reject_a_pending_match_suggestion(self):
         first_material = self._material("first")
         second_material = self._material("second")
@@ -4846,3 +4886,74 @@ class FinalReviewDeletionTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertTrue(LearningObject.objects.filter(pk=item.id).exists())
+
+
+class MobileLessonTrackBundleTests(TestCase):
+    """A concept's mobile tracks stay one per object, in document order.
+
+    The link under test is the publish's own playlist build: it writes one
+    entry per object a PDF still teaches in its own voice, and the mobile
+    package reads that list straight through. A concept taught as a bundle of
+    three objects must therefore reach the learner as three tracks -- and an
+    object that is another concept's version must not become a track of this
+    lesson at all.
+    """
+
+    def setUp(self):
+        from .services.lesson_package import build_lesson_payload
+        from .services.topic_publish import refresh_material_playlist
+
+        self.build_lesson_payload = build_lesson_payload
+        self.refresh_material_playlist = refresh_material_playlist
+        course = CourseGroup.objects.create(title="Science")
+        self.topic = OutlineNode.objects.create(course=course, title="States")
+        self.material = LearningMaterial.objects.create(
+            course=course,
+            outline_node=self.topic,
+            title="A",
+            status=LearningMaterial.Status.COMPLETED,
+            generated_json={"learning_objects_confirmed": True},
+        )
+        self.other = LearningMaterial.objects.create(
+            course=course,
+            outline_node=self.topic,
+            title="B",
+            status=LearningMaterial.Status.COMPLETED,
+            generated_json={"learning_objects_confirmed": True},
+        )
+        group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Solid")
+        self.lead = LearningObject.objects.create(
+            material=self.material, group=group, title="Solid", order=0,
+            content="A solid keeps its shape.",
+        )
+        self.tail = LearningObject.objects.create(
+            material=self.material, group=group, title="Particle diagram", order=1,
+            section_title="Solid", content="Particles sit in a grid.",
+        )
+        # The other PDF's wording of the same concept: a version, taught
+        # through this bundle rather than as a track of its own.
+        self.version = LearningObject.objects.create(
+            material=self.other, group=group, title="Solid", order=0,
+            content="A solid stays the same shape.", represented_by=self.lead,
+        )
+
+    def test_a_concepts_tracks_are_one_per_object_in_document_order(self):
+        self.refresh_material_playlist(self.material)
+        self.refresh_material_playlist(self.other)
+
+        payload = self.build_lesson_payload(self.topic)
+
+        self.assertEqual(
+            [(track["order"], track["title"], track["text"]) for track in payload["tracks"]],
+            [
+                (0, "Solid", "Solid. A solid keeps its shape."),
+                (1, "Particle diagram", "In Solid. Particle diagram: Particles sit in a grid."),
+            ],
+        )
+        self.assertEqual(payload["track_count"], 2)
+
+    def test_a_version_supplied_by_another_pdf_is_not_a_track(self):
+        self.refresh_material_playlist(self.other)
+
+        self.assertEqual(self.other.generated_json["lesson_playlist"], [])
+

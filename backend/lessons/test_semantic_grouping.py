@@ -35,6 +35,16 @@ class FakeRuntime:
         return [self.scores.get(right, .95) for left, right in pairs]
 
 
+SEMANTIC_ENV = {
+    "SEMANTIC_GROUPING_MODE": "auto",
+    "SEMANTIC_GROUPING_CALIBRATION": "",
+    "SEMANTIC_GROUPING_AUTO_THRESHOLD": "",
+    "SEMANTIC_GROUPING_REVIEW_THRESHOLD": "",
+    "SEMANTIC_GROUPING_MINIMUM_SBERT_COSINE": "",
+    "SEMANTIC_GROUPING_MINIMUM_MARGIN": "",
+}
+
+
 class SemanticPureTests(SimpleTestCase):
     def test_semantic_mode_is_enabled_by_default(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -323,3 +333,43 @@ class SemanticIntegrationTests(TestCase):
         self.assertEqual(pending.status, "pending")
         self.source.refresh_from_db()
         self.assertEqual(self.source.group_id, self.source_group.id)
+
+
+class SameMaterialEligibilityTests(TestCase):
+    """A concept may hold several objects from one PDF.
+
+    One file teaches Solid as a section plus a diagram; the other as a single
+    passage. Refusing a group that already holds an object from this material
+    is what used to make that impossible.
+    """
+
+    def setUp(self):
+        self.course = CourseGroup.objects.create(title="Science")
+        self.topic = OutlineNode.objects.create(course=self.course, title="States")
+        confirmed = {"learning_objects_confirmed": True}
+        self.first = LearningMaterial.objects.create(
+            course=self.course, outline_node=self.topic, title="A", generated_json=dict(confirmed))
+        self.second = LearningMaterial.objects.create(
+            course=self.course, outline_node=self.topic, title="B", generated_json=dict(confirmed))
+        self.group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Solid")
+        self.solid = LearningObject.objects.create(
+            material=self.first, group=self.group, title="Solid",
+            content="A solid keeps its shape.", order=0)
+        self.solids = LearningObject.objects.create(
+            material=self.second, group=self.group, title="Solids",
+            content="In a solid, particles are packed tightly.", order=0)
+        self.diagram = LearningObject.objects.create(
+            material=self.second, group=LearningObjectGroup.objects.create(outline_node=self.topic),
+            title="Diagram description", content="Particles drawn in a grid.",
+            section_title="Solids", order=1)
+
+    def test_a_group_holding_this_material_is_still_eligible(self):
+        with patch.dict(os.environ, SEMANTIC_ENV), patch.object(semantic, "runtime", return_value=FakeRuntime()):
+            decision = semantic.semantic_decision(
+                self.second, self.diagram.title, self.diagram.content, self.diagram.kind,
+                self.diagram.order, section_title=self.diagram.section_title,
+                source_object_id=self.diagram.id,
+            )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision["candidate"].group_id, self.group.id)

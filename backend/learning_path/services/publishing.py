@@ -20,6 +20,7 @@ from django.utils import timezone
 from ..models import ConceptPrerequisite, LearningPathStep
 from . import criteria
 from .concept_units import concepts_for_topic
+from .concepts import is_structural
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,12 @@ def order_with_links(concepts, links):
     the links it could not satisfy are reported rather than silently dropped.
     """
     position = {concept.id: index for index, concept in enumerate(concepts)}
+    structural = {concept.id for concept in concepts if is_structural(concept)}
+
+    def rank(concept_id):
+        # Structural concepts ("Everyday Examples") always close the path.
+        return (concept_id in structural, position[concept_id])
+
     successors = {concept.id: set() for concept in concepts}
     indegree = {concept.id: 0 for concept in concepts}
     for before, after in set(links):
@@ -115,13 +122,13 @@ def order_with_links(concepts, links):
         if not ready:
             # A loop. Teach the earliest remaining concept and record which of
             # its incoming links could not be honoured.
-            chosen = min((cid for cid in indegree if cid not in placed), key=position.get)
+            chosen = min((cid for cid in indegree if cid not in placed), key=rank)
             ignored.extend(
                 (before, chosen) for before, afters in successors.items()
                 if chosen in afters and before not in placed
             )
         else:
-            chosen = min(ready, key=position.get)
+            chosen = min(ready, key=rank)
         ordered.append(by_id[chosen])
         placed.add(chosen)
         for after in successors[chosen]:

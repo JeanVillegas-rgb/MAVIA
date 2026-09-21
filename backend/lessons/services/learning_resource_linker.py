@@ -945,6 +945,13 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
         material.generated_json = data
         material.save(update_fields=["generated_json"])
 
+    if semantic_active:
+        from .unit_matching import refresh_heading_unit_suggestions
+        try:
+            refresh_heading_unit_suggestions(material.outline_node)
+        except Exception:  # noqa: BLE001 -- unit proposals must never break grouping
+            logger.exception("Heading-matched unit suggestions could not be refreshed")
+
 
 def remove_empty_learning_object_groups(material: LearningMaterial) -> None:
     if material.outline_node_id is None:

@@ -58,20 +58,46 @@ SOURCE CONTENT:
 """
 
 
+# Gemma sometimes closes a JSON string with a typographic right quote instead
+# of `"`. The string then never terminates, so the constrained decoding never
+# sees the object close and the reply runs on to the token limit with whatever
+# the model pads it with. Recorded on a real publish: see test_variant_parsing.
+_TYPOGRAPHIC_DOUBLE_QUOTES = str.maketrans({"“": '"', "”": '"'})
+
+
+def _loads_json_object(text):
+    """The JSON object in ``text``, or the one inside it, or ``None``."""
+    for candidate in (text, _innermost_object(text)):
+        if candidate is None:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _innermost_object(text):
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if 0 <= start < end else None
+
+
 def _parse_response(raw_text, source_word_count=None):
     text = (raw_text or "").strip()
     if text.startswith("```"):
         text = text.strip("`").removeprefix("json").strip()
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        start, end = text.find("{"), text.rfind("}")
-        if start < 0 or end <= start:
-            raise VariantGenerationError("Gemma did not return valid JSON.") from exc
-        try:
-            payload = json.loads(text[start:end + 1])
-        except json.JSONDecodeError as nested_exc:
-            raise VariantGenerationError("Gemma did not return valid JSON.") from nested_exc
+    payload = _loads_json_object(text)
+    if payload is None:
+        # Repair the delimiters, but only keep the result when it actually
+        # parses. A reply whose wording genuinely contains curly quotes parses
+        # on the first attempt and never reaches here; one that would need its
+        # own quotes rewritten does not parse after the substitution either,
+        # and is refused rather than silently truncated.
+        payload = _loads_json_object(text.translate(_TYPOGRAPHIC_DOUBLE_QUOTES))
+    if payload is None:
+        raise VariantGenerationError("Gemma did not return valid JSON.")
 
     simplified = " ".join(str(payload.get("simplified") or "").split())
     elaborated = " ".join(str(payload.get("elaborated") or "").split())
@@ -89,7 +115,31 @@ def _parse_response(raw_text, source_word_count=None):
     return {"SIMPLIFIED": simplified, "ELABORATED": elaborated}
 
 
+VARIANT_REQUEST_ATTEMPTS = 3
+
+
+class _UnreachableModelError(VariantGenerationError):
+    pass
+
+
 def _request_variants(learning_object, model):
+    # Retry only replies Gemma produced but that failed parsing or grounding
+    # checks; an unreachable or timed-out Ollama would just fail again.
+    for attempt in range(1, VARIANT_REQUEST_ATTEMPTS + 1):
+        try:
+            return _request_variants_once(learning_object, model)
+        except _UnreachableModelError:
+            raise
+        except VariantGenerationError as exc:
+            if attempt == VARIANT_REQUEST_ATTEMPTS:
+                raise
+            logger.warning(
+                'Retrying variants for "%s" (attempt %s of %s): %s',
+                learning_object.title, attempt + 1, VARIANT_REQUEST_ATTEMPTS, exc,
+            )
+
+
+def _request_variants_once(learning_object, model):
     try:
         response = requests.post(
             f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/generate",
@@ -115,6 +165,8 @@ def _request_variants(learning_object, model):
             response.json().get("response"),
             source_word_count=len(learning_object.content.split()),
         )
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise _UnreachableModelError(f"Gemma request failed: {exc}") from exc
     except (requests.RequestException, ValueError, TypeError) as exc:
         raise VariantGenerationError(f"Gemma request failed: {exc}") from exc
 
@@ -302,3 +354,44 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
             generated.append(slot)
 
     return {"generated": generated, "skipped": sorted(existing), "errors": []}
+
+
+def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
+    """Write the versions no PDF supplies, one object of the Normal bundle at a time.
+
+    Generating a whole bundle in one call is where the local model starts
+    returning invalid JSON, and a failure would cost the concept every version
+    rather than one object's.
+
+    A role is only "supplied" when its bundle's role is actually settled. A
+    bundle still awaiting teacher confirmation is stored under a role already
+    (so a re-run does not keep re-proposing it), but nothing has decided that
+    text belongs there yet -- generating the same slot from the Normal text
+    would otherwise be silently suppressed until a teacher confirms, leaving
+    the concept with no Simplified (or Elaborated) at all in the meantime.
+    """
+    from .version_assignment import assign_group_versions, bundle_roles, version_bundles
+
+    bundles = version_bundles(group)
+    normal = bundles.get("NORMAL") or []
+    outcome = assign_group_versions(group)
+    pending_ids = {entry["material_id"] for entry in outcome["needs_confirmation"]}
+    supplied = {
+        role for material_id, role in bundle_roles(group).items()
+        if role in ("SIMPLIFIED", "ELABORATED") and material_id not in pending_ids
+    }
+    requested = [
+        slot for slot in (target_slots or ("SIMPLIFIED", "ELABORATED"))
+        if slot not in supplied
+    ]
+    generated, skipped, errors = [], [], []
+    if not requested:
+        return {"generated": generated, "skipped": sorted(supplied), "errors": errors}
+    for learning_object in normal:
+        outcome = fill_missing_slots(
+            learning_object, requested, replace_stale=replace_stale,
+        )
+        generated.extend(outcome["generated"])
+        skipped.extend(outcome["skipped"])
+        errors.extend(outcome["errors"])
+    return {"generated": generated, "skipped": skipped, "errors": errors}

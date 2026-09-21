@@ -218,6 +218,25 @@ class ConceptUnitTests(TestCase):
         self.assertEqual(len(concepts[0].members), 3)
         self.assertEqual(concepts[0].representative, first)
 
+    def test_a_merged_split_passage_reads_in_document_order_not_group_order(self):
+        """Regression: merging concatenates each source group's members in
+        the order `_merge_split_passages` visits the groups -- their queryset
+        order, which has no relation to the document. Creating part 2's group
+        before part 1's flips that concatenation unless the result is
+        re-sorted by document position afterwards."""
+        second_group = self._group()
+        self._object(self.first, 1, "SOLID (Part 2 of 2)", "Its particles vibrate.", second_group)
+        opening = self._group("Solid")
+        self._object(self.first, 0, "SOLID (Part 1 of 2)", "A solid keeps its shape.", opening)
+
+        concepts = concepts_for_topic(self.topic)
+
+        self.assertEqual(len(concepts), 1)
+        self.assertEqual(
+            concepts[0].member_text,
+            "A solid keeps its shape.\nIts particles vibrate.",
+        )
+
     def test_repeated_titles_are_told_apart_by_position(self):
         """One file carries three passages all titled "Diagram description
         (Part 1 of 2)" / "(Part 2 of 2)", one per state of matter. Matching on
@@ -283,3 +302,124 @@ class ConceptUnitTests(TestCase):
         concepts = concepts_for_topic(self.topic)
 
         self.assertEqual([concept.id for concept in concepts], [kept.id])
+
+
+class BundleConceptTests(TestCase):
+    """The concept's title and text come from its members' bundle order, not
+    from a single member's scan position -- see `lessons.services.concept_bundles`.
+    """
+
+    def setUp(self):
+        self.course = CourseGroup.objects.create(title="Grade 1 Science")
+        self.module = OutlineNode.objects.create(
+            course=self.course, title="Properties of Matter", order=0, depth=0
+        )
+        self.topic = OutlineNode.objects.create(
+            course=self.course, parent=self.module,
+            title="Solid, Liquid and Gas", order=0, depth=1,
+        )
+        now = timezone.now()
+        self.first = self._material("Lesson one", now)
+        self.second = self._material("Lesson two", now + timedelta(hours=1))
+
+    def _material(self, title, created_at):
+        material = LearningMaterial.objects.create(
+            course=self.course, outline_node=self.topic,
+            title=title, status="completed",
+        )
+        LearningMaterial.objects.filter(pk=material.pk).update(created_at=created_at)
+        material.refresh_from_db()
+        return material
+
+    def _group(self, label=""):
+        return LearningObjectGroup.objects.create(outline_node=self.topic, label=label)
+
+    def _object(self, group, material, title, order, content="Some text.", section=""):
+        return LearningObject.objects.create(
+            material=material, group=group, title=title, content=content,
+            order=order, section_title=section,
+        )
+
+    def _concept_for(self, group):
+        return {concept.id: concept for concept in concepts_for_topic(self.topic)}[group.id]
+
+    def test_a_concept_is_named_by_its_headings_not_its_first_object(self):
+        """Regression: a bundle opening with a figure was named after the
+        figure, and the concept then had no usable name for the criteria."""
+        group = self._group("Matter")
+        self._object(group, self.first, "Okay, let us describe this figure", 0, section="")
+        self._object(group, self.first, "Matter", 1, section="Matter")
+
+        concept = self._concept_for(group)
+
+        self.assertEqual(concept.title, "Matter")
+
+    def test_member_text_follows_bundle_order(self):
+        group = self._group("Solid")
+        self._object(group, self.first, "Solid", 0, content="A solid keeps its shape.")
+        self._object(group, self.second, "Solids", 0, content="Packed tightly.")
+        self._object(group, self.second, "Everyday examples", 1, content="Ice cubes.")
+
+        concept = self._concept_for(group)
+
+        self.assertEqual(
+            concept.member_text,
+            "A solid keeps its shape.\nPacked tightly.\nIce cubes.",
+        )
+
+    def test_a_single_object_bundle_keeps_its_own_title_not_the_shared_heading(self):
+        """Regression from real material: "Solid", "Liquid" and "Gas" each sit
+        alone under one section, "Matter". A bundle with only one object has
+        no figure-first problem for the heading to fix, and the section names
+        the whole section, not any one object in it -- titling all three
+        "Matter" would give them one shared name, and the criteria's
+        same-name veto would then delete every edge between them."""
+        solid = self._group("Solid")
+        self._object(solid, self.first, "Solid", 0, section="Matter")
+        liquid = self._group("Liquid")
+        self._object(liquid, self.first, "Liquid", 1, section="Matter")
+        gas = self._group("Gas")
+        self._object(gas, self.first, "Gas", 2, section="Matter")
+
+        titles = {self._concept_for(group).title for group in (solid, liquid, gas)}
+
+        self.assertEqual(titles, {"Solid", "Liquid", "Gas"})
+
+    def test_a_split_passage_does_not_borrow_its_sections_heading(self):
+        """Finding 8: `_merge_split_passages` folds other groups' members into
+        one concept, so the representative's "bundle" could count parts merged
+        in from elsewhere and cross the two-object threshold that takes the
+        section heading. Real material puts "SOLID" and "LIQUID" under one
+        "Matter" section; naming both concepts "Matter" hands the criteria's
+        same-name veto every edge between them -- exactly what amending §3.5
+        was meant to prevent."""
+        solid_first = self._group("Solid")
+        self._object(solid_first, self.first, "SOLID (Part 1 of 2)", 0, section="Matter")
+        solid_rest = self._group("Solid rest")
+        self._object(solid_rest, self.first, "SOLID (Part 2 of 2)", 1, section="Matter")
+        liquid_first = self._group("Liquid")
+        self._object(liquid_first, self.first, "LIQUID (Part 1 of 2)", 2, section="Matter")
+        liquid_rest = self._group("Liquid rest")
+        self._object(liquid_rest, self.first, "LIQUID (Part 2 of 2)", 3, section="Matter")
+
+        titles = [concept.title for concept in concepts_for_topic(self.topic)]
+
+        self.assertEqual(len(titles), 2)
+        self.assertEqual(len(set(titles)), 2, f"both concepts were named the same: {titles}")
+        self.assertNotIn("Matter", titles)
+
+    def test_a_merged_split_passages_fallback_title_drops_the_part_marker(self):
+        """Regression: when the representative's own bundle has only one
+        object, the title falls back to `representative.title` -- but a
+        merged split passage's representative is still titled with the
+        chunker's "(Part 1 of 2)" marker. Left unstripped, that marker
+        reaches the teacher's concept list and is what the criteria match
+        against."""
+        opening = self._group("SOLID")
+        self._object(opening, self.first, "SOLID (Part 1 of 2)", 0)
+        rest = self._group("SOLID rest")
+        self._object(rest, self.first, "SOLID (Part 2 of 2)", 1)
+
+        concept = self._concept_for(opening)
+
+        self.assertEqual(concept.title, "SOLID")

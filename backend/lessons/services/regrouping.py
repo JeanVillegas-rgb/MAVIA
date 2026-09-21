@@ -27,8 +27,11 @@ from collections import Counter
 from django.db import transaction
 from django.db.models import Q
 
-from course.models import LessonVariant
-from course.version_assignment import group_original_id, release_from_group
+from course.version_assignment import (
+    bundle_roles,
+    group_original_id,
+    release_from_group,
+)
 
 from ..models import (
     LearningObject,
@@ -156,22 +159,17 @@ def _impact(learning_object, companions):
     original_id = group_original_id(learning_object.group, members)
     was_original = original_id == learning_object.id
 
+    # A PDF-supplied version is its own bundle of objects, so what a departure
+    # removes is the concept's stored roles, not copied rows.
+    roles = bundle_roles(learning_object.group) if learning_object.group else {}
     if was_original:
-        removed_slots = list(
-            LessonVariant.objects.filter(
-                learning_object=learning_object,
-                source_learning_object__in=companions,
-            ).values_list("variant", flat=True)
-        )
-    elif original_id is not None:
-        removed_slots = list(
-            LessonVariant.objects.filter(
-                learning_object_id=original_id,
-                source_learning_object=learning_object,
-            ).values_list("variant", flat=True)
-        )
-    else:
+        removed_slots = list(roles.values())
+    elif any(item.material_id == learning_object.material_id for item in companions):
+        # The rest of this PDF's bundle stays, and keeps its role with it.
         removed_slots = []
+    else:
+        role = roles.get(learning_object.material_id)
+        removed_slots = [role] if role else []
 
     return {
         "question_count": QuestionLearningObjectLink.objects.filter(

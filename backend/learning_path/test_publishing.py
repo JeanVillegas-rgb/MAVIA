@@ -9,6 +9,7 @@ import os
 import tempfile
 from datetime import timedelta
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.management import call_command
@@ -20,6 +21,7 @@ from lessons.models import CourseGroup, LearningMaterial, LearningObject, Learni
 from .models import ConceptPrerequisite, LearningPathStep
 from .services import publishing
 from .services.concept_units import concepts_for_topic
+from .services.publishing import order_with_links
 
 
 def decision(prerequisite, dependent, verdict, cross_section=False):
@@ -205,3 +207,16 @@ class ImportHandCheckTests(PublishingFixture):
 
         self.assertEqual(ConceptPrerequisite.objects.count(), 0)
         self.assertIn("no longer exists", out.getvalue())
+
+
+class StructuralOrderTests(TestCase):
+    def test_examples_come_last_even_when_the_document_puts_them_first(self):
+        concepts = [
+            SimpleNamespace(id=1, title="Everyday Examples"),
+            SimpleNamespace(id=2, title="Solid"),
+            SimpleNamespace(id=3, title="Gas"),
+        ]
+
+        ordered, _, _ = order_with_links(concepts, [])
+
+        self.assertEqual([concept.id for concept in ordered], [2, 3, 1])

@@ -179,7 +179,13 @@ button {
   font-weight: 750;
 }
 
-.btn:disabled {
+.btn:disabled,
+/* The bundle controls stay in the tab order while they cannot be used, so a
+   screen reader still reads their names; they look the part all the same.
+   The "Move to..." control is a <select>, not a `.btn`, but it sits in the
+   same row and needs the same disabled look. */
+.btn[aria-disabled="true"],
+.concept-bundle-move-to select[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -3670,6 +3676,95 @@ button {
   border-bottom: 0;
 }
 
+/* A concept's objects from one PDF, kept together in that file's own order.
+   Same rhythm as .connection-object-row, so a bundle reads as a group of those
+   rows rather than as a new kind of card. */
+.concept-bundle-list {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0 1rem 0.4rem;
+}
+
+.concept-bundle {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid #e7edf0;
+  border-radius: 9px;
+  background: #fbfcfd;
+}
+
+.concept-bundle-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.7rem 0.8rem 0;
+}
+
+.concept-bundle-head h5 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.concept-bundle-head small {
+  color: #64748b;
+}
+
+.concept-bundle .connection-object-list {
+  padding: 0 0.8rem;
+}
+
+.concept-bundle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.4rem 1.1rem;
+}
+
+/* The row's controls answer two different questions -- which concept this
+   object belongs to, and where it sits inside this one file -- so they are
+   grouped and each group says which. Flat, they read as four similar buttons
+   and the arrows looked as though they moved objects between concepts. */
+.concept-bundle-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.concept-bundle-action-label {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.concept-bundle-action-group.is-order {
+  padding-left: 0.9rem;
+  border-left: 1px solid #e2e8f0;
+}
+
+@media (max-width: 720px) {
+  .concept-bundle-action-group.is-order {
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+.concept-bundle-move-to select {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  font-size: 0.78rem;
+}
+
+.concept-bundle-nudge {
+  min-width: 2.1rem;
+  line-height: 1;
+}
+
 .connection-object-row:hover {
   background: #fbfdfd;
 }
@@ -4214,6 +4309,141 @@ button {
   flex: none;
 }
 
+/* One block per version, each naming its source and listing the objects it is
+   made of. Replaces the old "representative + Other variation" list, which
+   printed a supplied version's wording twice and gave no way to tell a member
+   of the Normal bundle from a bundle supplying another version. */
+.publish-version-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+/* The whole block carries the version's colour, not just a hairline on its
+   edge. The objects inside sit on white with the tint showing around them, so
+   which version you are reading is answered by the surface rather than by a
+   3px line you have to go looking for. Tints stay pale enough to leave body
+   text at full contrast, and each one matches the label chip beside it so the
+   review screens agree with each other. */
+.publish-version-block {
+  border: 1px solid #dbe3ec;
+  border-left: 5px solid #94a3b8;
+  border-radius: 0 10px 10px 0;
+  background: #f4f7fb;
+  padding: 0.75rem 0.85rem;
+}
+
+.publish-version-block.is-normal {
+  border-color: #c7d5ec;
+  border-left-color: #29406b;
+  background: #f5f8fd;
+}
+
+.publish-version-block.is-simplified {
+  border-color: #c6e3d2;
+  border-left-color: #1f5c39;
+  background: #f3faf6;
+}
+
+.publish-version-block.is-elaborated {
+  border-color: #e6d7b8;
+  border-left-color: #6a5326;
+  background: #fdf9f1;
+}
+
+/* Nothing was written, so the block is not filled in either. */
+.publish-version-block.is-missing {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-left-color: #cbd5e1;
+  border-style: dashed;
+  padding-bottom: 0.55rem;
+}
+
+.publish-version-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+/* Darkened from #64748b: on the version tints that grey measured 4.47:1,
+   just under the 4.5:1 small-text minimum. This clears it on all four. */
+.publish-version-head small {
+  color: #5b6a80;
+  font-size: 0.78rem;
+}
+
+.publish-version-stale {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* Numbered, because the order the objects are listed in is the order the
+   version is read and heard. */
+.publish-version-objects {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+/* Each object on its own white surface, so the block's tint reads as a frame
+   around the version rather than as a wash over the text. */
+.publish-version-objects > li {
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.publish-version-objects .publish-item-heading {
+  margin-bottom: 0.2rem;
+}
+
+.publish-object-kind {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The concept is the box; its versions sit inside it with room to breathe.
+   The card was outlined by a hairline with one heavy left edge, so a filled
+   version block reaching toward that edge read as belonging to the page
+   rather than to the concept. A uniform, visible border and real inner
+   spacing make the containment obvious. Scoped to this panel so the
+   connections step is unaffected. */
+.publish-review-panel .connection-group-card {
+  border: 2px solid #c3d0e0;
+  border-radius: 12px;
+  padding: 1.15rem;
+  gap: 1rem;
+}
+
+.publish-review-panel .connection-group-card.is-connected {
+  border-color: #9db5d6;
+}
+
+/* Space between the versions themselves, so each block reads as its own
+   thing rather than as a stripe in a stack. */
+.publish-review-panel .publish-version-list {
+  gap: 1rem;
+}
+
+.publish-review-panel .connection-group-card > header {
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e8eef5;
+}
+
 .publish-question-list {
   margin-top: 0.85rem;
   padding-top: 0.7rem;
@@ -4533,9 +4763,68 @@ button {
   overflow: hidden;
 }
 
+/* Four rows, each child pinned to its own: the unit-merge note is only present
+   on some cards, and with automatic placement its absence slid the scrolling
+   pair up into the note's row -- which let the note ride over the "possible
+   match" divider in the narrow review panel. An empty row two collapses to
+   nothing when there is no note. */
 .match-suggestion-card {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   align-items: stretch;
+}
+
+.match-suggestion-card > .match-suggestion-score {
+  grid-row: 1;
+}
+
+.match-suggestion-card > p.muted-text {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  margin: 0 0 0.35rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  background: #f4f7f9;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.match-suggestion-card > .match-suggestion-pair {
+  grid-row: 3;
+}
+
+.match-suggestion-card > .match-suggestion-actions {
+  grid-row: 4;
+}
+
+/* Several merged members stack inside one side of the pair, so they need to
+   read as a list rather than as one run-on block of text. */
+.match-unit-member {
+  display: block;
+  min-width: 0;
+}
+
+.match-unit-member + .match-unit-member {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #dde5ea;
+}
+
+.match-unit-member > strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.match-unit-member > .match-source-content {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: #586878;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .match-suggestion-pair {
@@ -4896,3 +5185,27 @@ button {
   }
 }
 
+
+/* A bundle row's controls get their own line.
+   The row is a three-column grid -- number, copy, controls -- and at the
+   review panel's width (~380px) that third column squeezed "Move out" and the
+   "Move to…" menu on top of the object's number and title. Spanning the whole
+   row puts them underneath instead, so the title stays readable at every
+   width. Every control, its aria-label and its aria-disabled behaviour are
+   untouched: this is layout only. */
+.concept-bundle .connection-object-row,
+.concept-bundle .connection-object-row:last-child {
+  grid-template-columns: 2rem minmax(0, 1fr);
+}
+
+.concept-bundle .concept-bundle-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  margin-top: 0.15rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.concept-bundle .concept-bundle-move-to select {
+  max-width: 100%;
+}

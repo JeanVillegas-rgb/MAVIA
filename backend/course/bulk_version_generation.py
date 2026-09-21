@@ -1,7 +1,6 @@
 """Classify existing PDF source variants for every concept in one topic."""
 
-from .version_assignment import assign_group_versions
-from .models import LessonVariant
+from .version_assignment import assign_group_versions, bundle_roles
 
 
 def _noop(event_type, message, **data):
@@ -74,19 +73,15 @@ def classify_all_source_versions(outline_node, on_event=None):
         seen.add(representative_id)
         representatives.append(representative)
 
+    # A PDF-supplied version is its own bundle of objects, so what is counted
+    # here is the roles that were decided, not copied rows.
+    roles = [role for group in groups for role in bundle_roles(group).values()]
     summary = {
         "concept_count": len(representatives),
         "grouped_concept_count": len(connected_group_ids),
         "classified_group_count": classified_groups,
-        "source_variant_count": LessonVariant.objects.filter(
-            learning_object__group__outline_node=outline_node,
-            origin=LessonVariant.Origin.SOURCE_PDF,
-        ).count(),
-        "extra_count": LessonVariant.objects.filter(
-            learning_object__group__outline_node=outline_node,
-            origin=LessonVariant.Origin.SOURCE_PDF,
-            variant="EXTRA",
-        ).count(),
+        "source_variant_count": len(roles),
+        "extra_count": sum(role == "EXTRA" for role in roles),
         "generated_count": 0,
         "skipped_count": 0,
         "errors": errors,

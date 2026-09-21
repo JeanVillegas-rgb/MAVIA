@@ -115,7 +115,6 @@ class LearningObjectSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True,
     )
-
     class Meta:
         model = LearningObject
         fields = [
@@ -139,6 +138,18 @@ class LearningObjectSerializer(serializers.ModelSerializer):
 class LearningObjectMatchSuggestionSerializer(serializers.ModelSerializer):
     source_learning_object = LearningObjectSerializer(read_only=True)
     candidate_learning_object = LearningObjectSerializer(read_only=True)
+    source_members = serializers.SerializerMethodField()
+    candidate_members = serializers.SerializerMethodField()
+
+    def _members(self, primary, extra_ids):
+        extras = LearningObject.objects.filter(pk__in=extra_ids).order_by("order", "id")
+        return LearningObjectSerializer([primary, *extras], many=True, context=self.context).data
+
+    def get_source_members(self, obj):
+        return self._members(obj.source_learning_object, obj.source_extra_ids)
+
+    def get_candidate_members(self, obj):
+        return self._members(obj.candidate_learning_object, obj.candidate_extra_ids)
 
     class Meta:
         model = LearningObjectMatchSuggestion
@@ -147,6 +158,10 @@ class LearningObjectMatchSuggestionSerializer(serializers.ModelSerializer):
             "outline_node",
             "source_learning_object",
             "candidate_learning_object",
+            "source_members",
+            "candidate_members",
+            "source_extra_ids",
+            "candidate_extra_ids",
             "similarity_score",
             "confidence",
             "evidence",

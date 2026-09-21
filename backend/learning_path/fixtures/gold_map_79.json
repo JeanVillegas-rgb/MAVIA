@@ -1,0 +1,23 @@
+{
+  "topic_id": 79,
+  "concepts": [
+    {"key": "reproduction", "title": "Reproduction in Flowering Plants", "section_title": "", "member_ids": [138, 139, 148, 149, 150]},
+    {"key": "stamen", "title": "Stamen (Male Part)", "section_title": "Reproduction in Flowering Plants", "member_ids": [140, 151]},
+    {"key": "pistil", "title": "Pistil (Female Part)", "section_title": "Reproduction in Flowering Plants", "member_ids": [141, 152]},
+    {"key": "petals", "title": "Petals and Sepals (Supporting Parts)", "section_title": "Reproduction in Flowering Plants", "member_ids": [142, 153]},
+    {"key": "pollination", "title": "Pollination", "section_title": "How Flowering Plants Reproduce", "member_ids": [143, 154]},
+    {"key": "fertilization", "title": "Fertilization", "section_title": "How Flowering Plants Reproduce", "member_ids": [144, 155]},
+    {"key": "seed", "title": "Seed formation", "section_title": "How Flowering Plants Reproduce", "member_ids": [145, 156]},
+    {"key": "fruit", "title": "Fruit formation", "section_title": "How Flowering Plants Reproduce", "member_ids": [146, 157]},
+    {"key": "examples", "title": "Everyday Examples", "section_title": "", "member_ids": [147, 158]}
+  ],
+  "required": [
+    ["reproduction", "stamen"], ["reproduction", "pistil"], ["reproduction", "petals"],
+    ["stamen", "pollination"], ["pistil", "pollination"],
+    ["pollination", "fertilization"], ["fertilization", "seed"], ["seed", "fruit"]
+  ],
+  "parallel": [],
+  "structural": ["examples"],
+  "expected_order": ["reproduction", "stamen", "pistil", "petals", "pollination", "fertilization", "seed", "fruit", "examples"],
+  "known_missing": [["stamen","pollination"],["pistil","pollination"],["pollination","fertilization"],["fertilization","seed"]]
+}

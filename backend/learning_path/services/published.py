@@ -11,8 +11,9 @@ See ``learning_path/HANDOFF.md`` for the shape and how to use it.
 
 from collections import defaultdict
 
-from course.models import LessonVariant
-from course.version_assignment import assign_group_versions
+from course.models import bundle_segments, normal_bundle_for
+from course.services import _generated_versions, _version_from_segments
+from course.version_assignment import assign_group_versions, version_bundles
 from question_generation.models import GeneratedQuestion
 
 from ..models import ConceptPrerequisite, LearningPathStep
@@ -30,23 +31,58 @@ def _representative(group, members):
     return next((m for m in members if m.represented_by_id is None), members[0] if members else None)
 
 
-def _versions(representative):
-    rows = {
-        row.variant: row
-        for row in LessonVariant.objects.filter(
-            learning_object=representative, variant__in=("SIMPLIFIED", "ELABORATED"),
-        )
-    }
+def _slot(segments):
+    """One version, as the documented keys plus the segments behind them.
 
-    def slot(key):
-        row = rows.get(key)
-        return {"text": row.narration, "audio_url": row.audio_url or ""} if row else None
-
+    ``text`` and ``audio_url`` are what they always were, so existing readers
+    are unaffected. ``segments`` is added because a version can be several
+    objects: a single ``audio_url`` is only the first clip, and a reader that
+    played it alone would give a learner one quarter of the version and no way
+    to tell. The segments are what the lesson package already serves.
+    """
+    version = _version_from_segments(segments, origin=None)
     return {
-        "normal": {"text": representative.content or "", "audio_url": ""},
-        "simplified": slot("SIMPLIFIED"),
-        "elaborated": slot("ELABORATED"),
+        "text": version["text"],
+        "audio_url": version["audio_url"],
+        "segments": version["segments"],
     }
+
+
+def _versions(representative):
+    """The concept's three versions, each read as the bundle it is taught as.
+
+    Both halves of this used to read the wrong thing. Normal was
+    ``representative.content``, which is the bundle's *lead* and drops every
+    object after it. Simplified and Elaborated were read from ``LessonVariant``
+    rows, and a version another PDF supplies has no such row by design -- its
+    text is its objects -- so that PDF's wording never reached the path at all.
+
+    The helpers below are the lesson package's own, imported rather than
+    copied: the rule that a generated version short of its bundle is reported
+    missing instead of half-served is safety-critical, and it must not exist in
+    two places that can drift.
+    """
+    normal_objects = normal_bundle_for(representative)
+    versions = {
+        "normal": _slot(bundle_segments(normal_objects)),
+        "simplified": None,
+        "elaborated": None,
+    }
+
+    for role, generated in _generated_versions(normal_objects).items():
+        if role.lower() in versions:
+            versions[role.lower()] = _slot(generated["segments"])
+
+    # A version a PDF supplies is that PDF's own objects, and it outranks
+    # anything generated for the same role -- including wording generated
+    # before a teacher connected the two bundles, which outlives the regroup.
+    if representative.group_id is not None:
+        for role, objects in version_bundles(representative.group).items():
+            if role in ("NORMAL", "EXTRA"):
+                continue
+            versions[role.lower()] = _slot(bundle_segments(objects))
+
+    return versions
 
 
 def _questions(representative, include_answers):

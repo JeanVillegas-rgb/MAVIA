@@ -1,0 +1,249 @@
+{
+  "topic_id": 79,
+  "required": [
+    [
+      "reproduction",
+      "stamen"
+    ],
+    [
+      "reproduction",
+      "pistil"
+    ],
+    [
+      "reproduction",
+      "petals"
+    ],
+    [
+      "stamen",
+      "pollination"
+    ],
+    [
+      "pistil",
+      "pollination"
+    ],
+    [
+      "pollination",
+      "fertilization"
+    ],
+    [
+      "fertilization",
+      "seed"
+    ],
+    [
+      "seed",
+      "fruit"
+    ]
+  ],
+  "parallel": [],
+  "structural": [
+    "examples"
+  ],
+  "expected_order": [
+    "reproduction",
+    "stamen",
+    "pistil",
+    "petals",
+    "pollination",
+    "fertilization",
+    "seed",
+    "fruit",
+    "examples"
+  ],
+  "known_missing": [
+    ["stamen", "pollination"],
+    ["pistil", "pollination"],
+    ["pollination", "fertilization"],
+    ["fertilization", "seed"]
+  ],
+  "concepts": [
+    {
+      "key": "reproduction",
+      "title": "Reproduction in Flowering Plants",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Reproduction in Flowering Plants",
+          "section_title": "",
+          "content": "This figure illustrates the key components of a flower involved in sexual reproduction: This figure illustrates the key components of a flower involved in sexual reproduction. It highlights the stamen, the male part of the flower, which contains the anther and filament, and produces pollen. Simultaneously, it shows the pistil, the female part, comprised of the stigma, style, and ovary, where the ovule resides and holds the egg cells. The figure explains that pollen from the stamen needs to reach the ovule within the pistil for fertilization to occur, ultimately leading to the development of a new flowering plant through sexual reproduction.\nReproduction in Flowering Plants: Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell. Most of this activity happens inside the flower, which is the reproductive part of the plant. A single flower can contain both male and female parts, and these parts work together so that seeds can form. Seeds later grow into new plants, allowing the species to continue.",
+          "material_id": 13,
+          "order": 0
+        },
+        {
+          "title": "Reproduction in Flowering Plants",
+          "section_title": "",
+          "content": "Reproduction in Flowering Plants (Part 1 of 2): Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell.\nMost of this activity happens inside the flower, which is the reproductive part of the plant.\nReproduction in Flowering Plants (Part 2 of 2): A single flower can contain both male and female parts, and these parts work together so that seeds can form.\nSeeds later grow into new plants, allowing the species to continue.\nMale parts (the stamen) produce pollen; female parts (the pistil) hold the egg cells.\nHere’s a description of the figure for your student: This figure illustrates the key components of a: Here’s a description of the figure for your student: This figure illustrates the key components of a flower involved in the process of sexual reproduction in flowering plants. It clearly identifies the male and female parts of a flower, distinguishing between the stamen and the pistil. The stamen, consisting of the anther and filament, is responsible for producing pollen, which carries the male sex cells. Conversely, the pistil, with its stigma, style, ovary, and ovule, receives and nurtures the female sex cells, ultimately leading to the formation of seeds and fruits after fertilization. The diagram highlights how these parts work together to facilitate the creation of new flowering plants through a process of joining male and female cells.",
+          "material_id": 14,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "key": "stamen",
+      "title": "Stamen (Male Part)",
+      "section_title": "Reproduction in Flowering Plants",
+      "members": [
+        {
+          "title": "Stamen (Male Part)",
+          "section_title": "Reproduction in Flowering Plants",
+          "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+          "material_id": 13,
+          "order": 2
+        },
+        {
+          "title": "Stamen (Male Part)",
+          "section_title": "Stamen (Male Part)",
+          "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+          "material_id": 14,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "key": "pistil",
+      "title": "Pistil (Female Part)",
+      "section_title": "Reproduction in Flowering Plants",
+      "members": [
+        {
+          "title": "Pistil (Female Part)",
+          "section_title": "Reproduction in Flowering Plants",
+          "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+          "material_id": 13,
+          "order": 3
+        },
+        {
+          "title": "Pistil (Female Part)",
+          "section_title": "Pistil (Female Part)",
+          "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+          "material_id": 14,
+          "order": 4
+        }
+      ]
+    },
+    {
+      "key": "petals",
+      "title": "Petals and Sepals (Supporting Parts)",
+      "section_title": "Reproduction in Flowering Plants",
+      "members": [
+        {
+          "title": "Petals and Sepals (Supporting Parts)",
+          "section_title": "Reproduction in Flowering Plants",
+          "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud.\nThese parts do not make sex cells, but they help reproduction succeed.",
+          "material_id": 13,
+          "order": 4
+        },
+        {
+          "title": "Petals and Sepals (Supporting Parts)",
+          "section_title": "Petals and Sepals (Supporting Parts)",
+          "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud. These parts do not make sex cells, but they help reproduction succeed.",
+          "material_id": 14,
+          "order": 5
+        }
+      ]
+    },
+    {
+      "key": "pollination",
+      "title": "Pollination",
+      "section_title": "How Flowering Plants Reproduce",
+      "members": [
+        {
+          "title": "Pollination",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+          "material_id": 13,
+          "order": 5
+        },
+        {
+          "title": "Pollination",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+          "material_id": 14,
+          "order": 6
+        }
+      ]
+    },
+    {
+      "key": "fertilization",
+      "title": "Fertilization",
+      "section_title": "How Flowering Plants Reproduce",
+      "members": [
+        {
+          "title": "Fertilization",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+          "material_id": 13,
+          "order": 6
+        },
+        {
+          "title": "Fertilization",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+          "material_id": 14,
+          "order": 7
+        }
+      ]
+    },
+    {
+      "key": "seed",
+      "title": "Seed formation",
+      "section_title": "How Flowering Plants Reproduce",
+      "members": [
+        {
+          "title": "Seed formation",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+          "material_id": 13,
+          "order": 7
+        },
+        {
+          "title": "Seed formation",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+          "material_id": 14,
+          "order": 8
+        }
+      ]
+    },
+    {
+      "key": "fruit",
+      "title": "Fruit formation",
+      "section_title": "How Flowering Plants Reproduce",
+      "members": [
+        {
+          "title": "Fruit formation",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+          "material_id": 13,
+          "order": 8
+        },
+        {
+          "title": "Fruit formation",
+          "section_title": "How Flowering Plants Reproduce",
+          "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+          "material_id": 14,
+          "order": 9
+        }
+      ]
+    },
+    {
+      "key": "examples",
+      "title": "Everyday Examples",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Everyday Examples",
+          "section_title": "",
+          "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+          "material_id": 13,
+          "order": 9
+        },
+        {
+          "title": "Everyday Examples",
+          "section_title": "",
+          "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+          "material_id": 14,
+          "order": 10
+        }
+      ]
+    }
+  ]
+}

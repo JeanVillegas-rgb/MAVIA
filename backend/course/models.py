@@ -127,19 +127,88 @@ class LessonVariant(models.Model):
         return f"[{self.variant}] {self.learning_object.title}"
 
 
-def normal_variant_for(learning_object):
+def normal_bundle_for(learning_object):
+    """The objects the Normal version of this concept is taught as.
+
+    A concept holds a bundle per PDF, so its Normal version is every object of
+    the Normal bundle in document order. An object outside a concept -- or one
+    whose concept is served by another PDF -- is a bundle of itself.
+    """
+    if learning_object.group_id is None:
+        return [learning_object]
+
+    from .version_assignment import version_bundles
+
+    objects = version_bundles(learning_object.group).get("NORMAL") or []
+    if not any(item.id == learning_object.id for item in objects):
+        return [learning_object]
+    return objects
+
+
+def audio_clip_for(learning_object):
+    """The narration and clip generated for one object, or ``None``.
+
+    Two playlists are searched. The lesson one holds the material's own
+    teaching steps. The second holds the objects that supply *another*
+    concept's version: they are marked as represented, so they are deliberately
+    absent from the lesson playlist, and a version built only from that one
+    would be served silently.
+    """
     generated_json = learning_object.material.generated_json or {}
-    if not generated_json.get("lesson_audio_generated"):
+    sources = []
+    if generated_json.get("lesson_audio_generated"):
+        sources.append(generated_json.get("lesson_playlist", []))
+    if generated_json.get("version_bundle_audio_generated"):
+        sources.append(generated_json.get("version_bundle_playlist", []))
+
+    for playlist in sources:
+        for entry in playlist:
+            if entry.get("learning_object_id") == learning_object.id:
+                return {
+                    "narration": entry.get("narration") or entry.get("text", ""),
+                    "audio_url": entry.get("audio_url") or entry.get("audio", ""),
+                }
+    return None
+
+
+def bundle_segments(objects):
+    """One ``{"text", "audio_url"}`` segment per object, in bundle order.
+
+    An object with no clip yet still gets a segment carrying its own text, so
+    a reader never loses part of a version while the audio is being made.
+    """
+    segments = []
+    for item in objects:
+        clip = audio_clip_for(item) or {}
+        segments.append({
+            "text": (clip.get("narration") or item.content or "").strip(),
+            "audio_url": clip.get("audio_url") or "",
+        })
+    return segments
+
+
+def normal_variant_for(learning_object):
+    """The Normal version of this object's concept: its whole bundle, joined.
+
+    ``None`` until the narration exists, which is what tells a caller to fall
+    back to the source text.
+    """
+    objects = normal_bundle_for(learning_object)
+    if not any(audio_clip_for(item) for item in objects):
         return None
 
-    for entry in generated_json.get("lesson_playlist", []):
-        if entry.get("learning_object_id") == learning_object.id:
-            return {
-                "variant": "NORMAL",
-                "narration": entry.get("narration") or entry.get("text", ""),
-                "audio_url": entry.get("audio_url") or entry.get("audio", ""),
-            }
-    return None
+    # Built from the very segments a reader is served, so the joined narration
+    # and the segments can never tell a caller two different things.
+    segments = bundle_segments(objects)
+    return {
+        "variant": "NORMAL",
+        "narration": "\n".join(
+            segment["text"] for segment in segments if segment["text"]
+        ),
+        "audio_url": next(
+            (segment["audio_url"] for segment in segments if segment["audio_url"]), ""
+        ),
+    }
 
 
 class ModuleQuestion(models.Model):

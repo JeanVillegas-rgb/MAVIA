@@ -1,0 +1,22 @@
+{
+  "topic_id": 62,
+  "concepts": [
+    {"key": "matter", "title": "Matter", "section_title": "Matter", "member_ids": [159, 160, 170, 171]},
+    {"key": "solid", "title": "Solid", "section_title": "", "member_ids": [161, 172, 173, 174]},
+    {"key": "liquid", "title": "Liquid", "section_title": "", "member_ids": [162, 175, 176, 177, 178]},
+    {"key": "gas", "title": "Gas", "section_title": "", "member_ids": [163, 179, 180, 181]},
+    {"key": "comparing", "title": "Comparing the Three States", "section_title": "Comparing the Three States", "member_ids": [164, 165, 166, 167, 182, 183]},
+    {"key": "changing", "title": "Changing From One State to Another", "section_title": "", "member_ids": [184, 185, 186]},
+    {"key": "examples", "title": "Everyday Examples", "section_title": "", "member_ids": [168, 187, 188]}
+  ],
+  "required": [
+    ["matter", "solid"], ["matter", "liquid"], ["matter", "gas"],
+    ["solid", "comparing"], ["liquid", "comparing"], ["gas", "comparing"],
+    ["solid", "changing"], ["liquid", "changing"], ["gas", "changing"],
+    ["comparing", "changing"]
+  ],
+  "parallel": [["solid", "liquid", "gas"]],
+  "structural": ["examples"],
+  "expected_order": ["matter", "solid", "liquid", "gas", "comparing", "changing", "examples"],
+  "known_missing": []
+}

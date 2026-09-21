@@ -28,7 +28,9 @@ _WHITESPACE = re.compile(r"\s+")
 
 # A title only names a concept when it is short. Long titles in this corpus are
 # full sentences lifted from the PDF ("Matter is anything that has mass...").
-MAX_CONCEPT_TITLE_WORDS = 4
+# Six, not four: "Changing From One State to Another" is a heading, and at four
+# words that concept could never be referred to.
+MAX_CONCEPT_TITLE_WORDS = 6
 MIN_TERM_LENGTH = 3
 
 # Verbs that open a definition. "keep", "take" and friends are deliberately

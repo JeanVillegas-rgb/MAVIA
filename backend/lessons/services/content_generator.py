@@ -2521,6 +2521,28 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
             int(item.get("order") or 0),
         )
     )
+    # An image is turned into an item above, before this function has walked a
+    # single text block, so at that moment no heading context exists and it is
+    # built without a section. The heading was always knowable -- it is simply
+    # the one the nearest preceding passage sits under -- but only once the
+    # list is in document order, which is what the sort above just did.
+    #
+    # Left unset, `section_title` is empty on every figure (measured: 9 of 9
+    # across three real uploads), and it is the primary grouping signal: runs
+    # of objects under one heading are how the system finds that several
+    # passages are one teachable unit. A figure with no section joins no run.
+    #
+    # Nothing here overwrites a section a text item already has, and a figure
+    # that comes before any section keeps the empty value it has today rather
+    # than being given one it cannot justify.
+    active_section_title = ""
+    for item in learning_objects:
+        existing = (item.get("section_title") or "").strip()
+        if existing:
+            active_section_title = existing
+        elif item.get("type") == "image_description":
+            item["section_title"] = active_section_title
+
     for order, item in enumerate(learning_objects):
         item.pop("heading_only_allowed", None)
         item["order"] = order
@@ -3099,6 +3121,10 @@ def build_narration_script_from_learning_objects(learning_objects: list[dict]) -
             {
                 "order": len(narration) + 1,
                 "type": item.get("type"),
+                # Carried through so the clip synthesised for this narration
+                # item can be found again by the object it speaks for; the
+                # lesson package reads a version's audio that way.
+                "learning_object_id": item.get("learning_object_id"),
                 "section_title": section_title,
                 "title": title,
                 "page": item.get("source_page"),
@@ -3207,6 +3233,7 @@ def build_lesson_playlist(narration_script: list[dict]) -> list[dict]:
                     )
                 ),
                 "type": item.get("type"),
+                "learning_object_id": item.get("learning_object_id"),
                 "narration_item_order": item.get("order"),
             }
         )

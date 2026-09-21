@@ -1,6 +1,8 @@
 from django.test import SimpleTestCase
 
-from .services.concepts import resolve_concept
+from lessons.services.semantic_grouping import _GENERIC_INSTRUCTIONAL_LABELS
+
+from .services.concepts import STRUCTURAL_LABELS, is_structural, resolve_concept, strip_numbering
 
 
 class Chunk:
@@ -61,3 +63,46 @@ class ConceptResolutionTests(SimpleTestCase):
             resolve_concept(Chunk("Particle arrangement", "Particles sit in a pattern.")),
             "particle arrangement",
         )
+
+
+class Headed(Chunk):
+    def __init__(self, title, content="", section_title=""):
+        super().__init__(title, content)
+        self.section_title = section_title
+
+
+class NumberingAndStructureTests(SimpleTestCase):
+    def test_leading_numbers_are_stripped(self):
+        self.assertEqual(strip_numbering("7. Everyday Examples"), "Everyday Examples")
+        self.assertEqual(strip_numbering("5) Comparing"), "Comparing")
+        self.assertEqual(strip_numbering("Solid"), "Solid")
+
+    def test_a_numbered_generic_label_is_structural_and_unnamed(self):
+        """Regression: "7. Everyday Examples" escaped the label check and took
+        13 accepted edges on topic 62."""
+        chunk = Chunk("7. Everyday Examples", "Ice, water and steam.")
+        self.assertTrue(is_structural(chunk))
+        self.assertIsNone(resolve_concept(chunk))
+
+    def test_a_six_word_heading_is_a_name(self):
+        """"Changing From One State to Another" was unnameable at four words."""
+        chunk = Chunk("Changing From One State to Another", "Heat changes states.")
+        self.assertEqual(resolve_concept(chunk), "changing from one state to another")
+
+    def test_a_long_title_falls_back_to_its_heading(self):
+        chunk = Headed(
+            "Here is what the table below shows about every state of matter",
+            "It lists shape and volume.",
+            section_title="3. Comparing the Three States",
+        )
+        self.assertEqual(resolve_concept(chunk), "comparing the three states")
+
+    def test_structural_labels_do_not_drift_from_groupings_list(self):
+        """STRUCTURAL_LABELS mirrors grouping's `_GENERIC_INSTRUCTIONAL_LABELS`
+        by hand rather than by import, so this test is what keeps the two from
+        silently drifting apart."""
+        for label in _GENERIC_INSTRUCTIONAL_LABELS:
+            self.assertIn(label, STRUCTURAL_LABELS, msg=label)
+
+    def test_a_numbered_vocabulary_heading_is_structural(self):
+        self.assertTrue(is_structural(Chunk("3. Vocabulary")))

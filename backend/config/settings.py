@@ -1,4 +1,6 @@
 import os
+import sys
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -121,6 +123,9 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+if len(sys.argv) > 1 and sys.argv[1] == "test":
+    # Tests upload files; they must never land in the real media folder.
+    MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="mavia-test-media-"))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

@@ -12,6 +12,7 @@ from question_generation.models import GenerationRun
 from .bulk_version_generation import classify_all_source_versions
 from .models import LessonVariant
 from .variant_generator import fill_missing_slots
+from .version_assignment import bundle_roles
 
 
 @override_settings(ADAPTIVE_VARIANT_GENERATION_ENABLED=True)
@@ -117,16 +118,12 @@ class BulkVersionGenerationTests(TestCase):
         self.assertEqual(summary["source_variant_count"], 2)
         self.assertEqual(summary["extra_count"], 1)
         self.assertEqual(summary["generated_count"], 0)
-        self.assertTrue(LessonVariant.objects.filter(
-            learning_object=self.learning_object,
-            source_learning_object=second,
-            variant="SIMPLIFIED",
-        ).exists())
-        self.assertTrue(LessonVariant.objects.filter(
-            learning_object=self.learning_object,
-            source_learning_object=third,
-            variant="EXTRA",
-        ).exists())
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
+        self.group.refresh_from_db()
+        self.assertEqual(
+            bundle_roles(self.group),
+            {second.material_id: "SIMPLIFIED", third.material_id: "EXTRA"},
+        )
         self.assertFalse(LessonVariant.objects.filter(
             learning_object=self.learning_object,
             source_learning_object__isnull=True,

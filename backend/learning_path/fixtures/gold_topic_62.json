@@ -1,0 +1,207 @@
+{
+  "topic_id": 62,
+  "required": [
+    [
+      "matter",
+      "solid"
+    ],
+    [
+      "matter",
+      "liquid"
+    ],
+    [
+      "matter",
+      "gas"
+    ],
+    [
+      "solid",
+      "comparing"
+    ],
+    [
+      "liquid",
+      "comparing"
+    ],
+    [
+      "gas",
+      "comparing"
+    ],
+    [
+      "solid",
+      "changing"
+    ],
+    [
+      "liquid",
+      "changing"
+    ],
+    [
+      "gas",
+      "changing"
+    ],
+    [
+      "comparing",
+      "changing"
+    ]
+  ],
+  "parallel": [
+    [
+      "solid",
+      "liquid",
+      "gas"
+    ]
+  ],
+  "structural": [
+    "examples"
+  ],
+  "expected_order": [
+    "matter",
+    "solid",
+    "liquid",
+    "gas",
+    "comparing",
+    "changing",
+    "examples"
+  ],
+  "known_missing": [],
+  "concepts": [
+    {
+      "key": "matter",
+      "title": "Matter",
+      "section_title": "Matter",
+      "members": [
+        {
+          "title": "Matter",
+          "section_title": "",
+          "content": "Okay, let’s describe this figure for the student: Okay, let’s describe this figure for the student. This diagram illustrates how the tiny particles that make up all matter behave in different states. It shows that in a solid, like a book, the particles are tightly packed together and held in fixed positions, giving the solid its definite shape. In contrast, a liquid, such as water, has particles that are close together but can move around, allowing liquids to flow and take the shape of their container. Finally, a gas, like air in a balloon, shows particles that are far apart and moving freely, with no fixed shape or volume. The figure helps us understand that the arrangement and movement of these particles determine whether something is a solid, liquid, or gas.\nMatter: Matter is anything that has mass and occupies space. A book, water, air, a spoon, and a balloon all contain matter. Matter can be described using observable properties such as shape, volume, texture, color, and how it behaves inside a container.",
+          "material_id": 15,
+          "order": 0
+        },
+        {
+          "title": "Matter",
+          "section_title": "",
+          "content": "Matter usually exists in one of three everyday states: solid, liquid, and gas. What state matter is in depends on two things: how closely packed its particles are, and how much energy (movement) those particles have.\nAs a general rule: the more energy particles have, the faster they move and the further apart they spread. Solids have the least particle energy and movement; gases have the most.",
+          "material_id": 16,
+          "order": 1
+        }
+      ]
+    },
+    {
+      "key": "solid",
+      "title": "Solid",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Solid",
+          "section_title": "Matter",
+          "content": "A solid has a definite shape and a definite volume. Its particles are packed closely together and mainly vibrate in fixed positions. Examples include a stone, pencil, wooden block, and ice cube.",
+          "material_id": 15,
+          "order": 2
+        },
+        {
+          "title": "Solid",
+          "section_title": "Solids",
+          "content": "Solids: In a solid, particles are packed tightly together in a fixed, orderly pattern. They vibrate in place but do not move past one another.\nDiagram description: particles in a solid are drawn as evenly spaced dots arranged in tidy rows and columns, like a grid, showing a fixed, orderly pattern. Key properties of solids Has a fixed shape -- it does not change shape unless a force is applied. Particles are tightly packed and only vibrate in place.\nGenerally difficult to compress (squeeze into a smaller space).\nEveryday examples: ice cubes, a wooden chair, a rock, a coin, and a book.",
+          "material_id": 16,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "key": "liquid",
+      "title": "Liquid",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Liquid",
+          "section_title": "Matter",
+          "content": "A liquid has a definite volume but no definite shape. It flows and takes the shape of its container. Its particles are close together but can slide past one another.\nExamples include water, milk, and cooking oil.",
+          "material_id": 15,
+          "order": 3
+        },
+        {
+          "title": "Liquid",
+          "section_title": "Liquids",
+          "content": "Liquids: In a liquid, particles are still close together, but they have more energy than in a solid. They can slide past one another, which is why liquids can flow and change shape.\nDiagram description (Part 1 of 2): particles in a liquid are drawn as dots that are close together but scattered in an irregular, flowing arrangement rather than a neat grid, showing that they can move around each other.\nKey properties of liquids Has no fixed shape -- it takes the shape of its container.\nDiagram description (Part 2 of 2): Has a fixed volume -- the amount of liquid stays the same even if the container changes.\nParticles can slide past each other, allowing the liquid to flow.\nGenerally difficult to compress, though slightly easier than a solid.\nEveryday examples: water, milk, cooking oil, and juice.",
+          "material_id": 16,
+          "order": 6
+        }
+      ]
+    },
+    {
+      "key": "gas",
+      "title": "Gas",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Gas",
+          "section_title": "Matter",
+          "content": "A gas has no definite shape and no definite volume. It spreads out and fills the available space in its container. Its particles are far apart and move freely. Air and water vapor are examples of gases.",
+          "material_id": 15,
+          "order": 4
+        },
+        {
+          "title": "Gas",
+          "section_title": "Gases",
+          "content": "Gases: In a gas, particles have the most energy of the three states. They move quickly in every direction and spread far apart, filling all the space available to them.\nDiagram description: particles in a gas are drawn as widely spaced dots, each with a short line beside it representing fast, free movement in many directions.\nKey properties of gases\nHas no fixed shape and no fixed volume -- it spreads out to fill its container completely.\nParticles move quickly and freely, with large spaces between them.\nEasy to compress because there is so much empty space between particles.\nEveryday examples: the air around you, helium in a balloon, and steam rising from a hot drink.",
+          "material_id": 16,
+          "order": 10
+        }
+      ]
+    },
+    {
+      "key": "comparing",
+      "title": "Comparing the Three States",
+      "section_title": "Comparing the Three States",
+      "members": [
+        {
+          "title": "Comparing the Three States",
+          "section_title": "Comparing the Three States",
+          "content": "Shape: Solids keep their shape; liquids and gases take the shape of their container.\nVolume: Solids and liquids have definite volume; gases expand to fill available space.\nParticle arrangement: Solid particles are tightly packed, liquid particles are close but mobile, and gas particles are widely spaced.\nFlow: Liquids and gases can flow, while solids normally do not.",
+          "material_id": 15,
+          "order": 5
+        },
+        {
+          "title": "Comparing the Three States",
+          "section_title": "Comparing the Three States",
+          "content": "Comparing the Three States: The table below summarizes the key differences. Row and column headers are labeled with text so the comparison does not depend on color alone.\n5. Comparing the Three States: Here’s a description of the figure for your student: This chart explains the key differences between solids, liquids, and gases. It outlines four important properties of each state of matter: shape, volume, particle spacing, and particle movement. Solids maintain a fixed shape and a fixed volume, with their particles vibrating tightly in place. Liquids, on the other hand, take the shape of their container while maintaining a fixed volume, and their particles slide past each other. Finally, gases take the shape of any container they occupy and fill the available space, with their particles moving quickly and freely.",
+          "material_id": 16,
+          "order": 13
+        }
+      ]
+    },
+    {
+      "key": "changing",
+      "title": "Changing From One State to Another",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Changing From One State to Another",
+          "section_title": "",
+          "content": "Changing From One State to Another: Adding or removing heat energy can change matter from one state to another. These changes are called changes of state. The names below describe the direction of each change.\n6. Changing From One State to Another: Here’s a description of the figure for a blind student: This figure explains how matter changes between its three common states: solid, liquid, and gas. It outlines four key processes – melting, freezing, evaporating, and condensing – each illustrating a transformation of matter. Melting describes how adding energy causes a solid to turn into a liquid, spreading the particles out as they move faster. Conversely, freezing shows how removing energy transforms a liquid into a solid, causing the particles to slow down and lock into a rigid structure. The figure also explains that evaporating and boiling involve adding energy to a liquid, allowing particles to escape and spread far apart, while condensing removes energy from a gas, causing particles to slow down and return to a liquid state.\nExample: an ice cube (solid) left on a counter absorbs heat from the air. It melts into water (liquid). If that water is heated on a stove until it boils, some of it evaporates into water vapor (gas).",
+          "material_id": 16,
+          "order": 15
+        }
+      ]
+    },
+    {
+      "key": "examples",
+      "title": "Everyday Examples",
+      "section_title": "",
+      "members": [
+        {
+          "title": "Everyday Examples",
+          "section_title": "",
+          "content": "An ice cube is a solid, melted ice is liquid water, and water vapor is a gas. These examples show that the same substance can exist in different states. Heating and cooling can cause changes of state, but understanding each state should come first.",
+          "material_id": 15,
+          "order": 9
+        },
+        {
+          "title": "Everyday Examples",
+          "section_title": "Everyday Examples",
+          "content": "Everyday Examples: Water is one of the few substances people commonly see in all three states. The table below lists a few examples for each state.\n7. Everyday Examples: Okay, let’s explain what this figure is showing. This table illustrates the three common states of matter: solid, liquid, and gas. It lists examples of each state, showing that ice, wood, and a rock are solids, while water, cooking oil, and milk are liquids. Finally, it indicates that water vapor or steam, helium, air, and carbon dioxide in soda are all gases, demonstrating how these materials can change their form depending on temperature and pressure.",
+          "material_id": 16,
+          "order": 18
+        }
+      ]
+    }
+  ]
+}

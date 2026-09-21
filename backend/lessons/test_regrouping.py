@@ -13,6 +13,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from course.models import LessonVariant
+from course.version_assignment import bundle_roles
 
 from .models import (
     CourseGroup,
@@ -295,14 +296,14 @@ class ApplyTests(RegroupingFixture):
     def test_when_the_original_leaves_its_companions_are_released(self):
         """The leaving object supplied the concept's Normal version. Text it
         held for its companions goes, and the concept picks a new original."""
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.examples_a.represented_by = self.examples_b
         self.examples_a.save()
-        LessonVariant.objects.create(
-            learning_object=self.examples_b, variant="SIMPLIFIED",
-            narration=EXAMPLES_A, origin=LessonVariant.Origin.SOURCE_PDF,
-            source_learning_object=self.examples_a,
-        )
-        self.examples.version_selection = {"representative_id": self.examples_b.id}
+        self.examples.version_selection = {
+            "normal_material_id": self.second.id,
+            "bundle_roles": {str(self.first.id): "SIMPLIFIED"},
+            "bundle_roles_assigned_by": {str(self.first.id): "teacher"},
+        }
         self.examples.save()
         self._edit(self.examples_b, EDITED_B)
 
@@ -316,18 +317,17 @@ class ApplyTests(RegroupingFixture):
         self.examples.refresh_from_db()
         self.assertIsNone(self.examples_a.represented_by_id)
         self.assertEqual(self.examples.version_selection, {})
-        self.assertFalse(
-            LessonVariant.objects.filter(source_learning_object=self.examples_a).exists()
-        )
 
     def test_a_leaving_member_takes_its_own_text_off_the_original(self):
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.examples_b.represented_by = self.examples_a
         self.examples_b.save()
-        LessonVariant.objects.create(
-            learning_object=self.examples_a, variant="ELABORATED",
-            narration=EXAMPLES_B, origin=LessonVariant.Origin.SOURCE_PDF,
-            source_learning_object=self.examples_b,
-        )
+        self.examples.version_selection = {
+            "normal_material_id": self.first.id,
+            "bundle_roles": {str(self.second.id): "ELABORATED"},
+            "bundle_roles_assigned_by": {str(self.second.id): "teacher"},
+        }
+        self.examples.save()
         generated = LessonVariant.objects.create(
             learning_object=self.examples_a, variant="SIMPLIFIED",
             narration="Short.", origin=LessonVariant.Origin.GENERATED,
@@ -339,10 +339,9 @@ class ApplyTests(RegroupingFixture):
             apply_regrouping(self.node, [self.examples_b.id])
 
         self.examples_b.refresh_from_db()
+        self.examples.refresh_from_db()
         self.assertIsNone(self.examples_b.represented_by_id)
-        self.assertFalse(
-            LessonVariant.objects.filter(source_learning_object=self.examples_b).exists()
-        )
+        self.assertNotIn(self.second.id, bundle_roles(self.examples))
         # A teacher's edit to a generated version is never discarded here.
         self.assertTrue(LessonVariant.objects.filter(pk=generated.pk).exists())
 
@@ -387,12 +386,15 @@ class SeparateReleasesVersionLinksTests(RegroupingFixture):
     its text kept serving as that original's version for another concept."""
 
     def _link_as_member(self):
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.examples_b.represented_by = self.examples_a
         self.examples_b.save()
-        return LessonVariant.objects.create(
-            learning_object=self.examples_a, variant="EXTRA", narration=EXAMPLES_B,
-            origin=LessonVariant.Origin.SOURCE_PDF, source_learning_object=self.examples_b,
-        )
+        self.examples.version_selection = {
+            "normal_material_id": self.first.id,
+            "bundle_roles": {str(self.second.id): "EXTRA"},
+            "bundle_roles_assigned_by": {str(self.second.id): "teacher"},
+        }
+        self.examples.save()
 
     def _post(self, path, data):
         client = authenticated_api_client()
@@ -404,25 +406,30 @@ class SeparateReleasesVersionLinksTests(RegroupingFixture):
             )
 
     def test_separate_undoes_the_old_groups_version_links(self):
-        supplied = self._link_as_member()
+        self._link_as_member()
 
         response = self._post("separate-learning-object/", {"learning_object_id": self.examples_b.id})
 
         self.assertEqual(response.status_code, 200, response.data)
         self.examples_b.refresh_from_db()
+        self.examples.refresh_from_db()
         self.assertIsNone(self.examples_b.represented_by_id)
-        self.assertFalse(LessonVariant.objects.filter(pk=supplied.pk).exists())
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
+        self.assertNotIn(self.second.id, bundle_roles(self.examples))
 
     def test_connecting_it_elsewhere_undoes_the_old_groups_version_links(self):
         # Connect keeps the first selected object's group, so here Examples is
         # the destination and it is Solid (from lesson one) that moves, leaving
         # its lesson-three companion behind.
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.solid_a.represented_by = self.solid_c
         self.solid_a.save()
-        supplied = LessonVariant.objects.create(
-            learning_object=self.solid_c, variant="SIMPLIFIED", narration=SOLID_A,
-            origin=LessonVariant.Origin.SOURCE_PDF, source_learning_object=self.solid_a,
-        )
+        self.solid.version_selection = {
+            "normal_material_id": self.third.id,
+            "bundle_roles": {str(self.first.id): "SIMPLIFIED"},
+            "bundle_roles_assigned_by": {str(self.first.id): "teacher"},
+        }
+        self.solid.save()
 
         response = self._post(
             "connect-learning-objects/",
@@ -431,9 +438,10 @@ class SeparateReleasesVersionLinksTests(RegroupingFixture):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.solid_a.refresh_from_db()
+        self.solid.refresh_from_db()
         self.assertEqual(self.solid_a.group_id, self.examples.id)
         self.assertIsNone(self.solid_a.represented_by_id)
-        self.assertFalse(LessonVariant.objects.filter(pk=supplied.pk).exists())
+        self.assertNotIn(self.first.id, bundle_roles(self.solid))
 
     def test_generating_versions_for_a_separated_object_is_no_longer_refused(self):
         self._link_as_member()

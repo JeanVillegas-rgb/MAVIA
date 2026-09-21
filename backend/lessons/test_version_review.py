@@ -6,6 +6,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from course.models import LessonVariant
+from course.version_assignment import bundle_roles
 
 from .models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 
@@ -65,16 +66,20 @@ class VersionReviewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-        row = LessonVariant.objects.get(learning_object=self.first, variant="SIMPLIFIED")
-        self.assertEqual(row.narration, MIDDLING)
-        self.assertEqual(row.origin, "source_pdf")
-        self.assertEqual(row.assigned_by, "teacher")
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
+        self.group.refresh_from_db()
+        self.assertEqual(bundle_roles(self.group), {self.second.material_id: "SIMPLIFIED"})
+        self.assertEqual(
+            self.group.version_selection["bundle_roles_assigned_by"][
+                str(self.second.material_id)
+            ],
+            "teacher",
+        )
+        self.assertFalse(
+            LessonVariant.objects.filter(origin=LessonVariant.Origin.SOURCE_PDF).exists()
+        )
         group = response.data["learning_object_groups"][0]
         self.assertEqual(group["versions"]["needs_confirmation"], [])
-        self.assertEqual(
-            group["versions"]["slots"]["simplified"]["source_learning_object_id"],
-            self.second.id,
-        )
 
     def test_teacher_can_move_a_source_without_leaving_it_in_two_slots(self):
         url = (
@@ -94,12 +99,9 @@ class VersionReviewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        rows = LessonVariant.objects.filter(
-            learning_object=self.first,
-            source_learning_object=self.second,
-        )
-        self.assertEqual(rows.count(), 1)
-        self.assertEqual(rows.get().variant, "ELABORATED")
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
+        self.group.refresh_from_db()
+        self.assertEqual(bundle_roles(self.group), {self.second.material_id: "ELABORATED"})
 
     def test_assignment_flags_the_assigned_object(self):
         self.client.post(
@@ -145,19 +147,15 @@ class VersionReviewTests(TestCase):
         self.second.refresh_from_db()
         self.assertEqual(self.first.represented_by, self.second)
         self.assertIsNone(self.second.represented_by)
-        swapped = LessonVariant.objects.get(
-            learning_object=self.second,
-            variant="SIMPLIFIED",
-        )
-        self.assertEqual(swapped.source_learning_object, self.first)
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
+        self.group.refresh_from_db()
+        self.assertEqual(bundle_roles(self.group), {self.first.material_id: "SIMPLIFIED"})
+        # Wording generated against the old Normal cannot survive the swap.
         self.assertFalse(
-            LessonVariant.objects.filter(
-                learning_object=self.second,
-                variant="ELABORATED",
-            ).exists()
+            LessonVariant.objects.filter(variant="ELABORATED").exists()
         )
 
-    def test_replacing_simplified_preserves_previous_source_as_extra(self):
+    def test_replacing_simplified_moves_the_previous_source_out_of_the_slot(self):
         third = self._object("PDF three", timezone.now(), "A solid keeps its own shape.")
         url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
         first_response = self.client.post(url, {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"}, format="json")
@@ -165,13 +163,22 @@ class VersionReviewTests(TestCase):
         response = self.client.post(url, {"learning_object_id": third.id, "slot": "SIMPLIFIED"}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["version_assignment"]["moved_to_extra"], self.second.id)
-        self.assertEqual(LessonVariant.objects.get(learning_object=self.first, variant="SIMPLIFIED").source_learning_object_id, third.id)
-        extra = LessonVariant.objects.get(learning_object=self.first, variant="EXTRA")
-        self.assertEqual(extra.source_learning_object_id, self.second.id)
-        self.assertEqual(extra.narration, self.second.content)
+        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
+        self.group.refresh_from_db()
+        # Changed 2026-09-20: the displaced bundle is not erased and is not
+        # stamped as the teacher's choice either -- its role is re-derived, so
+        # it takes the primary slot its wording actually fits.
+        self.assertEqual(
+            bundle_roles(self.group),
+            {third.material_id: "SIMPLIFIED", self.second.material_id: "ELABORATED"},
+        )
         response = self.client.post(url, {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(LessonVariant.objects.filter(learning_object=self.first).count(), 2)
+        self.group.refresh_from_db()
+        self.assertEqual(
+            bundle_roles(self.group),
+            {self.second.material_id: "SIMPLIFIED", third.material_id: "ELABORATED"},
+        )
 
     def test_object_outside_the_topic_is_rejected(self):
         other_course = CourseGroup.objects.create(title="Other")

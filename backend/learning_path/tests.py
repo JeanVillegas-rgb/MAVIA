@@ -67,6 +67,10 @@ class TopicPreviewTests(TopicFixture):
 
         steps = {step["title"]: step for step in self._path()["steps"]}
 
+        # A single-object bundle keeps its own title even under a heading
+        # (spec 3.5, task 7 fix round 2): the fixture's "Solid" object is
+        # alone in its bundle, so the step stays "Solid" while `branch`
+        # still reports the section it sits under, "Solids".
         self.assertEqual(steps["Solid"]["branch"], "Solids")
         self.assertEqual(steps["Matter"]["branch"], "")
 

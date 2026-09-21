@@ -1,5 +1,7 @@
 # Prerequisite edge criteria (v3)
 
+> **Superseded in part by the [2026-09-17 revision](#revision-2026-09-17-refd-key-term-reference):** the CSR-based semantic reference, the IOLR built on it, the cross-section cap and their thresholds describe the earlier design and are kept as history. Where they disagree with the last section, the last section is current.
+
 **Status (2026-09-15):** criteria, vetoes and topic ordering are implemented in
 `services/criteria.py` and `services/concept_units.py`. On a successful publish,
 `services/publishing.py` stores the links (`ConceptPrerequisite`) and the step
@@ -82,6 +84,8 @@ result, and a teacher can add, approve or remove edges by hand.
 
 ### The three voting criteria
 
+> *Superseded by the 2026-09-17 revision (last section); kept as history.*
+
 **1. Temporal order (TemO)** -- which one the teacher's own material presents
 first.
 
@@ -141,6 +145,8 @@ the same kind of wording-dependent rule removed below.
 
 ## The decision
 
+> *Superseded by the 2026-09-17 revision (last section); kept as history.*
+
 ```
 score(A, B) = (TemO + CSR_direction + IOLR) / 3
 ```
@@ -175,6 +181,8 @@ Two checks can cancel an edge the votes would otherwise allow:
 > check had not yet shown whether contrast causes wrong edges in practice.
 
 ### Cross-section edges are never accepted automatically
+
+> *Superseded by the 2026-09-17 revision (last section); kept as history.*
 
 An edge between two concepts that sit under **different lesson headings** (in
 the same or different files) is at most **pending**, whatever it scored. A
@@ -290,6 +298,8 @@ each edge's evidence, so switching later needs no re-derivation.
 
 ## Where the thresholds come from
 
+> *Superseded by the 2026-09-17 revision (last section); kept as history.*
+
 No public dataset can set them. AL-CPL is `(concept, concept, label)`; the
 university-course dataset is `(concept, concept, 13 annotators)`. Neither carries
 document positions or source text, so TemO cannot be computed on them, CSR has
@@ -310,6 +320,8 @@ label this design.)
 ---
 
 ## Differences from the source criteria document
+
+> *Superseded by the 2026-09-17 revision (last section); kept as history.*
 
 All deliberate:
 
@@ -334,3 +346,20 @@ All deliberate:
   have not been switched to it.
 - **Showing the effect of an approval before it is made.**
 - **Confirming the cross-section rule on a second topic.**
+
+## Revision 2026-09-17: RefD key-term reference
+
+Measured on two uploaded lessons against the teacher's gold map
+(`fixtures/gold_map_*.json`), the name-to-window SBERT similarity voted
+backwards on 7 of 8 missed edges, and the cross-section cap blocked correct
+edges such as Solid -> Comparing.
+
+- Semantic reference is now RefD-style: the weighted share of A's key terms
+  (its name plus distinctive terms it introduces) used by B's text. SBERT
+  matches multi-word names phrased differently (`PHRASE_COSINE`).
+- Foundationality is unchanged but reads the new reference scores.
+- Structural concepts (Examples) take part in no pair and are ordered last.
+- "than" clauses count as contrastive.
+- The cross-section cap is removed; `cross_section` is still stored.
+
+Before/after numbers: `docs/learning_path_revision_2026-09-17.md`.

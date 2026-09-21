@@ -15,8 +15,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from course.version_assignment import assign_group_versions
+from lessons.services.concept_bundles import bundle_heading, ordered_members
 
-from .text_signals import part_marker
+from .text_signals import part_marker, strip_part_suffix
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,9 @@ class Concept:
     section_title: str
     kind: str
     order: int
+    # Every member's text, one PDF after another. The criteria read this so a
+    # concept speaks with all its PDFs' wording, not only the Normal version's.
+    member_text: str = ""
     group: Any = field(repr=False, default=None)
     representative: Any = field(repr=False, default=None)
     members: tuple = field(repr=False, default=())
@@ -292,7 +296,9 @@ def concepts_for_topic(node):
         # are the other PDFs' versions of it. Filtering them out made every
         # concept report a single source and hid the cross-PDF grouping
         # entirely -- 11 multi-PDF concepts came back as none.
-        members = list(group.learning_objects.all())
+        # `material_rank` is the same upload ranking `ordered_members`
+        # would otherwise derive per concept, at two queries each.
+        members = ordered_members(group, ranked=material_rank)
         if not members:
             continue
         records.append({
@@ -308,22 +314,73 @@ def concepts_for_topic(node):
     for position, record in enumerate(records):
         group, members = record["group"], record["members"]
         representative = _representative_for(group, members)
+        # `members` is in bundle order per its own source group, but
+        # `_merge_split_passages` concatenates *several* groups' member lists
+        # in whatever order the groups' queryset happened to return them --
+        # not document order. Re-sorting the whole set by scan position
+        # (material upload order, then document order) gives the concept one
+        # coherent order regardless of merging. For a concept from a single,
+        # unmerged group this reproduces the same order `ordered_members`
+        # already gave it: both rank by (material rank, object order, id).
+        ordered = sorted(members, key=lambda item: _member_scan_key(item, material_rank))
+        member_text = "\n".join(item.content or "" for item in ordered)
+        # The representative's own bundle: the objects its *own* concept holds
+        # from its material, in document order. Built from members already in
+        # hand rather than a fresh `bundles_for_group(group)` query, which
+        # would miss a representative merged in from a different source group
+        # -- hence the match on `group_id` rather than on `group`.
+        #
+        # Restricted to that one group on purpose: `_merge_split_passages`
+        # concatenates several groups' members here, so counting every member
+        # of the material would let "SOLID (Part 1 of 2)", a bundle of one,
+        # reach two and take its section heading. Real material files SOLID
+        # and LIQUID under a single "Matter" section, so both concepts would
+        # be named "Matter" and the criteria's same-name veto would delete
+        # every edge between them -- the very failure §3.5 was amended to
+        # close.
+        representative_bundle = [
+            item for item in ordered
+            if item.material_id == representative.material_id
+            and item.group_id == representative.group_id
+        ]
         concepts.append(
             Concept(
                 id=group.id,
-                # The Normal version's current title. A group's label is set
-                # once, when the group forms, and never follows a rename -- so
-                # preferring it showed teachers names they had already changed.
-                title=(representative.title or group.label or "").strip(),
+                # The representative's bundle's own heading -- but only when
+                # the bundle actually holds several objects. A multi-object
+                # bundle often opens with a figure that has no heading of its
+                # own, and naming the concept after that figure left it with
+                # no usable name for the criteria; the heading fixes that
+                # ("figure + Matter" -> "Matter", "Shape + Volume + ..." ->
+                # "Comparing the Three States"). A *single*-object bundle has
+                # no such problem, and the section it sits under names the
+                # whole section, not the object -- real material has three
+                # objects, "Solid", "Liquid" and "Gas", each alone under a
+                # "Matter" heading; titling all three "Matter" would give them
+                # one shared name and the criteria's same-name veto would then
+                # delete every edge between them. Falls back to the
+                # representative's title, then the group's label.
+                title=(
+                    (bundle_heading(representative_bundle) if len(representative_bundle) >= 2 else "")
+                    # A bundle of one falls back to the representative's own
+                    # title -- but a merged split passage's representative is
+                    # still titled with the chunker's "(Part 1 of 2)" marker,
+                    # and that marker is what the criteria would match
+                    # against if it reached the concept list unstripped.
+                    or strip_part_suffix(representative.title)
+                    or group.label
+                    or ""
+                ).strip(),
                 # "Normal" is the representative's own text -- unlike Simplified
                 # and Elaborated it is not a stored slot.
                 content=representative.content or "",
                 section_title=representative.section_title or "",
                 kind=representative.kind,
                 order=position,
+                member_text=member_text,
                 group=group,
                 representative=representative,
-                members=tuple(members),
+                members=tuple(ordered),
             )
         )
     return concepts

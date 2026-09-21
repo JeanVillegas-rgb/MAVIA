@@ -27,7 +27,15 @@ from course.version_assignment import (
     assign_group_versions,
     assign_source_as_representative,
     assign_source_to_slot,
+    bundle_role_provenance,
+    prune_bundle_role,
     release_from_group,
+)
+from .services.concept_bundles import (
+    bundle_label,
+    bundle_text,
+    bundles_for_group,
+    material_order,
 )
 
 from .models import (
@@ -85,6 +93,7 @@ from .services.learning_resource_linker import (
     refresh_material_learning_relationships,
     refresh_question_learning_object_links,
 )
+from .services.unit_matching import place_unit, unpublish_topic
 from .services.regrouping import (
     RegroupingUnavailable,
     apply_regrouping,
@@ -191,6 +200,10 @@ def _run_all_versions_in_background(run_id, node_id):
         run.save(update_fields=["status", "finished_at"])
 
 
+class SuggestionAcceptError(ValueError):
+    """A match suggestion accept that cannot be carried out as asked."""
+
+
 class CourseGroupViewSet(viewsets.ModelViewSet):
     permission_classes = [IsTeacherOrAdmin]
     queryset = CourseGroup.objects.prefetch_related(
@@ -283,6 +296,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             for group_id in group_ids:
                 confirmed_questions_by_group[group_id].append(question)
 
+        order_index = {
+            material_id: index for index, material_id in enumerate(material_order(node))
+        }
+
         groups = []
         for group in group_queryset:
             learning_objects = [
@@ -293,40 +310,157 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             if not learning_objects:
                 continue
             version_state = assign_group_versions(group)
+            group_bundles = bundles_for_group(group)
+            # Shown per PDF. Built from the same rows as the flat list -- only
+            # confirmed files, no extraction leftovers -- so the two views of a
+            # concept cannot disagree, and ordered as `bundles_for_group` does.
+            display_bundles = defaultdict(list)
+            for item in learning_objects:
+                display_bundles[item.material_id].append(item)
+            for objects in display_bundles.values():
+                objects.sort(key=lambda item: (item.order, item.id))
             slot_rows = {}
             extra_rows = []
-            if version_state["representative_id"] is not None:
-                representative = next(
-                    (item for item in learning_objects if item.id == version_state["representative_id"]),
-                    None,
-                ) or LearningObject.objects.filter(pk=version_state["representative_id"]).first()
-                current_fingerprint = version_fingerprint(representative) if representative else ""
-                for row in LessonVariant.objects.filter(
-                    learning_object_id=version_state["representative_id"],
-                ):
+            # A version a PDF supplies *is* its bundle's objects -- nothing is
+            # copied into a LessonVariant row -- so the roles are read first and
+            # the variant table only fills what was generated. Reading the table
+            # alone left such a slot empty and the concept forever "incomplete".
+            role_provenance = bundle_role_provenance(group)
+            normal_material = version_state.get("normal_material_id")
+            normal_objects = [
+                item
+                for item in group_bundles.get(normal_material, [])
+                if (item.content or "").strip()
+            ]
+
+            def object_rows(objects):
+                """Which objects a version is made of, in the order it reads.
+
+                The review screen shows every object exactly once, under the
+                role it actually plays. Without this it had no way to tell a
+                member of the Normal bundle from a bundle supplying another
+                version, and labelled both "Other variation".
+                """
+                return [
+                    {
+                        "id": item.id,
+                        "title": item.title,
+                        "material": item.material_id,
+                        "kind": item.kind,
+                        "text": item.content or "",
+                    }
+                    for item in objects
+                ]
+
+            # Normal is a role like the others: the bundle the concept is
+            # taught as. It used to be absent from the payload entirely, so the
+            # screen fell back to the bundle's lead object and dropped the rest.
+            if normal_objects:
+                slot_rows["normal"] = {
+                    "id": None,
+                    "material": normal_material,
+                    "text": bundle_text(normal_objects),
+                    "origin": LessonVariant.Origin.SOURCE_PDF,
+                    "source": "pdf",
+                    "assigned_by": role_provenance.get(normal_material, ""),
+                    "source_learning_object_id": normal_objects[0].id,
+                    "objects": object_rows(normal_objects),
+                    "stale": False,
+                }
+
+            for material_id, role in (version_state.get("bundle_roles") or {}).items():
+                supplied = [
+                    item
+                    for item in group_bundles.get(material_id, [])
+                    if (item.content or "").strip()
+                ]
+                if not supplied:
+                    continue
+                entry = {
+                    "id": None,
+                    "material": material_id,
+                    "text": bundle_text(supplied),
+                    "origin": LessonVariant.Origin.SOURCE_PDF,
+                    "source": "pdf",
+                    "assigned_by": role_provenance.get(material_id, ""),
+                    "source_learning_object_id": supplied[0].id,
+                    "objects": object_rows(supplied),
+                    # Teacher text, never written from the Normal wording, so
+                    # it cannot go stale the way a generated version does.
+                    "stale": False,
+                }
+                if role == "EXTRA":
+                    extra_rows.append(entry)
+                else:
+                    slot_rows[role.lower()] = entry
+
+            if normal_objects:
+                # A generated version is written one object of the Normal
+                # bundle at a time, so it is read back the same way. Reading
+                # only the lead's row showed one segment of four.
+                by_id = {item.id: item for item in normal_objects}
+                position = {item.id: index for index, item in enumerate(normal_objects)}
+                generated = defaultdict(list)
+                for row in LessonVariant.objects.filter(learning_object__in=normal_objects):
+                    generated[row.variant].append(row)
+                for variant, rows in generated.items():
+                    rows.sort(key=lambda row: position.get(row.learning_object_id, len(position)))
+                    if variant == "EXTRA":
+                        # Extras are kept for the learning-path component to
+                        # rule on; they are not one of the three slots a
+                        # student is offered, so they travel as their own list.
+                        extra_rows.extend({
+                            "id": row.id,
+                            "text": row.narration,
+                            "origin": row.origin,
+                            "source": "generated",
+                            "assigned_by": row.assigned_by,
+                            "source_learning_object_id": row.source_learning_object_id,
+                            "objects": object_rows([by_id[row.learning_object_id]]),
+                            "stale": False,
+                        } for row in rows)
+                        continue
+                    # A version short of its bundle is reported missing rather
+                    # than served: three quarters of a version reads as a whole
+                    # one to a learner who cannot see the page.
+                    if len(rows) < len(normal_objects):
+                        continue
                     entry = {
-                        "id": row.id,
-                        "text": row.narration,
-                        "origin": row.origin,
-                        "assigned_by": row.assigned_by,
-                        "source_learning_object_id": row.source_learning_object_id,
-                        # Written from different Normal text than the concept has
-                        # now. Publishing refuses these until a teacher checks them.
-                        "stale": bool(
+                        # The first segment's row, so the existing edit and
+                        # regenerate controls keep working unchanged.
+                        "id": rows[0].id,
+                        "material": None,
+                        "text": "\n".join(
+                            row.narration.strip() for row in rows if row.narration.strip()
+                        ),
+                        "origin": rows[0].origin,
+                        "source": "generated",
+                        "assigned_by": rows[0].assigned_by,
+                        "source_learning_object_id": rows[0].source_learning_object_id,
+                        # Each segment carries the wording that was *written*,
+                        # not the object it was written from -- showing the
+                        # source text under an Elaborated heading would be
+                        # printing the Normal version a second time.
+                        "objects": [
+                            {
+                                **object_rows([by_id[row.learning_object_id]])[0],
+                                "text": row.narration,
+                            }
+                            for row in rows
+                        ],
+                        # Written from different text than the object has now.
+                        # Publishing refuses these until a teacher checks them.
+                        "stale": any(
                             row.origin == LessonVariant.Origin.GENERATED
-                            and row.variant in ("SIMPLIFIED", "ELABORATED")
                             and row.source_fingerprint
-                            and current_fingerprint
-                            and row.source_fingerprint != current_fingerprint
+                            and row.source_fingerprint
+                            != version_fingerprint(by_id[row.learning_object_id])
+                            for row in rows
                         ),
                     }
-                    # Extras are kept for the learning-path component to rule on;
-                    # they are not one of the three slots a student is offered, so
-                    # they travel as their own list rather than as a slot.
-                    if row.variant == "EXTRA":
-                        extra_rows.append(entry)
-                    else:
-                        slot_rows[row.variant.lower()] = entry
+                    # A bundle that already supplies this role keeps it: the
+                    # PDF's own wording outranks a leftover generated row.
+                    slot_rows.setdefault(variant.lower(), entry)
             groups.append(
                 {
                     "id": group.id,
@@ -339,8 +473,28 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                         "slots": slot_rows,
                         "extras": extra_rows,
                         "needs_confirmation": version_state["needs_confirmation"],
+                        # A primary role counts as done whether a PDF supplies
+                        # it or a generator wrote it.
                         "complete": {"simplified", "elaborated"}.issubset(slot_rows.keys()),
                     },
+                    # One block per PDF, in upload order, so the teacher sees
+                    # what each file contributed to this concept as a unit.
+                    "bundles": [
+                        {
+                            "material": material_id,
+                            "role": version_state["bundle_roles"].get(
+                                material_id,
+                                "NORMAL" if material_id == version_state["normal_material_id"] else None,
+                            ),
+                            "learning_objects": LearningObjectSerializer(
+                                objects, many=True, context={"request": request},
+                            ).data,
+                        }
+                        for material_id, objects in sorted(
+                            display_bundles.items(),
+                            key=lambda pair: order_index.get(pair[0], len(order_index)),
+                        )
+                    ],
                     "learning_objects": LearningObjectSerializer(
                         learning_objects,
                         many=True,
@@ -614,6 +768,176 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         )
         return Response(self._learning_resources_payload(node, request))
 
+    def _node_and_object(self, course, node_id, object_id):
+        """Resolve one of this course's objects, or say which half was missing."""
+        try:
+            node = course.nodes.get(pk=node_id)
+            learning_object = LearningObject.objects.select_related("material", "group").get(
+                pk=object_id, material__outline_node=node,
+            )
+        except (OutlineNode.DoesNotExist, LearningObject.DoesNotExist):
+            return None, None
+        return node, learning_object
+
+    def _leave_old_group(self, learning_object):
+        """Who stays behind in the concept this object is leaving.
+
+        Call this **before** the object's group changes. Undoing the old
+        concept's version links is ``place_unit``'s job -- it does the same for
+        the automatic and accept-a-card paths, which do not come through here
+        -- so this only reports the companions the caller still has to record a
+        teacher decision against.
+        """
+        old_group = learning_object.group
+        return list(
+            old_group.learning_objects.exclude(pk=learning_object.id).select_related("material")
+        ) if old_group else []
+
+    def _bundle_correction_response(self, node, learning_object, request, companions=()):
+        self._refresh_relationship_snapshots(
+            {learning_object.material, *(member.material for member in companions)},
+            recompute=False,
+        )
+        return Response(self._learning_resources_payload(node, request))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)/move-out",
+    )
+    def move_learning_object_out(self, request, pk=None, node_id=None, object_id=None):
+        """Take one object out of its bundle and let it teach a concept alone."""
+        course = self.get_object()
+        node, learning_object = self._node_and_object(course, node_id, object_id)
+        if learning_object is None:
+            return Response({"detail": "Learning object not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not learning_objects_are_confirmed(learning_object.material):
+            return Response(
+                {"detail": "Confirm this learning object before reviewing connections."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if learning_object.group_id and learning_object.group.learning_objects.count() == 1:
+            return Response(self._learning_resources_payload(node, request))
+        companions = self._leave_old_group(learning_object)
+        target = LearningObjectGroup.objects.create(
+            outline_node=node,
+            # One object on its own keeps its own title (design 3.5):
+            # naming it after the heading it sat under gave every object of a
+            # shared section the same concept name.
+            label=bundle_label([learning_object])[:255],
+        )
+        place_unit([learning_object], target)
+        # A teacher breaking a bundle up is a decision, not a gap in the
+        # evidence: without recording it the next automatic pass would place
+        # the object straight back. Only cross-PDF pairs are decided -- two
+        # objects of one file say nothing about whether the files agree.
+        for companion in companions:
+            if companion.material_id != learning_object.material_id:
+                record_teacher_match_decision(learning_object, companion, accepted=False)
+        unpublish_topic(node)
+        return self._bundle_correction_response(node, learning_object, request, companions)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)/move-to",
+    )
+    def move_learning_object_to(self, request, pk=None, node_id=None, object_id=None):
+        """Move one object into another concept of the same topic."""
+        course = self.get_object()
+        node, learning_object = self._node_and_object(course, node_id, object_id)
+        if learning_object is None:
+            return Response({"detail": "Learning object not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not learning_objects_are_confirmed(learning_object.material):
+            return Response(
+                {"detail": "Confirm this learning object before reviewing connections."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            group_id = int(request.data.get("group_id"))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "group_id must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Scoped to the node: a concept from another topic would carry the
+        # object out of the lesson it belongs to.
+        target = node.learning_object_groups.filter(pk=group_id).first()
+        if target is None:
+            return Response(
+                {"detail": "That concept is not part of this topic."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        companions = []
+        if learning_object.group_id != target.id:
+            companions = self._leave_old_group(learning_object)
+            place_unit([learning_object], target)
+            unpublish_topic(node)
+        return self._bundle_correction_response(node, learning_object, request, companions)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)/reorder",
+    )
+    def reorder_learning_object_in_bundle(self, request, pk=None, node_id=None, object_id=None):
+        """Change one object's place in its bundle, swapping with its neighbour.
+
+        Only its own bundle moves: order is what the PDF that wrote these
+        objects says, so an object never steps over another file's text.
+        """
+        course = self.get_object()
+        node, learning_object = self._node_and_object(course, node_id, object_id)
+        if learning_object is None:
+            return Response({"detail": "Learning object not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not learning_objects_are_confirmed(learning_object.material):
+            return Response(
+                {"detail": "Confirm this learning object before reviewing connections."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        direction = request.data.get("direction")
+        if direction not in ("up", "down"):
+            return Response(
+                {"detail": "direction must be \"up\" or \"down\"."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if learning_object.group_id is None:
+            return Response(self._learning_resources_payload(node, request))
+        siblings = [
+            item
+            for item in bundles_for_group(learning_object.group).get(learning_object.material_id, [])
+        ]
+        position = next(
+            (index for index, item in enumerate(siblings) if item.id == learning_object.id),
+            None,
+        )
+        if position is None:
+            return Response(self._learning_resources_payload(node, request))
+        neighbour_index = position - 1 if direction == "up" else position + 1
+        if neighbour_index < 0 or neighbour_index >= len(siblings):
+            # Already at the edge of its bundle; the teacher still gets the
+            # current state back rather than an error they cannot act on.
+            return Response(self._learning_resources_payload(node, request))
+        moved = list(siblings)
+        moved[position], moved[neighbour_index] = moved[neighbour_index], moved[position]
+        # Renumber rather than swap the two values. Swapping is a no-op when
+        # two objects share an `order` (the tie is broken by id), and nudging
+        # one value clear of the other can walk `order` below zero, which the
+        # PositiveIntegerField does not allow.
+        #
+        # The bundle is renumbered over the places it already occupies, not
+        # 0..n-1: `order` is the whole PDF's document order, and a file's other
+        # concepts hold the places in between. Taking 0..n-1 here would move
+        # this bundle in front of them and rewrite the lesson's reading and
+        # audio order material-wide.
+        places = []
+        for value in sorted(item.order for item in siblings):
+            places.append(max(value, places[-1] + 1) if places else value)
+        for place, item in zip(places, moved):
+            if item.order != place:
+                LearningObject.objects.filter(pk=item.id).update(order=place)
+        return self._bundle_correction_response(node, learning_object, request)
+
     @action(
         detail=True,
         methods=["get"],
@@ -692,6 +1016,29 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         except LearningObjectMatchSuggestion.DoesNotExist:
             return None
 
+    @staticmethod
+    def _record_suggestion_decision(suggestion, source, candidate, *, accepted):
+        """Record a teacher decision on a suggestion, including unit suggestions.
+
+        ``record_teacher_match_decision`` ignores pairs of different kinds, and
+        a unit suggestion may pair an image with text; its row is written
+        directly with the same evidence keys, keeping its extras.
+        """
+        if not (suggestion.source_extra_ids or suggestion.candidate_extra_ids):
+            if record_teacher_match_decision(source, candidate, accepted=accepted) is not None:
+                return
+        suggestion.status = (
+            LearningObjectMatchSuggestion.Status.ACCEPTED
+            if accepted
+            else LearningObjectMatchSuggestion.Status.REJECTED
+        )
+        suggestion.evidence = {
+            **(suggestion.evidence or {}),
+            "teacher_reviewed": True,
+            "teacher_decision": "accepted" if accepted else "rejected",
+        }
+        suggestion.save(update_fields=["status", "evidence", "updated_at"])
+
     @action(
         detail=True,
         methods=["post"],
@@ -723,11 +1070,71 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Confirm both learning objects before reviewing this connection."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        try:
+            unpublished = self._accept_suggestion(node, suggestion, source, candidate)
+        except SuggestionAcceptError as exc:
+            # Raised inside the transaction, so nothing was moved or saved.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        # Placement unpublishes with an UPDATE, so the cached node is stale and
+        # the payload would still report the topic as published.
+        node.refresh_from_db()
+        payload = self._learning_resources_payload(node, request)
+        payload["unpublished"] = unpublished
+        return Response(payload)
+
+    @transaction.atomic
+    def _accept_suggestion(self, node, suggestion, source, candidate):
+        """Place (for units), connect and record the decision in one transaction."""
+        unpublished = False
+        if suggestion.source_extra_ids or suggestion.candidate_extra_ids:
+            from .services.unit_matching import (
+                place_unit,
+                rejected_across_sides,
+                unpublish_topic,
+            )
+
+            # Each side is its own PDF's run, so an extra id belongs to the
+            # material of the side that lists it. Built as sets, so an id
+            # repeated within or across the two lists cannot inflate the count.
+            source_ids = {suggestion.source_learning_object_id, *suggestion.source_extra_ids}
+            candidate_ids = {suggestion.candidate_learning_object_id, *suggestion.candidate_extra_ids}
+            sides = []
+            for ids, primary in ((source_ids, source), (candidate_ids, candidate)):
+                members = list(
+                    LearningObject.objects.filter(
+                        pk__in=ids,
+                        material_id=primary.material_id,
+                        material__outline_node=node,
+                    )
+                )
+                if len(members) != len(ids):
+                    raise SuggestionAcceptError(
+                        "This suggestion is out of date. Refresh the page and review it again."
+                    )
+                sides.append(members)
+            source_objects, candidate_objects = sides
+            objects = [*source_objects, *candidate_objects]
+            # Checked before anything moves: a teacher may have declined a pair
+            # this unit would put into one concept.
+            if rejected_across_sides(source_objects, candidate_objects, exclude_pk=suggestion.pk):
+                raise SuggestionAcceptError("A teacher declined connecting these objects; review it first.")
+            place_unit(objects, source.group or candidate.group or LearningObjectGroup.objects.create(
+                outline_node=node,
+                label=(
+                    bundle_label(source_objects) or bundle_label(candidate_objects)
+                )[:255],
+            ))
+            unpublished = unpublish_topic(node)
+            source.refresh_from_db()
+            candidate.refresh_from_db()
         suggestion.status = LearningObjectMatchSuggestion.Status.ACCEPTED
         suggestion.save(update_fields=["status", "updated_at"])
         target_group = source.group or LearningObjectGroup.objects.create(
             outline_node=node,
-            label=source.title[:255],
+            # Named the way every other concept is named. A bundle of two
+            # or more takes its heading; this one object takes its own title,
+            # so objects sharing a section do not all become one name.
+            label=(bundle_label([source]) or source.title)[:255],
         )
         old_group = candidate.group
         if old_group and old_group.id != target_group.id:
@@ -735,11 +1142,19 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 candidate,
                 list(old_group.learning_objects.exclude(pk=candidate.pk)),
             )
+        if not target_group.learning_objects.filter(
+            material_id=candidate.material_id,
+        ).exclude(pk=candidate.pk).exists():
+            # This PDF contributes nothing to the concept yet, so any role
+            # stored against it is a ruling about text that has since left --
+            # see `place_unit`, which guards the same way.
+            prune_bundle_role(target_group, candidate.material_id)
         candidate.group = target_group
         candidate.mark_grouping_current()
         candidate.save(update_fields=["group", "grouping_content_hash"])
+        source.group = target_group
         source.mark_grouping_current()
-        source.save(update_fields=["grouping_content_hash"])
+        source.save(update_fields=["group", "grouping_content_hash"])
         if old_group and old_group.id != target_group.id and not old_group.learning_objects.exists():
             old_group.delete()
 
@@ -749,8 +1164,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             {source.material, candidate.material},
             recompute=False,
         )
-        record_teacher_match_decision(source, candidate, accepted=True)
-        return Response(self._learning_resources_payload(node, request))
+        self._record_suggestion_decision(suggestion, source, candidate, accepted=True)
+        return unpublished
 
     @action(
         detail=True,
@@ -783,7 +1198,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Confirm both learning objects before reviewing this connection."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        record_teacher_match_decision(
+        self._record_suggestion_decision(
+            suggestion,
             suggestion.source_learning_object,
             suggestion.candidate_learning_object,
             accepted=False,
@@ -1420,9 +1836,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             )
 
         representative = LearningObject.objects.get(pk=representative_id)
-        previous = LessonVariant.objects.filter(learning_object=representative, variant=slot).first() if slot != "EXTRA" else None
-        displaced_id = previous.source_learning_object_id if previous else None
-        assign_source_to_slot(representative, learning_object, slot)
+        try:
+            moved = assign_source_to_slot(representative, learning_object, slot)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        displaced_id = moved["displaced_learning_object_id"]
         payload = self._learning_resources_payload(node, request)
         payload["version_assignment"] = {
             "slot": slot,

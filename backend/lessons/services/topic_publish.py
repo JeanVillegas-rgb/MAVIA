@@ -11,11 +11,17 @@ exercised synchronously without a background thread or an HTTP round trip.
 
 from django.utils import timezone
 
+from course.models import LessonVariant
 from course.services import sync_course_outline
 from course.version_assignment import settle_group
 
 from ..models import LearningMaterial, LearningObject
-from .audio_generator import AudioGenerationError, generate_material_audio_playlist, generate_version_audio
+from .audio_generator import (
+    AudioGenerationError,
+    generate_bundle_version_audio,
+    generate_material_audio_playlist,
+    generate_version_audio,
+)
 from .image_describer import populate_missing_image_descriptions
 from .content_generator import build_narration_script_from_learning_objects, build_lesson_playlist
 
@@ -34,6 +40,109 @@ def confirmed_materials_for(course, node):
         .exclude(learning_objects__isnull=True)
         .distinct()
     )
+
+
+def concepts_missing_a_version(node, materials):
+    """Lead objects of concepts a student could not be served both versions of.
+
+    A concept is judged once, through its bundles, not once per object:
+
+    * a role another PDF supplies is satisfied by that PDF's own objects --
+      there is no ``LessonVariant`` row to look for, and demanding one would
+      make every two-PDF topic unpublishable;
+    * a role no bundle supplies must have been written, one row per object of
+      the Normal bundle, so the version a student hears covers all of it;
+    * only the Normal bundle's lead speaks for the concept. Every other object
+      either repeats it or belongs to a bundle that is already a version --
+      including a bundle still awaiting the teacher's confirmation, which is
+      simply not a version yet and must not hold publishing back.
+
+    ``materials`` is the publish's confirmed set, and a role only counts as
+    supplied when the PDF supplying it is in that set: the audio phase runs
+    over confirmed materials only, so un-confirming one PDF after grouping
+    would otherwise publish a version with nothing to play.
+    """
+    from course.version_assignment import PRIMARY_SLOTS, version_bundles
+
+    confirmed_ids = {material.id for material in materials}
+    filled = {
+        (learning_object_id, variant)
+        for learning_object_id, variant, narration in LessonVariant.objects.filter(
+            learning_object__material__in=materials,
+        ).values_list("learning_object_id", "variant", "narration")
+        if (narration or "").strip()
+    }
+    bundles_by_group = {}
+    missing = []
+    for candidate in (
+        LearningObject.objects.filter(
+            material__outline_node=node, material__in=materials,
+        )
+        .select_related("group")
+        .order_by("order", "id")
+    ):
+        if candidate.group_id is None:
+            if candidate.represented_by_id is not None:
+                continue
+            normal, supplied = [candidate], set()
+        else:
+            if candidate.group_id not in bundles_by_group:
+                bundles_by_group[candidate.group_id] = version_bundles(candidate.group)
+            bundles = bundles_by_group[candidate.group_id]
+            normal = bundles.get("NORMAL") or []
+            supplied = {
+                role for role, objects in bundles.items()
+                if role in PRIMARY_SLOTS
+                and objects
+                and all(item.material_id in confirmed_ids for item in objects)
+            }
+            if normal:
+                if normal[0].id != candidate.id:
+                    continue
+            elif candidate.represented_by_id is None:
+                # Nothing in the concept has text to teach; report it against
+                # whichever object is still standing for it.
+                normal = [candidate]
+            else:
+                continue
+        if not any((item.content or "").strip() for item in normal):
+            missing.append(candidate.id)
+            continue
+        if any(
+            (item.id, slot) not in filled
+            for slot in set(PRIMARY_SLOTS) - supplied
+            for item in normal
+        ):
+            missing.append(candidate.id)
+    return missing
+
+
+def refresh_material_playlist(material):
+    """Rewrite one material's narration script and lesson playlist.
+
+    One entry per object this PDF still teaches in its own voice. An object
+    ``represented_by`` another is that concept's version, not a track of this
+    lesson, and is left out -- ``generate_version_audio`` speaks it instead.
+
+    A concept taught as a bundle of three objects therefore keeps three
+    tracks, in document order: this list is what the mobile package serves,
+    so collapsing a concept here would collapse the lesson a learner hears.
+
+    Returns the objects it wrote tracks for.
+    """
+    active_objects = list(
+        material.learning_objects.filter(represented_by__isnull=True).order_by("order", "id")
+    )
+    narration = build_narration_script_from_learning_objects([
+        {"learning_object_id": item.id, "title": item.title, "content": item.content,
+         "type": "image_description" if item.kind == "image" else "teacher_text",
+         "section_title": item.section_title, "source_page": item.source_page}
+        for item in active_objects
+    ])
+    material.generated_json = {**(material.generated_json or {}),
+        "narration_script": narration, "lesson_playlist": build_lesson_playlist(narration)}
+    material.save(update_fields=["generated_json"])
+    return active_objects
 
 
 def run_topic_publish(course, node, set_confirmed, on_event=None):
@@ -109,18 +218,7 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
             generated=outcome["generated"],
         )
 
-    # Checked in Python rather than with a queryset: "has both slots" needs two
-    # independent joins on the same reverse relation, which a single exclude()
-    # cannot express correctly.
-    incomplete_versions = []
-    for candidate in LearningObject.objects.filter(
-        material__outline_node=node,
-        material__in=materials,
-        represented_by__isnull=True,
-    ).prefetch_related("variants"):
-        slots = {row.variant for row in candidate.variants.all() if row.narration.strip()}
-        if not (candidate.content or "").strip() or not {"SIMPLIFIED", "ELABORATED"}.issubset(slots):
-            incomplete_versions.append(candidate.id)
+    incomplete_versions = concepts_missing_a_version(node, materials)
     if incomplete_versions:
         names = list(
             LearningObject.objects.filter(pk__in=incomplete_versions).values_list("title", flat=True)
@@ -140,19 +238,15 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
             index=index, total=len(materials), material_id=material.id,
         )
         try:
-            active_objects = list(material.learning_objects.filter(represented_by__isnull=True).order_by("order", "id"))
-            narration = build_narration_script_from_learning_objects([
-                {"learning_object_id": item.id, "title": item.title, "content": item.content,
-                 "type": "image_description" if item.kind == "image" else "teacher_text",
-                 "section_title": item.section_title, "source_page": item.source_page}
-                for item in active_objects
-            ])
-            material.generated_json = {**(material.generated_json or {}),
-                "narration_script": narration, "lesson_playlist": build_lesson_playlist(narration)}
-            material.save(update_fields=["generated_json"])
+            active_objects = refresh_material_playlist(material)
             result = generate_material_audio_playlist(material, scope="lessons") if active_objects else {"generated_count": 0}
             version_audio = generate_version_audio(material)
             result["generated_count"] += version_audio["generated_count"]
+            # A version this PDF supplies is its own objects, which the lesson
+            # playlist above leaves out because they are represented. Without
+            # their own clips the alternate track would play silence.
+            bundle_audio = generate_bundle_version_audio(material)
+            result["generated_count"] += bundle_audio["generated_count"]
             audio_generated += result["generated_count"]
             emit(
                 "audio_finished",
