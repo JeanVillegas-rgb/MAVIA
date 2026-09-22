@@ -325,6 +325,147 @@ roles written by past page loads.
   choice over duplicating the half-served rule, but if those helpers move,
   `learning_path/services/published.py` moves with them.
 
+### 2026-09-22 — Claude Code — parallel concepts stop borrowing each other's words; a gold fixture that holds the pipeline's own grouping
+
+**Branch / commits:** `jean-jure-latest`, uncommitted on top of `3820565`.
+Nothing staged or committed.
+
+**Tests:** `python manage.py test -v 1` → **845 passing** (837 before, plus 8).
+`test_gold_paths` runs three lessons now and all three are `ok`. The new one was
+confirmed **failing before the fix**, on
+`forbidden_accepted: [["solid","gas"]]`, which is why it exists.
+
+**Live database: untouched.** Every number below was re-derived read-only by
+running `concepts_for_topic` + `criteria.decide_pairs` — which is exactly what
+`publish_learning_path` does, so these *are* the numbers a republish would
+store. I did not republish 152/163: the stored rows are stale, but re-deriving
+answers the question without writing, and publishing is the teacher's action.
+
+**What was wrong, and what I did about it**
+
+The task was that edges are accepted on evidence that is a single ordinary
+English word, with `Solid → Gas` (topic 152) and 20 cross-lesson edges
+(topic 163) as the live consequences. The recorded candidate fix was to stop
+non-technical and rendering vocabulary counting as distinctive.
+
+1. **That candidate direction does not work, and I measured it rather than
+   arguing it.** A filter built to the stated principle — words describing the
+   medium or the prose rather than the science, written deliberately *not* to
+   spare any particular edge — takes **gold topic 62 from 10/10 to 9/10**. It
+   loses `comparing → changing`, which is carried by `["explain", "four",
+   "outline"]` at `ref_forward` 0.0441: no name, no head word, no section
+   containment. That is the *same evidence class* as the four words carrying
+   `Solid → Gas`. Any vocabulary filter honest enough to catch "drawn" and
+   "spaced" also catches "explain" and "outline". The acceptance test and the
+   proposed fix are incompatible, so I did not ship a curated list that spares
+   one edge — that is the lesson-specific word list the 2026-09-17 calibration
+   decided against.
+
+2. **What shipped is structural.** `contained_in` already reads section
+   structure downward (a passage under "Matter" builds on Matter). The sideways
+   reading is that two passages under **one** heading, neither of which is what
+   that heading names, are **coordinate siblings** — Solid, Liquid and Gas under
+   "Matter". Between two siblings an edge now needs a reference that *names* its
+   target (the name, a head word, or section containment) rather than merely
+   sharing vocabulary with it, because parallel passages share vocabulary by
+   construction: the author describes each state the same way, which is what
+   "drawn as evenly spaced dots" and "drawn as widely spaced dots" are.
+   `criteria.presented_in_parallel` / `criteria.names_the_target`. **No constant
+   moved.** This is not the removed sibling rule — that keyed on the words of
+   the topic *title*, this keys on the documents' own headings.
+
+   | | gold 62 | gold 79 | live 152 | live 169 | live 163 |
+   |---|---|---|---|---|---|
+   | Required accepted | 10/10 | 4/8 | 9/10 | 4/8 | — |
+   | New gaps / gaps closed | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | — |
+   | Forbidden | 0 | 0 | **0** (was 1) | 0 | — |
+   | Order matches | yes | yes | yes | yes | — |
+   | Accepted total | — | — | 19 (was 20) | 8 | 39 (was 41) |
+
+3. **Topic 163 is a data-modelling problem, not a criteria problem, and now
+   there is a number for it.** Re-derived with each of its three PDFs as its
+   **own topic**: 41 accepted edges → **22, none crossing lessons**, and all 22
+   are plausible. The coordinate-sibling rule prunes 2 of its edges and none of
+   the 20 that cross lessons — concepts from different PDFs share no heading, so
+   it could not. **Topic 163 should be three topics.** That is a teacher action
+   in the UI; I did not do it.
+
+4. **A third gold fixture, and the reason it is worth more than the fix.** The
+   recorded blind spot was "the fixtures hold older text". That turned out to be
+   only half of it. I first exported topic 152 through the existing
+   `export_gold_concepts`, which writes the **teacher's** grouping with today's
+   text: 7 concepts, 8/10 required, and **0 forbidden edges** — it cannot see
+   `Solid → Gas` at all. The denominator is why: `REF_MAX_DF_RATIO` allows a
+   term in at most `floor(n × 0.34)` concepts, the diagram vocabulary sits in 3
+   concepts either way, so at n=7 the cap is 2 and the words are dropped, at
+   n=14 the cap is 4 and they survive. **The teacher's ideal grouping hides the
+   failure the teacher sees.**
+
+   So the new fixture freezes the shape a publish actually derives.
+   `export_live_concepts` (new command) writes `concepts_for_topic` output and
+   labels each concept with the teacher's concept it belongs to.
+   `gold.py` grew two things the older fixtures could not express: **several
+   concepts may share a key** (the pipeline split what the teacher keeps whole —
+   an edge between two such concepts is a grouping result, not a prerequisite
+   claim, and is not scored), and **a concept may carry no key** (3 of topic
+   152's 14; they still take part in the derivation because they change document
+   frequencies and the order, but nothing is scored against them).
+
+**Changed:**
+
+- `learning_path/services/criteria.py` — `named_sections`,
+  `presented_in_parallel`, `names_the_target`, and the veto in `decide_pairs`.
+- `learning_path/services/gold.py` — shared/absent keys, order collapsed over
+  them, `unkeyed_concepts` in the report. Behaviour on 62 and 79 is unchanged
+  (every key there is unique and non-null).
+- `learning_path/management/commands/export_live_concepts.py` — new.
+- `learning_path/fixtures/gold_map_152.json`, `gold_topic_152.json` — new.
+- `learning_path/test_gold_paths.py` — third lesson.
+- `learning_path/test_criteria.py` — `ParallelPresentationTests` (7).
+- `learning_path/CRITERIA.md`, `docs/learning_path_revision_2026-09-17.md`,
+  `docs/PROJECT_CONTEXT.md` §4/§6/§7.
+
+**Decisions I made:**
+
+- **Abandoned the recorded candidate fix** instead of curating it into a list
+  that keeps 62 at 10/10. Cost if wrong: the rendering vocabulary still counts
+  as distinctive everywhere the two concepts are not siblings, so a lesson that
+  puts its diagrams under different headings could still produce this.
+- **Reconstructed the teacher's concept map for topic 152** from `gold_map_62`
+  (same lesson) plus the merges the revision doc records the teacher applying.
+  Five of the seven member counts match 62 exactly (matter 4, solid 4, liquid 5,
+  gas 4, comparing 6); `changing` has 2 objects today against 3, and `examples`
+  4 against 3, because extraction chunked differently. Cost if wrong: the
+  fixture asserts a grouping the teacher did not actually specify. **Worth a
+  teacher's eye before this is quoted in the manuscript.**
+- **Recorded `comparing → changing` as topic 152's one `known_missing`** rather
+  than treating it as a criteria failure. It is the same-name veto doing its job
+  over two split concepts (318/319). When the teacher joins them the gap closes
+  and the test will fail *on the gap closing* — which is the intended behaviour,
+  and it needs `known_missing` emptied and the fixture re-exported.
+- **Did not republish 152 or 163.** Re-deriving gives identical numbers without
+  writing, and their stored rows are still stale.
+
+**Not done / watch out:**
+
+- **Topic 163 still needs splitting into three topics** — 20 of its 21 wrong
+  edges go away with no code. Nothing in this session fixed 163.
+- **`gold_topic_152.json` is a snapshot of the 2026-09-21 upload.** Re-uploading
+  that lesson changes the live concepts but not the fixture. Re-export with
+  `export_live_concepts` and say in the log that the numbers moved because the
+  fixture moved.
+- **Head words can be ordinary adjectives.** `Small intestine → Spine` is
+  accepted at 0.5 because "small intestine" lends "small" a full name-weight
+  reference. `head_words` checks only that a head word is unambiguous among the
+  concept *names*, not that it is a term. Untouched, now recorded in §7.
+- **"Comparing the Three States" is also split on topic 152** (331 and 403),
+  the same defect as 318/319, and not in the earlier notes.
+- The old `gold_map_*.json` / `gold_topic_*.json` pair for 62 and 79 still comes
+  from `export_gold_concepts`. Both commands are now live and they write
+  **different shapes**; the fixture's `concept_keys` key tells them apart.
+- I did not touch `backend/course/tests.py` (the user's uncommitted work) or
+  `frontend/`.
+
 ---
 
 ## Open threads
@@ -334,14 +475,25 @@ roles written by past page loads.
   concept's name. A before/after measurement (length, preamble, overlap with
   the lesson) would turn the prompt rewrite into a measured claim for the
   manuscript; not yet run. — raised by Claude Code, 2026-09-21
-- **Publish both topics** once TTS is reachable, then compare the derived paths
-  with the gold standard and append the result to
-  `docs/learning_path_revision_2026-09-17.md`. As of 2026-09-21 both topics are
-  content-complete and the TTS retry is in, so nothing known is blocking a
-  publish — but no publish has actually succeeded yet, and `LearningPathStep`
-  is still empty, so the derived path has never once been compared with the
-  gold standard. That comparison is the real open item. — raised by Claude
-  Code, 2026-09-21
+- **Split topic 163 into three topics**, one per organ system, in the UI. It is
+  three lessons in one topic, and every criterion assumes a topic *is* a lesson.
+  Measured 2026-09-22: 41 accepted edges → 22, and all 20 cross-lesson edges
+  disappear, with no code. This is the single largest remaining wrong-edge
+  source and nothing in the criteria can reach it. — raised by Claude Code,
+  2026-09-22
+- **Have the teacher check `gold_map_152.json`.** Its concept map was
+  reconstructed from `gold_map_62` (same lesson) plus the merges the revision
+  doc records, not stated by the teacher for today's objects. Five of seven
+  member counts match 62 exactly; `changing` and `examples` differ because
+  extraction chunked differently. It is now an acceptance test, so it should be
+  confirmed before the manuscript quotes it. — raised by Claude Code, 2026-09-22
+- **Join topic 152's split concepts** (318/319 "Changing From One State to
+  Another", and 331/403 "Comparing the Three States") with **Move into another
+  concept…**. Joining 318/319 closes `comparing → changing`, topic 152's last
+  missing required edge. When it closes, empty `known_missing` in
+  `gold_map_152.json` and re-export the fixture, or `test_gold_paths` fails on
+  the gap closing — which is what that assertion is for. — raised by Claude
+  Code, 2026-09-22
 - **Empty-group cleanup on material delete** — proposed, awaiting the user's
   go-ahead. Less urgent than it looked: the re-upload refilled all 31, so none
   are empty now. The underlying bug stands, and group 326 did inherit a stale
@@ -350,4 +502,14 @@ roles written by past page loads.
 - **A third lesson** is what the learning-path criteria actually need; they are
   currently fitted to the same two lessons the gold standard came from. Re-run
   `python manage.py evaluate_gold_paths` when one exists. — raised by Claude
-  Code, 2026-09-21
+  Code, 2026-09-21. *Partly addressed 2026-09-22*: `test_gold_paths` now runs a
+  third fixture, but it is the **same lesson** as topic 62 in the shape the
+  pipeline derives today, so it tests a different failure mode, not a different
+  lesson. A genuinely unseen lesson is still wanted. Note also that
+  `evaluate_gold_paths` still sweeps only topics 62 and 79.
+- **Head words can be ordinary adjectives.** `Small intestine → Spine` is
+  accepted at `ref_forward` 0.5 because "small intestine" lends "small" a full
+  name-weight reference to anything saying "small". `head_words` only checks
+  that a head word is unambiguous among the concept *names*, not that it is a
+  term at all. Cheap to fix, not measured, not attempted. — raised by Claude
+  Code, 2026-09-22

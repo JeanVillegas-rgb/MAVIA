@@ -57,3 +57,22 @@ class GoldPathTests(SimpleTestCase):
 
     def test_reproduction_among_flowering_plants(self):
         self._assert_gold(self._report(79))
+
+    def test_solid_liquid_and_gas_as_the_pipeline_groups_it_today(self):
+        """The same lesson, in the shape a real publish actually derives.
+
+        Topics 62 and 79 above hold the teacher's own grouping and an older
+        upload's text. Both differences hide failures the teacher sees: measured
+        on 2026-09-22, the teacher's 7 concepts and the pipeline's 14 carry the
+        same lesson, and only the 14-concept shape accepts ``Solid -> Gas``,
+        which the gold map forbids. With 7 concepts the diagram-description
+        vocabulary ("drawn", "spaced", "dots") sits in 3 of them and
+        ``REF_MAX_DF_RATIO`` drops it; with 14 it sits in 3 of 14 and survives
+        to carry a full reference vote at ``ref_forward`` 0.0369.
+
+        So this fixture freezes ``concepts_for_topic`` output for the live
+        topic 152 -- the pipeline's own concepts, members, headings and order --
+        and scores it against the same teacher map topic 62 uses. See
+        ``docs/learning_path_revision_2026-09-17.md``.
+        """
+        self._assert_gold(self._report(152))

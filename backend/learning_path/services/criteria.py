@@ -458,6 +458,67 @@ def vetoed(a, b, names):
     return False
 
 
+def named_sections(concept):
+    """The headings a concept sits under, as concept *names*.
+
+    ``section_headings`` below returns the raw heading strings, for the
+    cross-section flag. This returns them through ``heading_name``, which is how
+    ``contained_in`` and ``resolve_concept`` read a heading, so a heading can be
+    compared with a concept's name without the two disagreeing about numbering
+    or punctuation.
+    """
+    members = getattr(concept, "members", None) or (concept,)
+    return {
+        name
+        for name in (
+            heading_name(getattr(member, "section_title", "") or "")
+            for member in members
+        )
+        if name
+    }
+
+
+def presented_in_parallel(a, b, names):
+    """True when the document presents ``a`` and ``b`` as coordinate siblings.
+
+    Wang et al. (2016) read a textbook's section structure as prerequisite
+    evidence, and ``contained_in`` already uses the downward reading: a passage
+    under the "Matter" heading builds on Matter. This is the sideways reading of
+    the same structure. Two passages under *one* heading, neither of which is
+    what that heading names, are the author presenting parallel material --
+    Solid, Liquid and Gas under "Matter"; Support, Protection and Movement under
+    "The Skeletal System". A learner does not master Solid before Gas.
+
+    The concept a shared heading *names* is the parent, not a sibling, so it is
+    excluded: "Matter" under the "Matter" heading still precedes Solid.
+
+    This keys on the documents' own headings, never on the words of a title --
+    the same rule ``section_headings`` follows, and the reason the old sibling
+    veto was removed: it keyed on the topic title's words, so renaming one
+    object to "Diagram description for Solid" silently deleted 13 edges.
+    """
+    shared = named_sections(a) & named_sections(b)
+    if not shared:
+        return False
+    return not (names.get(a.id) in shared or names.get(b.id) in shared)
+
+
+def names_the_target(target_name, found):
+    """True when a reference actually names its target, rather than merely
+    sharing vocabulary with it.
+
+    ``reference_details`` records three kinds of naming hit -- the target's own
+    name, a head-word mention (``head:seed``) and section containment
+    (``section:matter``) -- alongside the distinctive terms the target happens
+    to have introduced first. Only the naming hits are evidence that the text
+    is *talking about* the target.
+    """
+    return any(
+        term == target_name or term.startswith(("head:", "section:"))
+        for term in found
+    )
+
+
 def section_headings(concept):
     """The lesson headings a concept sits under, across every file teaching it.
 
@@ -511,6 +572,23 @@ def decide_pairs(concepts, runtime_instance=None):
             votes = cast_votes(a, b, matrix, ratios, matched)
             verdict = decide(votes)
             if verdict is None or vetoed(a, b, names):
+                continue
+
+            # Coordinate siblings need a reference that names the target.
+            # Sharing incidental vocabulary is what parallel passages do by
+            # construction -- the author describes each state of matter the
+            # same way, so "drawn", "spaced" and "dots" appear in all three --
+            # and the key-term measure cannot tell that apart from a reference,
+            # because it assigns each term to whichever concept used it first.
+            # Measured on live topic 152 (2026-09-22): `Solid -> Gas`, which
+            # the gold map forbids, is accepted on exactly those four words at
+            # `ref_forward` 0.0369. Requiring a naming hit is not a threshold
+            # -- correct edges in that run sit lower still (`Gas -> Changing`
+            # at 0.0206) and keep their vote, because they name what they refer
+            # to or sit under its heading.
+            if presented_in_parallel(a, b, names) and not names_the_target(
+                names.get(a.id), matched.get((a.id, b.id), []),
+            ):
                 continue
 
             cross_section = crosses_sections(a, b)
