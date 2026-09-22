@@ -466,6 +466,94 @@ non-technical and rendering vocabulary counting as distinctive.
 - I did not touch `backend/course/tests.py` (the user's uncommitted work) or
   `frontend/`.
 
+### 2026-09-22 — Claude Code — merge `mavia-latest`: the adaptive engine is real now, and three docs said otherwise
+
+**Branch / commits:** `jean-jure-latest`, `3963207` (criteria work) then
+`23eb3df` (merge of `origin/mavia-latest` @ `6eea641`). Clean merge, **no
+conflicts** — `mavia-latest` had already merged this branch's base (`3820565`)
+at `e4e74f1`, so only three of their commits were new.
+
+**Tests:** `python manage.py test -v 1` on the merged tree → **889 passing** (845 ours before the merge; their adaptive suites added, `adaptive_portal`'s 260 lines and `user/test_email_verification.py` removed with them). All three `test_gold_paths` lessons still `ok`, so the criteria work survived the merge intact.
+
+**Live database: untouched by me.** But note that the merge brings **six new
+`adaptive` migrations** (through `0006_decision_log_and_concept_mastery`), so
+`backend/db.sqlite3` is behind the models until someone runs `migrate`. I did
+not run it. Backups are beside it.
+
+**What the merge actually brings**
+
+The user asked whether our dead adaptive code could now be deleted. **It
+cannot, because it is no longer dead — and the part that genuinely was dead has
+already been deleted by the groupmate.** Specifically:
+
+- **`adaptive/` is now the implementation, not a stub.** `services.py`
+  271 → 882 lines, `models.py` 73 → 249, `views.py` → 403, plus
+  `PATH_MODE.md` and three new test modules (`test_path_mode.py` 738,
+  `test_mobile_traversal.py` 376, `test_decision_log.py` 174).
+- **BKT is real.** `adaptive/services.py::_bkt_update`, reading
+  `adaptive_config.AdaptiveConfig` for `p_guess` / `p_slip` / `starting_mastery`.
+  `adaptive_config` had a docstring saying "when that engine is ported into
+  mavia, its scorer should read `AdaptiveConfig.load()`" — it now does, so that
+  app stopped being speculative too.
+- **`adaptive_portal/` is gone**, all 13 files. That was the old flat
+  PDF-order walker and it was the genuinely dead one.
+- **DQN is still not wired into serving.** The RL work is in `notebook/mavia_rl/`
+  (env, agent, train, evaluate, validate); nothing under `backend/` imports it.
+  Checked, not assumed.
+- `frontend/` is renamed to **`web-app/`**. A `frontend/` directory survives on
+  disk holding only `node_modules/` and is no longer tracked.
+
+**Changed (docs only — I wrote no code this half of the session):**
+
+Four stale statements, each of which the merge turned from true into
+false, and each of which would have misled the next agent:
+
+1. `learning_path/CRITERIA.md` §"Not done yet" — said the student apps
+   "still walk learning objects in PDF order and have not been switched to it",
+   naming `adaptive_portal/services.py`, which no longer exists.
+2. `learning_path/HANDOFF.md` §6 — same claim, same dead module. Both now say
+   the path contract *is* read, and point at `adaptive/PATH_MODE.md`. This one
+   matters beyond tidiness: `HANDOFF.md` documents the published payload, and
+   the adaptive engine now depends on it, so changes to it are no longer free.
+3. `docs/PROJECT_CONTEXT.md` §2 item 7 — said "BKT + DQN ... **do not exist in
+   the codebase yet**. Do not assume they are there." Half of that is now
+   backwards. Rewritten to say what path mode does, that BKT is implemented and
+   tunable, and that DQN specifically is still notebook-only.
+4. `docs/PROJECT_CONTEXT.md` §"Tech stack" and §"Running things" — **found while
+   checking the other three, not in the original list.** Every frontend path was
+   `frontend/`, and `npm run build` in a directory that now has no
+   `package.json`. Also described an `index.css` mirror that no longer exists;
+   `web-app/src/main.jsx` imports `styles/mavia.css` and `styles/pipeline.css`.
+
+**Decisions I made:**
+
+- **Merged rather than rebased**, keeping the criteria commit separate from the
+  merge. Cost if wrong: an extra merge commit in the history.
+- **Did not run `migrate`.** The live database is the teacher's working copy and
+  the six new adaptive migrations are the groupmate's; running them is a state
+  change nobody asked for. Cost if wrong: anyone starting the server hits
+  "Your models have changes that are not yet reflected in a migration" or a
+  missing-table error until they migrate.
+- **Fixed a fourth stale doc** beyond the three asked for, because it was the
+  same defect from the same merge and would have sent the next agent to a
+  directory with no `package.json`.
+- **Did not delete the leftover `frontend/` directory.** It is untracked and
+  holds only `node_modules/`; deleting several hundred MB the user did not ask
+  about is their call, and it is recorded in §"Tech stack".
+
+**Not done / watch out:**
+
+- **`backend/db.sqlite3` needs `python manage.py migrate`** before the server
+  runs against the merged models. Not done deliberately (above).
+- **`backend/course/tests.py` still holds the user's uncommitted work** and was
+  never staged, before or after the merge.
+- The merged tree has a `web-app/` and a stale `frontend/node_modules/`; the
+  latter can be deleted whenever convenient.
+- I reviewed the adaptive code only far enough to check the four doc claims
+  (BKT present, `AdaptiveConfig` read, `adaptive_portal` gone, DQN not wired).
+  **I did not review the groupmate's adaptive work for correctness**, and this
+  entry should not be read as saying it is sound.
+
 ---
 
 ## Open threads

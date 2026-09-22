@@ -339,11 +339,14 @@ All deliberate:
 
 - **Ordering subtopics or modules.** Paths are per subtopic; their order comes
   from the course outline.
-- **Adaptive reordering, mastery tracking, remediation.** The saved path is
-  served for that work (`GET /api/learning-path/topics/<id>/published/`, see
-  `HANDOFF.md`), but the existing student apps (`adaptive/services.py`,
-  `adaptive_portal/services.py`) still walk learning objects in PDF order and
-  have not been switched to it.
+- ~~**Adaptive reordering, mastery tracking, remediation.**~~ Done on the
+  adaptive side, merged 2026-09-22. `adaptive/services.py` reads the published
+  path (`GET /api/learning-path/topics/<id>/published/`, see `HANDOFF.md`) in
+  **path mode**: steps walked by `position`, questions from
+  `question_generation.GeneratedQuestion`, and remediation through a step's
+  nearest prerequisite. BKT mastery is real (`_bkt_update`), tuned through
+  `adaptive_config.AdaptiveConfig`. See `adaptive/PATH_MODE.md`.
+  `adaptive_portal`, the older flat PDF-order walker, was deleted with it.
 - **Showing the effect of an approval before it is made.**
 - **Confirming the cross-section rule on a second topic.**
 

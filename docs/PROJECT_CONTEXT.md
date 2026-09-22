@@ -45,16 +45,19 @@ prompt, 2026-09-21). That is their call; say whose file you are touching.
   **sentence-transformers** pair (all-MiniLM-L6-v2 + cross-encoder
   stsb-roberta-base) for grouping and for the learning path.
 - TTS: Edge TTS (needs network access to `speech.platform.bing.com`).
-- Frontend: React 18 + Vite in `frontend/`. **`frontend/src/styles/pipeline.css`
-  is the imported stylesheet; `frontend/src/index.css` is a near-duplicate that
-  is not imported** — the codebase mirrors CSS into both. There is **no
-  frontend test runner at all**.
+- Frontend: React 18 + Vite in **`web-app/`** (renamed from `frontend/` by the
+  2026-09-22 merge; a `frontend/` directory may still sit on disk holding
+  nothing but `node_modules/`, and is no longer tracked — delete it when it
+  gets in your way). `web-app/src/main.jsx` imports **`styles/mavia.css`** and
+  **`styles/pipeline.css`**, the latter marked legacy plain CSS for the ported
+  content-generation pages; `styles/base.css` sits beside them. The old
+  `index.css` mirror is gone. There is **no frontend test runner at all**.
 
 ### Running things
 
 ```bash
-cd backend && python manage.py test -v 1      # 845 tests, all passing at HEAD
-cd frontend && npm run build                  # must stay clean; do not commit frontend/dist
+cd backend && python manage.py test -v 1      # 889 tests, all passing at HEAD
+cd web-app  && npm run build                  # must stay clean; do not commit web-app/dist
 ```
 
 System `python` (no venv). Shell is Git Bash on Windows.
@@ -77,8 +80,17 @@ System `python` (no venv). Shell is Git Bash on Windows.
 5. **Audio** — Edge TTS per object; a version plays its objects' clips in order.
 6. **Publishing** — a completeness gate, then audio, then the learning path is
    derived and saved as `LearningPathStep` rows.
-7. **Adaptive serving** — BKT + DQN are described in the manuscript but **do
-   not exist in the codebase yet**. Do not assume they are there.
+7. **Adaptive serving** — merged from the groupmate's branch 2026-09-22.
+   `backend/adaptive/` walks a published path in **path mode**: steps by
+   `position`, questions from `question_generation.GeneratedQuestion`, content
+   escalating normal → simplified → elaborated on a miss, then a detour
+   through the step's nearest prerequisite, then the concept's alternate PDF.
+   **BKT is implemented** (`adaptive/services.py::_bkt_update`), reading
+   `adaptive_config.AdaptiveConfig` so an admin can tune `p_guess`, `p_slip`
+   and `p_learn` without a redeploy. Read `backend/adaptive/PATH_MODE.md`
+   first. **DQN is still manuscript-only in the Django app** — the RL work
+   lives in `notebook/mavia_rl/` (env, agent, training, evaluation) and is not
+   wired into serving.
 
 ---
 
@@ -440,7 +452,7 @@ because its required `Comparing → Changing` is itself carried by `explain`,
   Read the newest spec before changing grouping, versions or the learning path.
 - **Never stage** `backend/course/tests.py` or `backend/course/variant_generator.py`
   without checking — the user keeps uncommitted work there — and never commit
-  `frontend/dist/*` except as a deliberate rebuild, or `MAVIA MANUSCRIPT.docx`.
+  `web-app/dist/*` except as a deliberate rebuild, or `MAVIA MANUSCRIPT.docx`.
 - Use explicit `git add <path>`; do not `git add -A`.
 - Commit messages end with a blank line then the co-author line the session is
   told to use.
