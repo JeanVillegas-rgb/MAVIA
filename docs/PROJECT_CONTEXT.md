@@ -45,10 +45,14 @@ prompt, 2026-09-21). That is their call; say whose file you are touching.
   **sentence-transformers** pair (all-MiniLM-L6-v2 + cross-encoder
   stsb-roberta-base) for grouping and for the learning path.
 - TTS: Edge TTS (needs network access to `speech.platform.bing.com`).
-- Frontend: React 18 + Vite in **`web-app/`** (renamed from `frontend/` by the
-  2026-09-22 merge; a `frontend/` directory may still sit on disk holding
-  nothing but `node_modules/`, and is no longer tracked — delete it when it
-  gets in your way). `web-app/src/main.jsx` imports **`styles/mavia.css`** and
+- Frontend: React 18 + Vite in **`web-app/`**, mobile in **`mobile-app/`**
+  (Expo). Renamed from `frontend/` and `mobile/` by the 2026-09-22 merge; both
+  old directories were deleted on 2026-09-22 once confirmed to hold nothing but
+  `node_modules/` and a build cache. **Each app needs its own `npm install`** —
+  `node_modules` is not tracked, so it did not survive the rename, and
+  `npm run dev` without it fails with `'vite' is not recognized`, which reads
+  like a broken PATH and is not.
+  `web-app/src/main.jsx` imports **`styles/mavia.css`** and
   **`styles/pipeline.css`**, the latter marked legacy plain CSS for the ported
   content-generation pages; `styles/base.css` sits beside them. The old
   `index.css` mirror is gone. There is **no frontend test runner at all**.
@@ -57,7 +61,7 @@ prompt, 2026-09-21). That is their call; say whose file you are touching.
 
 ```bash
 cd backend && python manage.py test -v 1      # 889 tests, all passing at HEAD
-cd web-app  && npm run build                  # must stay clean; do not commit web-app/dist
+cd web-app  && npm run build                  # must stay clean (dist/ is gitignored now)
 ```
 
 System `python` (no venv). Shell is Git Bash on Windows.
@@ -452,7 +456,9 @@ because its required `Comparing → Changing` is itself carried by `explain`,
   Read the newest spec before changing grouping, versions or the learning path.
 - **Never stage** `backend/course/tests.py` or `backend/course/variant_generator.py`
   without checking — the user keeps uncommitted work there — and never commit
-  `web-app/dist/*` except as a deliberate rebuild, or `MAVIA MANUSCRIPT.docx`.
+  `MAVIA MANUSCRIPT.docx`. The old "commit `frontend/dist` as a deliberate
+  rebuild" rule is gone: `web-app/.gitignore` ignores `dist/`, so a build no
+  longer dirties the tree.
 - Use explicit `git add <path>`; do not `git add -A`.
 - Commit messages end with a blank line then the co-author line the session is
   told to use.

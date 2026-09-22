@@ -79,9 +79,32 @@ python manage.py runserver                   # http://localhost:8000
 
 # web app, in a second terminal
 cd web-app
-npm install
+npm install                                  # not optional -- see below
 npm run dev                                  # http://localhost:5173
 ```
+
+**`npm install` really is required, even on a repo you have used before.** The
+2026-09-22 merge renamed `frontend/` to `web-app/` and `mobile/` to
+`mobile-app/`, and a `node_modules/` is not tracked, so it did not come across.
+Skipping it gets you `'vite' is not recognized as an internal or external
+command` from `npm run dev`, which reads like a broken PATH and is not.
+`npm ci` is the better command where a `package-lock.json` exists, which it
+does for both apps.
+
+The **mobile app** (`mobile-app/`, an Expo app) needs its own install and is
+not part of the loop above:
+
+```bash
+cd mobile-app
+npm install
+npx expo start --clear
+```
+
+Read `mobile-app/RUNNING.md` before going further with it — it covers the two
+ports a phone has to reach (Metro 8081 and the API 8000) and the `adb reverse`
+calls. Note that its commands are written with **its author's absolute paths**
+(a `k:\STUDIO\...` checkout and a virtualenv python); translate them to your
+own checkout and to system `python`.
 
 **You also need [Ollama](https://ollama.com) running**, with two models:
 
@@ -207,8 +230,12 @@ These were each learned by breaking something.
 - **Under-reach beats over-reach when cleaning model text.** A helper that
   stripped the model's chatter once deleted real sentences. Leaving some chatter
   is acceptable; deleting a real sentence is not.
-- **`git add <path>` explicitly.** Never `git add -A`: `web-app/dist` is
-  tracked, and `MAVIA MANUSCRIPT.docx` must never be committed.
+- **`git add <path>` explicitly.** Never `git add -A`: `MAVIA MANUSCRIPT.docx`
+  must never be committed, and two backend files
+  (`course/tests.py`, `course/variant_generator.py`) usually hold someone's
+  uncommitted work. The build output no longer needs guarding — `web-app/dist`
+  is ignored by `web-app/.gitignore`, where `frontend/dist` used to be tracked
+  and committed by hand.
 
 ---
 
