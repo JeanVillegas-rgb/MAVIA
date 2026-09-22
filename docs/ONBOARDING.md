@@ -59,8 +59,9 @@ You cannot read the code without these. The guide explains each with a picture.
 - `docs/superpowers/specs/2026-09-17-grouping-merge-and-learning-path-design.md`
   — the learning-path criteria and their sources. Read before touching the
   criteria.
-- `backend/learning_path/HANDOFF.md` — the shape of the published path, which is
-  the contract the student app will read.
+- `backend/learning_path/HANDOFF.md` — the shape of the published path. As of
+  the 2026-09-22 merge the student app **does** read it, so it is a live
+  contract, not a proposal; `backend/adaptive/PATH_MODE.md` is the other half.
 
 ---
 
@@ -76,8 +77,8 @@ pip install -r requirements-semantic.txt     # sentence-transformers, needed for
 python manage.py migrate
 python manage.py runserver                   # http://localhost:8000
 
-# frontend, in a second terminal
-cd frontend
+# web app, in a second terminal
+cd web-app
 npm install
 npm run dev                                  # http://localhost:5173
 ```
@@ -98,7 +99,7 @@ uses Edge TTS and needs to reach `speech.platform.bing.com`.
 cd backend && python manage.py test -v 1
 ```
 
-**827 tests, all passing.** If they do not pass on a clean checkout, stop and
+**889 tests, all passing.** If they do not pass on a clean checkout, stop and
 ask — do not start changing things.
 
 That run takes a couple of minutes because some tests load the real sentence
@@ -164,8 +165,12 @@ Run this before and after, and put the numbers in the revision doc:
 cd backend && python manage.py test learning_path.test_gold_paths -v 2
 ```
 
-The teacher hand-specified the correct edges and order for two lessons. Those
-fixtures are the acceptance test. The test fails on a **new** gap, a forbidden
+The teacher hand-specified the correct edges and order for two lessons, and
+there are **three** fixtures: topics 62 and 79 hold the teacher's own grouping,
+and topic 152 holds the same lesson as 62 *in the shape the pipeline actually
+derives*. That third one exists because the teacher's ideal grouping hides
+failures the teacher sees — the concept count changes what counts as a
+distinctive term. Those fixtures are the acceptance test. The test fails on a **new** gap, a forbidden
 edge, a wrong order, *or* a gap that closes — because a closing gap means the
 recorded list needs updating, not that you can ignore it.
 
@@ -193,13 +198,16 @@ These were each learned by breaking something.
 - **`represented_by` means "taught through another object"**, and every consumer
   filters it out. A dangling pointer makes content vanish silently from the
   lesson, the audio and the package.
-- **CSS is mirrored into two files.** `frontend/src/styles/pipeline.css` is the
-  one that is imported; `index.css` is a partial, unused copy. Change the first;
-  the second is kept in step by habit.
+- **The web app is `web-app/`, not `frontend/`** (renamed by the 2026-09-22
+  merge), and the mobile app is `mobile-app/`, not `mobile/`.
+  `web-app/src/main.jsx` imports `styles/mavia.css` and `styles/pipeline.css`,
+  the latter marked legacy plain CSS for the ported content-generation pages.
+  The old unimported `index.css` mirror is gone, so the "change one, keep the
+  other in step" habit no longer applies.
 - **Under-reach beats over-reach when cleaning model text.** A helper that
   stripped the model's chatter once deleted real sentences. Leaving some chatter
   is acceptable; deleting a real sentence is not.
-- **`git add <path>` explicitly.** Never `git add -A`: `frontend/dist` is
+- **`git add <path>` explicitly.** Never `git add -A`: `web-app/dist` is
   tracked, and `MAVIA MANUSCRIPT.docx` must never be committed.
 
 ---
@@ -224,7 +232,13 @@ backend/
     services/published.py           reads the saved path back out
     fixtures/gold_*.json            the teacher's hand-specified answers
   question_generation/              the question pipeline
-frontend/src/pages/TopicDetailPage.jsx    the whole five-step review screen
+  adaptive/                         the mobile engine that walks a published path
+    PATH_MODE.md                    read this before changing the path payload
+    services.py                     path mode, remediation, BKT mastery
+  adaptive_config/                  admin-tunable BKT constants
+web-app/src/pages/TopicDetailPage.jsx     the whole five-step review screen
+mobile-app/                         the learner-facing Expo app
+notebook/mavia_rl/                  the DQN work — not wired into serving
 docs/                               everything in §2
 ```
 
@@ -233,7 +247,7 @@ docs/                               everything in §2
 ## 8. Before you hand work back
 
 - `cd backend && python manage.py test -v 1` — all green.
-- `cd frontend && npm run build` — clean.
+- `cd web-app && npm run build` — clean.
 - If you touched grouping, versions, publishing or the path, run
   `learning_path.test_gold_paths` and say what the numbers were.
 - **Add an entry to `docs/AGENT_LOG.md`.** Append at the bottom, never rewrite
