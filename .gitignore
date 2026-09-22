@@ -1,44 +1,38 @@
-PIPELINE.md
-CLASSIFIER_STUDY_GUIDE.md
-
 # Python
-*.py[cod]
 __pycache__/
-*.so
-*.egg-info/
-.env
-
-# Django
-staticfiles/
-media/
+*.py[cod]
+*.sqlite3
 db.sqlite3
-
-# Virtual environments
+.env
+.env.*
+!.env.example
 .venv/
 venv/
-mavia/
-
-# Node
-node_modules/
-frontend/node_modules/
-/dist/
-
-# IDE
-.vscode/
+env/
+staticfiles/
+media/
 *.log
+
+# Node / web / mobile
+node_modules/
+dist/
+.vite/
+.expo/
+web-build/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editors / OS
+.idea/
+.vscode/
 .DS_Store
+Thumbs.db
 
-# Local extraction and visual QA artifacts
-/tmp/
-
-# Bloom classifier weights (~500MB, shared out-of-band)
-backend/question_generation/classifier/trained_model/
-
-*.pdf
-
-# Local database snapshots taken before risky migrations. Several megabytes
-# each, and a broad `git add` will otherwise sweep them into a commit.
-backend/db.sqlite3.pre-*
-
-# Generated local inference caches
-backend/image_description_cache/
+# Mobile signing material
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision

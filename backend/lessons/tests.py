@@ -41,6 +41,8 @@ from .serializers import CourseDetailSerializer, LearningMaterialSerializer
 from .services.content_generator import (
     LearningMaterialValidationError,
     _text_blocks_from_transcription,
+    is_structural_metadata_label,
+    remove_structural_metadata_learning_objects,
     build_learning_objects_from_pdf_blocks,
     build_narration_script_from_learning_objects,
     build_section_learning_objects,
@@ -4730,6 +4732,49 @@ class LearningObjectPreservationTests(TestCase):
 
         self.assertEqual(automatic_match, separating)
         self.assertEqual(selected_match, characteristics)
+
+
+class StructuralMetadataLabelTests(TestCase):
+    """Recap / navigation headings must not survive as teaching steps."""
+
+    def test_recap_headings_are_structural(self):
+        for title in [
+            "Key Facts to Remember",
+            "Key Points for Students",
+            "Quick Review Questions",
+            "Easy Way to Remember",
+            "Important Concept to Teach",
+            "Teacher's Notes",
+        ]:
+            self.assertTrue(is_structural_metadata_label(title), title)
+
+    def test_recap_heading_with_a_part_suffix_is_still_structural(self):
+        self.assertTrue(is_structural_metadata_label("Key Facts to Remember (Part 1 of 2)"))
+        self.assertTrue(is_structural_metadata_label("Key Points for Students (Part 2 of 2)"))
+
+    def test_real_concepts_are_not_structural(self):
+        for title in [
+            "Solid",
+            "Changes of State",
+            "Introduction",           # a lesson's prose sometimes lives here
+            "Important Idea: Temperature and Particle Movement",
+            "Comparing the Three States",   # used as a real section title
+            "Sublimation",
+        ]:
+            self.assertFalse(is_structural_metadata_label(title), title)
+
+    def test_a_figure_captioned_like_a_heading_is_kept(self):
+        objects = [
+            {"title": "Key Facts to Remember", "content": "A solid keeps its shape.", "type": "teacher_text"},
+            {
+                "title": "Comparison of Solid, Liquid, and Gas",
+                "content": "The figure contrasts particle spacing across the three states.",
+                "type": "image_description",
+                "image_url": "media/figures/compare.png",
+            },
+        ]
+        kept = remove_structural_metadata_learning_objects(objects)
+        self.assertEqual([item["title"] for item in kept], ["Comparison of Solid, Liquid, and Gas"])
 
 
 class FinalReviewDeletionTests(TestCase):

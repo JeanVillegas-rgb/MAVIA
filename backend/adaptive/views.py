@@ -1,114 +1,403 @@
-from django.core.exceptions import ObjectDoesNotExist
+from django.conf import settings
+from django.db import transaction
+from adaptive_config.models import AdaptiveConfig
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, status
+from rest_framework import status
+from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from course.services import LessonPackageService, first_lesson_node
+from lessons.models import CourseGroup, OutlineNode, Question
+from lessons.services.lesson_package import (
+    build_course_module_summaries,
+    build_lesson_payload,
+    build_module_package,
+)
 from question_generation.models import GeneratedQuestion
+from user.models import User
+from user.permissions import IsStudent, IsTeacherOrAdmin
 
-from .models import LearningState, StudentResponse
+from .models import Enrollment, LearningState, StudentResponse
 from .serializers import (
+    EnrollmentSerializer,
     LearningStateSerializer,
     StartLearningSerializer,
-    StudentResponseSerializer,
+    StudentBriefSerializer,
+    SubmitResponseSerializer,
 )
-from .services import AdaptiveScoringService, resolve_start
+from .services import (
+    AdaptiveEngine,
+    ordered_course_steps,
+    published_path_for,
+    resolve_learning_start,
+    resolve_start,
+    start_topic,
+    student_safe_question,
+    student_safe_step,
+    top_level_ancestor,
+)
 
 
-class LearningStateList(generics.ListAPIView):
-    queryset = LearningState.objects.all()
-    serializer_class = LearningStateSerializer
+# ---------------------------------------------------------------------------
+# student-facing (adopted by the mobile app)
+# ---------------------------------------------------------------------------
+
+def _in_progress(state):
+    """True once a start has assigned either kind of current question."""
+    return state.current_question_id is not None or state.current_generated_question_id is not None
 
 
-class LearningStateDetail(generics.RetrieveAPIView):
-    queryset = LearningState.objects.all()
-    serializer_class = LearningStateSerializer
+def _current_step_payload(state):
+    """The active learning-path step, answers stripped, or ``None`` when the
+    state is in legacy mode (or has no current node)."""
+    if state.current_generated_question_id is None or not state.current_lesson_node_id:
+        return None
+    path = published_path_for(state.current_lesson_node)
+    if path is None:
+        return None
+    step = next((s for s in path["steps"] if s["position"] == state.current_step_position), None)
+    return student_safe_step(step) if step else None
+
+
+# Fields `evaluate` / `evaluate_path` return only for the decision log. They
+# are stored on StudentResponse and removed before the reply goes to a device.
+_DECISION_LOG_KEYS = ("action", "concept_key", "concept_mastery_before", "concept_mastery_after")
+
+
+def _before_answer(state):
+    """Where the learner is, captured before the engine moves them."""
+    return {
+        "step_position": state.current_step_position,
+        "variant": state.current_variant,
+        "chunk_id": state.current_chunk_id,
+        "attempt_number": state.current_question_attempts + 1,
+        "remediation_depth": len(state.remediation_stack),
+    }
+
+
+def _decision_log(before, state, result):
+    """One full transition for StudentResponse. Pops the log-only keys off
+    ``result`` so the device reply stays exactly as it was."""
+    logged = {key: result.pop(key, None) for key in _DECISION_LOG_KEYS}
+    return {
+        **before,
+        "action": logged["action"] or "",
+        "concept_key": logged["concept_key"] or "",
+        "concept_mastery_before": logged["concept_mastery_before"],
+        "concept_mastery_after": logged["concept_mastery_after"],
+        "next_step_position": state.current_step_position,
+        "next_variant": state.current_variant,
+        "next_chunk_id": state.current_chunk_id,
+    }
 
 
 class StartLearningView(APIView):
+    permission_classes = [IsStudent]
+
     def post(self, request):
         serializer = StartLearningSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        course_id = serializer.validated_data.get("course_id")
-        learner_id = serializer.validated_data["learner_id"]
+        course = get_object_or_404(CourseGroup, pk=serializer.validated_data["course_id"])
 
-        try:
-            node = first_lesson_node(course_id)
-        except ObjectDoesNotExist:
+        if not Enrollment.objects.filter(student=request.user, course=course).exists():
             return Response(
-                {"error": "No course found with that id."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        if node is None:
-            return Response(
-                {"error": "No approved course outline is available."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"detail": "You are not enrolled in this course."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Resume the learner's existing progress instead of spawning a new
-        # LearningState (and resetting mastery/bloom/node) on every app open.
-        state = (
-            LearningState.objects.filter(learner_id=learner_id, completed=False)
-            .order_by("-last_updated")
-            .first()
+        state, created = LearningState.objects.get_or_create(
+            student=request.user,
+            course=course,
+            defaults={"mastery": AdaptiveConfig.load().starting_mastery},
         )
-        created = state is None
-        if created:
-            _chunk, question = resolve_start(node)
-            state = LearningState.objects.create(
-                learner_id=learner_id,
-                current_module=node.module,
-                current_node=node,
-                current_question=question,
-                current_bloom=question.bloom_level if question else "remember",
-            )
-        elif state.current_question_id is None:
-            # Resumed state with no resolved question yet (fresh row from
-            # before this field existed, or a chunk whose pool ran dry).
-            _chunk, question = resolve_start(state.current_node)
-            if question is not None:
-                state.current_question = question
-                state.current_bloom = question.bloom_level
-                state.save(update_fields=["current_question", "current_bloom"])
+        requested_id = serializer.validated_data.get("lesson_node_id")
+        if created or (not _in_progress(state) and not state.completed):
+            start = resolve_learning_start(course)
+            state.current_module = start["module"]
+            state.current_lesson_node = start["node"]
+            if start["mode"] == "path":
+                state.current_step_position = start["step"]["position"]
+                state.current_generated_question = GeneratedQuestion.objects.get(pk=start["question"]["id"])
+                state.current_question = None
+            else:
+                state.current_step_position = None
+                state.current_generated_question = None
+                state.current_question = start["question"]
+            state.save()
+        elif requested_id and (state.completed or state.current_lesson_node_id != requested_id):
+            # The player has a different topic open than the cursor is on --
+            # a different lesson was picked from the list, or the course was
+            # finished and reopened. Teach the topic they actually opened
+            # instead of handing back a cursor that points elsewhere.
+            node = course.nodes.filter(pk=requested_id, published=True).first()
+            # Replaying something finished starts a clean attempt; simply
+            # switching topics keeps the learner's place in this one.
+            if node is not None and start_topic(state, node, fresh_attempt=state.completed):
+                state.save()
 
+        lesson = (
+            build_lesson_payload(state.current_lesson_node)
+            if state.current_lesson_node_id and state.current_lesson_node.published
+            else None
+        )
         return Response(
             {
-                "learning_state_id": state.id,
-                "current_node_id": state.current_node_id,
-                "current_question": state.current_question_id,
-                "mastery": state.mastery,
-                "current_variant": state.current_variant.lower(),
-                "current_bloom": state.current_bloom.lower(),
-                "lesson": LessonPackageService.build_package(state.current_node_id),
+                "learning_state": LearningStateSerializer(state).data,
+                "lesson": lesson,
+                "current_step": _current_step_payload(state),
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
 
 class SubmitResponseView(APIView):
+    permission_classes = [IsStudent]
+
+    @transaction.atomic
     def post(self, request):
-        serializer = StudentResponseSerializer(data=request.data)
+        serializer = SubmitResponseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        learning_state = get_object_or_404(LearningState, id=data["learning_state_id"])
-        question = get_object_or_404(GeneratedQuestion, id=data["question_id"])
+        state = get_object_or_404(
+            LearningState.objects.select_for_update(), pk=data["learning_state_id"], student=request.user
+        )
+        if not Enrollment.objects.filter(student=request.user, course=state.course).exists():
+            return Response({"detail": "Not enrolled."}, status=403)
+        if state.completed:
+            return Response({"detail": "Answer the currently assigned question."}, status=400)
+        if not state.current_lesson_node or not state.current_lesson_node.published:
+            return Response({"detail": "This lesson is no longer published."}, status=400)
 
-        result = AdaptiveScoringService.evaluate(
-            learning_state,
-            question,
-            data["selected_answer"],
-            data.get("response_time", 0),
+        if state.current_generated_question_id is not None:
+            if state.current_generated_question_id != data["question_id"]:
+                return Response({"detail": "Answer the currently assigned question."}, status=400)
+            path = published_path_for(state.current_lesson_node)
+            step = next(s for s in path["steps"] if s["position"] == state.current_step_position)
+            # The assigned question can belong to an alternate chunk, not just
+            # the step's representative, once evaluate_path has switched
+            # chunks mid-remediation -- search every chunk's question list.
+            all_questions = step["questions"] + [
+                q for alt in step.get("alternates", []) for q in alt["questions"]
+            ]
+            question = next(q for q in all_questions if q["id"] == data["question_id"])
+
+            before = _before_answer(state)
+            result = AdaptiveEngine.evaluate_path(state, path, question, data["selected_answer"])
+            StudentResponse.objects.create(
+                learning_state=state,
+                generated_question_id=data["question_id"],
+                selected_answer=data["selected_answer"],
+                is_correct=result["is_correct"],
+                **_decision_log(before, state, result),
+            )
+            result["current_step"] = _current_step_payload(state)
+        else:
+            if state.current_question_id != data["question_id"]:
+                return Response({"detail": "Answer the currently assigned question."}, status=400)
+            question = get_object_or_404(Question, pk=data["question_id"])
+
+            before = _before_answer(state)
+            result = AdaptiveEngine.evaluate(state, question, data["selected_answer"])
+            StudentResponse.objects.create(
+                learning_state=state,
+                question=question,
+                selected_answer=data["selected_answer"],
+                is_correct=result["is_correct"],
+                **_decision_log(before, state, result),
+            )
+            result["current_step"] = _current_step_payload(state)
+
+        next_lesson = (
+            build_lesson_payload(state.current_lesson_node)
+            if state.current_lesson_node_id
+            else None
+        )
+        return Response({**result, "lesson": next_lesson})
+
+
+class LearningStateDetailView(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request, pk):
+        state = get_object_or_404(LearningState, pk=pk, student=request.user)
+        return Response(LearningStateSerializer(state).data)
+
+
+class MyCoursesView(APIView):
+    """Courses the signed-in student is enrolled in, with a light progress
+    summary. Backs the mobile course list."""
+
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        states = {
+            s.course_id: s
+            for s in LearningState.objects.filter(student=request.user)
+        }
+        out = []
+        for enrollment in request.user.enrollments.select_related("course"):
+            course = enrollment.course
+            summaries = build_course_module_summaries(course, published_only=True)
+            state = states.get(course.id)
+            out.append(
+                {
+                    "id": course.id,
+                    "title": course.title,
+                    "description": course.description,
+                    "module_count": len(summaries),
+                    "lesson_count": sum(m["lesson_count"] for m in summaries),
+                    "track_count": sum(m["track_count"] for m in summaries),
+                    "question_count": sum(m["question_count"] for m in summaries),
+                    "mastery": round(state.mastery, 3) if state else None,
+                    "started": state is not None,
+                    "completed": state.completed if state else False,
+                }
+            )
+        return Response(out)
+
+
+class MyCourseLessonsView(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request, course_id):
+        course = get_object_or_404(CourseGroup, pk=course_id)
+        if not Enrollment.objects.filter(student=request.user, course=course).exists():
+            return Response({"detail": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
+        lessons = []
+        for module_node in course.nodes.filter(parent__isnull=True).order_by("order", "id"):
+            package = build_module_package(module_node, published_only=True)
+            for lesson in package["lessons"]:
+                lessons.append({**lesson, "module_title": module_node.title})
+        return Response(lessons)
+
+
+class LessonDetailView(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request, lesson_id):
+        node = get_object_or_404(OutlineNode, pk=lesson_id, published=True)
+        if not Enrollment.objects.filter(
+            student=request.user, course=node.course
+        ).exists():
+            return Response({"detail": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(build_lesson_payload(node))
+
+
+# ---------------------------------------------------------------------------
+# teacher-facing (web review section)
+# ---------------------------------------------------------------------------
+
+class StudentSearchView(ListAPIView):
+    permission_classes = [IsTeacherOrAdmin]
+    serializer_class = StudentBriefSerializer
+
+    def get_queryset(self):
+        query = (self.request.query_params.get("q") or "").strip()
+        students = User.objects.filter(role=User.Role.STUDENT, is_active=True)
+        if settings.EMAIL_VERIFICATION_REQUIRED:
+            students = students.filter(is_verified=True)
+        if query:
+            students = students.filter(
+                Q(username__icontains=query)
+                | Q(email__icontains=query)
+                | Q(first_name__icontains=query)
+                | Q(last_name__icontains=query)
+            )
+        return students.order_by("-date_joined", "id")[:20]
+
+
+class CourseEnrollmentView(APIView):
+    permission_classes = [IsTeacherOrAdmin]
+
+    def get(self, request, course_id):
+        course = get_object_or_404(CourseGroup, pk=course_id)
+        rows = course.enrollments.select_related("student").all()
+        return Response(EnrollmentSerializer(rows, many=True).data)
+
+    def post(self, request, course_id):
+        course = get_object_or_404(CourseGroup, pk=course_id)
+        student = get_object_or_404(
+            User, pk=request.data.get("student_id"), role=User.Role.STUDENT
+        )
+        enrollment, created = Enrollment.objects.get_or_create(
+            student=student,
+            course=course,
+            defaults={"created_by": request.user},
+        )
+        return Response(
+            EnrollmentSerializer(enrollment).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
-        StudentResponse.objects.create(
-            learning_state=learning_state,
-            question=question,
-            selected_answer=data["selected_answer"],
-            is_correct=result["is_correct"],
-            response_time=data.get("response_time", 0),
-            reward=result["reward"],
-        )
 
-        return Response(result)
+class CourseEnrollmentDetailView(APIView):
+    permission_classes = [IsTeacherOrAdmin]
+
+    def delete(self, request, course_id, pk):
+        enrollment = get_object_or_404(Enrollment, pk=pk, course_id=course_id)
+        enrollment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CourseProgressView(APIView):
+    permission_classes = [IsTeacherOrAdmin]
+
+    def get(self, request, course_id):
+        course = get_object_or_404(CourseGroup, pk=course_id)
+        steps = ordered_course_steps(course)  # [(module, node, [questions])]
+        total_modules = course.nodes.filter(parent__isnull=True).count()
+
+        # module id -> set of question ids that must be answered correctly
+        module_question_ids = {}
+        for module, _node, questions in steps:
+            module_question_ids.setdefault(module.id, set()).update(q.id for q in questions)
+
+        states = {
+            s.student_id: s
+            for s in LearningState.objects.filter(course=course).select_related("student")
+        }
+
+        rows = []
+        for enrollment in course.enrollments.select_related("student"):
+            student = enrollment.student
+            state = states.get(student.id)
+            row = {
+                "enrollment_id": enrollment.id,
+                "student": StudentBriefSerializer(student).data,
+                "started": state is not None,
+                "mastery": round(state.mastery, 3) if state else None,
+                "attempts": state.attempts if state else 0,
+                "completed": state.completed if state else False,
+                "last_activity": state.updated_at if state else None,
+                "questions_answered": 0,
+                "correct_rate": None,
+                "modules_completed": 0,
+                "total_modules": total_modules,
+            }
+            if state:
+                responses = list(state.responses.all())
+                row["questions_answered"] = len(responses)
+                if responses:
+                    row["correct_rate"] = round(
+                        sum(1 for r in responses if r.is_correct) / len(responses), 3
+                    )
+                correct_ids = {r.question_id for r in responses if r.is_correct}
+                row["modules_completed"] = sum(
+                    1
+                    for _mid, needed in module_question_ids.items()
+                    if needed and needed.issubset(correct_ids)
+                )
+                if state.completed:
+                    row["modules_completed"] = max(row["modules_completed"], total_modules)
+            rows.append(row)
+
+        return Response(
+            {
+                "course_id": course.id,
+                "total_modules": total_modules,
+                "content_ready": bool(steps),
+                "rows": rows,
+            }
+        )

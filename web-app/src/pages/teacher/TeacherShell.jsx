@@ -7,6 +7,8 @@ const TEACHER_NAV = [
   { to: "/teacher", label: "Dashboard", icon: "▤", end: true },
   { to: "/courses", label: "Courses", icon: "▦" },
   { to: "/review", label: "Review", icon: "♪" },
+  { to: "/teacher/resources", label: "Resources", icon: "❐" },
+  { to: "/teacher/settings", label: "Settings", icon: "⚙" },
 ];
 
 export default function TeacherShell({ children }) {

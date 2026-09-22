@@ -5,7 +5,6 @@ import { register } from "../api";
 // Web registration is teacher-only — students sign up from the MAVIA mobile
 // app, and admins are provisioned rather than self-registered.
 export default function RegisterPage() {
-  const navigate = useNavigate();
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -17,6 +16,7 @@ export default function RegisterPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const navigate = useNavigate();
 
   function update(field) {
     return (event) =>

@@ -37,36 +37,11 @@ INSTALLED_APPS = [
     "question_generation",
     "course",
     "adaptive",
-    "adaptive_portal",
     "adaptive_config",
     "learning_path",
 ]
 
 AUTH_USER_MODEL = "user.User"
-
-# Optional verification keeps existing local registration usable without SMTP.
-EMAIL_VERIFICATION_REQUIRED = os.getenv("EMAIL_VERIFICATION_REQUIRED", "False").lower() in ("1", "true", "yes")
-EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
-EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("1", "true", "yes")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@mavia.local")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-IMAGE_DESCRIPTION_ENABLED = os.getenv("IMAGE_DESCRIPTION_ENABLED", "True").lower() in ("1", "true", "yes")
-IMAGE_DESCRIPTION_MODEL = os.getenv("IMAGE_DESCRIPTION_MODEL", "gemma3:4b")
-IMAGE_DESCRIPTION_TIMEOUT = int(os.getenv("IMAGE_DESCRIPTION_TIMEOUT", "300"))
-IMAGE_DESCRIPTION_REACHABILITY_TTL = int(
-    os.getenv("IMAGE_DESCRIPTION_REACHABILITY_TTL", "15")
-)
-IMAGE_DESCRIPTION_CACHE_ENABLED = os.getenv(
-    "IMAGE_DESCRIPTION_CACHE_ENABLED", "True"
-).lower() in ("1", "true", "yes")
-IMAGE_DESCRIPTION_CACHE_PATH = os.getenv(
-    "IMAGE_DESCRIPTION_CACHE_PATH",
-    str(BASE_DIR / "image_description_cache" / "descriptions.sqlite3"),
-)
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -102,6 +77,10 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # course's variant generation fans Ollama calls across a thread pool
+        # (ADAPTIVE_VARIANT_CONCURRENCY) with writes still serialized to this
+        # thread; a longer SQLite lock timeout avoids spurious "database is
+        # locked" errors under that pattern.
         "OPTIONS": {"timeout": 20},
     }
 }
@@ -133,7 +112,7 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082",
+        "http://localhost:5173,http://127.0.0.1:5173",
     ).split(",")
     if origin.strip()
 ]
@@ -144,19 +123,88 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 ]
 
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    # App-wide baseline: every endpoint requires a logged-in user unless it
+    # opts out (register/login/verify set AllowAny; adaptive-config and the
+    # lessons viewset narrow further to a role).
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    # MultiPart/Form parsers let the lessons app accept PDF uploads.
     "DEFAULT_PARSER_CLASSES": [
         "rest_framework.parsers.JSONParser",
         "rest_framework.parsers.MultiPartParser",
         "rest_framework.parsers.FormParser",
     ],
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-    ],
 }
 
+# URL of the React app; used to build the link inside verification emails.
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Whether the teacher-facing student search/enrollment picker (adaptive app)
+# hides students who haven't verified their email yet. Off by default: a
+# school's mail server can be slow or land verification links in spam (seen
+# first-hand this session), and a teacher shouldn't lose the ability to
+# enroll a real student just because delivery is flaky. Set to true if you
+# want unverified accounts kept out of the roster entirely.
+EMAIL_VERIFICATION_REQUIRED = os.getenv("EMAIL_VERIFICATION_REQUIRED", "False").lower() in (
+    "1", "true", "yes",
+)
+
+# Email. Defaults to the console backend so verification links print to the
+# runserver terminal with no setup. Set EMAIL_HOST_USER + EMAIL_HOST_PASSWORD
+# in .env to switch to real SMTP (Gmail app password, etc.).
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
+if EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("1", "true", "yes")
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@mavia.local")
+
+# ---------------------------------------------------------------------------
+# Figure explanation for blind learners (lessons app).
+# When a teacher's PDF has figures, the pipeline can ask a local Ollama
+# vision model what each figure *teaches* (the concept, not the layout) and
+# fold that into the lesson narration. Entirely optional: if Ollama isn't
+# running the pipeline falls back to each figure's caption / visible text.
+#   IMAGE_DESCRIPTION_MODEL — any Ollama vision model (gemma3:4b, llava,
+#     moondream, qwen2-vl, llama3.2-vision …). Must be pulled: `ollama pull …`
+#   IMAGE_DESCRIPTION_ENABLED=False turns the feature off outright.
+# ---------------------------------------------------------------------------
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+IMAGE_DESCRIPTION_ENABLED = os.getenv("IMAGE_DESCRIPTION_ENABLED", "True").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+IMAGE_DESCRIPTION_MODEL = os.getenv("IMAGE_DESCRIPTION_MODEL", "gemma3:4b")
+IMAGE_DESCRIPTION_TIMEOUT = int(os.getenv("IMAGE_DESCRIPTION_TIMEOUT", "300"))
+IMAGE_DESCRIPTION_REACHABILITY_TTL = int(
+    os.getenv("IMAGE_DESCRIPTION_REACHABILITY_TTL", "15")
+)
+IMAGE_DESCRIPTION_CACHE_ENABLED = os.getenv(
+    "IMAGE_DESCRIPTION_CACHE_ENABLED", "True"
+).lower() in ("1", "true", "yes")
+IMAGE_DESCRIPTION_CACHE_PATH = os.getenv(
+    "IMAGE_DESCRIPTION_CACHE_PATH",
+    str(BASE_DIR / "image_description_cache" / "descriptions.sqlite3"),
+)
+
+# ---------------------------------------------------------------------------
+# course / question_generation / learning_path (ported from Milestone1-Jean,
+# 2026-09-15). Same Ollama server as the image-description feature above;
+# OLLAMA_MODEL is the text model these use (separate from the vision model).
+# ---------------------------------------------------------------------------
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", OLLAMA_MODEL)
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
@@ -174,6 +222,17 @@ ADAPTIVE_VARIANT_GENERATION_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes")
 ADAPTIVE_VARIANT_LLM_MODEL = os.getenv("ADAPTIVE_VARIANT_LLM_MODEL", OLLAMA_MODEL)
 ADAPTIVE_VARIANT_TIMEOUT = int(os.getenv("ADAPTIVE_VARIANT_TIMEOUT", str(OLLAMA_TIMEOUT)))
+# Decode budget for one simplified+elaborated pair. A learning object is
+# 15-60 words and the elaborated cap is 2x source words, so ~200 words of JSON
+# is the real ceiling; 1024 just meant every call ran the decoder long past the
+# grounding limit. Raise it only if long source objects start truncating.
+ADAPTIVE_VARIANT_NUM_PREDICT = int(os.getenv("ADAPTIVE_VARIANT_NUM_PREDICT", "512"))
+# How many Ollama generation calls to keep in flight. The bottleneck in a
+# publish run is N sequential calls to a local model; Ollama serves concurrent
+# requests, so this is close to an N-times speed-up until it hits the server's
+# own OLLAMA_NUM_PARALLEL (set that to at least this value).
+ADAPTIVE_VARIANT_CONCURRENCY = int(os.getenv("ADAPTIVE_VARIANT_CONCURRENCY", "3"))
+
 CONTENT_VERSION_LLM_ENABLED = os.getenv(
     "CONTENT_VERSION_LLM_ENABLED", "True"
 ).lower() in ("1", "true", "yes")
@@ -190,14 +249,10 @@ QUESTION_OVERGENERATION_FACTOR = float(
     os.getenv("QUESTION_OVERGENERATION_FACTOR", "1.0")
 )
 
-
-# Quiet the dev server's per-request access log (e.g. the frontend's
-# generation-trace polling floods it at 200 OK / INFO). 4xx/5xx still show
-# since runserver logs those at WARNING/ERROR; only successful requests are
-# silenced. Application diagnostics use the standard Python logging system.
-# INFO reports each step of every pipeline; DEBUG adds the per-item detail
-# (each drafted question, each duplicate or surplus dropped) that would
-# otherwise bury it.
+# Quiet the dev server's per-request access log; application diagnostics use
+# the standard Python logging system instead. INFO reports each step of every
+# pipeline; DEBUG adds the per-item detail (each drafted question, each
+# duplicate or surplus dropped) that would otherwise bury it.
 MAVIA_LOG_LEVEL = os.getenv("MAVIA_LOG_LEVEL", "INFO").upper()
 
 LOGGING = {
@@ -209,13 +264,8 @@ LOGGING = {
         "trace": {"format": "%(message)s"},
     },
     "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-        },
-        "trace": {
-            "class": "logging.StreamHandler",
-            "formatter": "trace",
-        },
+        "console": {"class": "logging.StreamHandler"},
+        "trace": {"class": "logging.StreamHandler", "formatter": "trace"},
     },
     "loggers": {
         "django.server": {
@@ -231,31 +281,13 @@ LOGGING = {
         # Progress reporting. These packages report each step through the
         # logger rather than print(), so the terminal and the teacher's
         # progress dialog are fed by the same call and cannot disagree.
-        #
         # Configured explicitly because there is no root handler: without an
         # entry here, INFO records propagate to a handler-less root and are
         # dropped by Python's last-resort handler, which passes WARNING and
-        # above only. Extraction's own trace was invisible for exactly that
-        # reason.
-        "lessons": {
-            "handlers": ["trace"],
-            "level": MAVIA_LOG_LEVEL,
-            "propagate": False,
-        },
-        "question_generation": {
-            "handlers": ["trace"],
-            "level": MAVIA_LOG_LEVEL,
-            "propagate": False,
-        },
-        "learning_path": {
-            "handlers": ["trace"],
-            "level": MAVIA_LOG_LEVEL,
-            "propagate": False,
-        },
-        "course": {
-            "handlers": ["trace"],
-            "level": MAVIA_LOG_LEVEL,
-            "propagate": False,
-        },
+        # above only.
+        "lessons": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        "question_generation": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        "learning_path": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        "course": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
     },
 }

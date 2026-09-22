@@ -1,168 +1,260 @@
-from django.test import TestCase
+from django.urls import reverse
+from rest_framework.test import APITestCase
 
-from course.models import CourseModule, LessonNode
-from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
-from question_generation.models import GeneratedQuestion
+from lessons.models import CourseGroup, LearningMaterial, OutlineNode, Question
+from user.models import User
 
-from .models import LearningState
-from .services import AdaptiveScoringService, resolve_start
-
-
-def _make_module(course, order):
-    outline_node = OutlineNode.objects.create(course=course, title=f"Module {order}", order=order, depth=0)
-    return CourseModule.objects.create(source=outline_node)
+from .models import Enrollment, LearningState
+from .services import AdaptiveEngine, answer_is_correct, ordered_course_steps, resolve_start
 
 
-def _make_lesson_node(module, course, title):
-    material = LearningMaterial.objects.create(course=course, title=title, pdf_file="materials/x.pdf")
-    return LessonNode.objects.create(module=module, source=material)
+def _course_with_content(*, topics=1, questions_per_topic=2):
+    course = CourseGroup.objects.create(title="Science 7")
+    module = OutlineNode.objects.create(course=course, title="Module 1", order=0, depth=0)
+    made = []
+    for t in range(topics):
+        topic = OutlineNode.objects.create(
+            course=course, parent=module, title=f"Topic {t + 1}", order=t, depth=1, published=True
+        )
+        material = LearningMaterial.objects.create(
+            course=course,
+            outline_node=topic,
+            title=f"Material {t + 1}",
+            pdf_file="learning_materials/x.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        topic_questions = [
+            Question.objects.create(
+                material=material,
+                prompt=f"T{t + 1} Q{q + 1}?",
+                question_type=Question.Type.MULTIPLE_CHOICE,
+                choices=["Correct", "Wrong", "Nope"],
+                correct_answer="a",
+                order=q,
+            )
+            for q in range(questions_per_topic)
+        ]
+        made.append((topic, material, topic_questions))
+    return course, module, made
 
 
-def _make_chunk(lesson_node, order, title="Chunk"):
-    return LearningObject.objects.create(
-        material=lesson_node.source,
-        kind=LearningObject.Kind.TEXT,
-        title=title,
-        content=f"{title} content",
-        order=order,
-    )
-
-
-def _make_question(chunk, bloom_level, difficulty="easy", correct="A"):
-    return GeneratedQuestion.objects.create(
-        node=chunk,
-        question_text=f"Question about {chunk.title} ({bloom_level})",
-        question_format="MCQ",
-        choices={"A": "right", "B": "wrong", "C": "wrong", "D": "wrong"},
-        correct_answer=correct,
-        bloom_level=bloom_level,
-        difficulty=difficulty,
-        status="final",
-    )
-
-
-class AdaptiveProgressionTests(TestCase):
+class EngineTests(APITestCase):
     def setUp(self):
-        self.course = CourseGroup.objects.create(title="Science 7")
-        self.module = _make_module(self.course, order=0)
-        self.lesson_node = _make_lesson_node(self.module, self.course, "Matter")
-
-    def _start_state(self, chunk, question):
-        return LearningState.objects.create(
-            learner_id="learner1",
-            current_module=self.module,
-            current_node=self.lesson_node,
-            current_question=question,
-            current_bloom=question.bloom_level,
+        self.student = User.objects.create_user(
+            username="stu", password="pw", role=User.Role.STUDENT, is_verified=True
+        )
+        self.course, self.module, self.topics = _course_with_content(
+            topics=2, questions_per_topic=2
         )
 
-    def test_correct_answer_advances_to_next_tier_in_same_chunk(self):
-        chunk = _make_chunk(self.lesson_node, order=0, title="Matter")
-        q_remember = _make_question(chunk, "remember")
-        q_understand = _make_question(chunk, "understand")
-        state = self._start_state(chunk, q_remember)
+    def _fresh_state(self):
+        module, node, question = resolve_start(self.course)
+        return LearningState.objects.create(
+            student=self.student,
+            course=self.course,
+            current_module=module,
+            current_lesson_node=node,
+            current_question=question,
+        )
 
-        result = AdaptiveScoringService.evaluate(state, q_remember, "A", 5.0)
+    def test_ordered_steps_span_topics(self):
+        steps = ordered_course_steps(self.course)
+        self.assertEqual(len(steps), 2)
+        self.assertEqual([len(q) for _m, _n, q in steps], [2, 2])
 
+    def test_resolve_start_is_first_question(self):
+        _module, node, question = resolve_start(self.course)
+        self.assertEqual(node, self.topics[0][0])
+        self.assertEqual(question, self.topics[0][2][0])
+
+    def test_correct_answer_advances_within_topic(self):
+        state = self._fresh_state()
+        q1 = self.topics[0][2][0]
+        result = AdaptiveEngine.evaluate(state, q1, "a")
         self.assertTrue(result["is_correct"])
-        self.assertFalse(result["chunk_changed"])
-        self.assertFalse(result["node_changed"])
-        self.assertEqual(result["next_question"], q_understand.id)
-        self.assertEqual(result["next_bloom"], "understand")
+        self.assertFalse(result["completed"])
+        self.assertEqual(result["next_question"], self.topics[0][2][1].id)
 
-    def test_correct_answer_at_last_tier_moves_to_next_chunk(self):
-        chunk1 = _make_chunk(self.lesson_node, order=0, title="Matter")
-        chunk2 = _make_chunk(self.lesson_node, order=1, title="Solid")
-        q_analyze = _make_question(chunk1, "analyze", difficulty="medium")
-        q_next_first = _make_question(chunk2, "remember")
-        state = self._start_state(chunk1, q_analyze)
+    def test_correct_answer_crosses_topic_boundary(self):
+        state = self._fresh_state()
+        AdaptiveEngine.evaluate(state, self.topics[0][2][0], "a")
+        result = AdaptiveEngine.evaluate(state, self.topics[0][2][1], "a")
+        self.assertEqual(result["next_lesson_node"], self.topics[1][0].id)
+        self.assertEqual(result["next_question"], self.topics[1][2][0].id)
 
-        result = AdaptiveScoringService.evaluate(state, q_analyze, "A", 5.0)
-
-        self.assertTrue(result["chunk_changed"])
-        self.assertEqual(result["next_chunk"], chunk2.id)
-        self.assertEqual(result["next_question"], q_next_first.id)
-
-    def test_chunk_missing_a_tier_skips_forward_to_next_chunk(self):
-        """Regression test: a chunk that never got an apply/analyze-level
-        question generated (a real content gap) must not strand the
-        learner — advancing past its exhausted tiers should fall through
-        to the next chunk instead of returning no question at all."""
-        chunk1 = _make_chunk(self.lesson_node, order=0, title="Matter")
-        chunk2 = _make_chunk(self.lesson_node, order=1, title="Solid")
-        q_remember = _make_question(chunk1, "remember")
-        _make_question(chunk1, "understand")  # chunk1 has NO apply/analyze question
-        q_next_first = _make_question(chunk2, "remember")
-        state = self._start_state(chunk1, q_remember)
-        # answer the "understand" tier correctly next
-        understand_q = GeneratedQuestion.objects.get(node=chunk1, bloom_level="understand")
-
-        result = AdaptiveScoringService.evaluate(state, understand_q, "A", 5.0)
-
-        self.assertTrue(result["is_correct"])
-        self.assertTrue(result["chunk_changed"])
-        self.assertEqual(result["next_chunk"], chunk2.id)
-        self.assertEqual(result["next_question"], q_next_first.id)
-        self.assertEqual(result["next_bloom"], "remember")
-
-    def test_completes_course_when_no_more_chunks_or_lessons(self):
-        chunk = _make_chunk(self.lesson_node, order=0, title="Matter")
-        q_analyze = _make_question(chunk, "analyze", difficulty="medium")
-        state = self._start_state(chunk, q_analyze)
-
-        result = AdaptiveScoringService.evaluate(state, q_analyze, "A", 5.0)
-
+    def test_finishing_last_question_completes_course(self):
+        state = self._fresh_state()
+        for topic, _material, qs in self.topics:
+            for q in qs:
+                state.current_lesson_node = topic
+                state.current_question = q
+                state.save()
+                result = AdaptiveEngine.evaluate(state, q, "a")
         self.assertTrue(result["completed"])
         self.assertIsNone(result["next_question"])
 
-    def test_correct_answer_moves_to_next_lesson_node_when_chunks_exhausted(self):
-        chunk = _make_chunk(self.lesson_node, order=0, title="Matter")
-        q_analyze = _make_question(chunk, "analyze", difficulty="medium")
-        next_lesson = _make_lesson_node(self.module, self.course, "Changes of State")
-        next_chunk = _make_chunk(next_lesson, order=0, title="Melting")
-        q_next = _make_question(next_chunk, "remember")
-        state = self._start_state(chunk, q_analyze)
+    def test_three_wrong_answers_move_learner_on(self):
+        state = self._fresh_state()
+        q1 = self.topics[0][2][0]
+        for _ in range(2):
+            result = AdaptiveEngine.evaluate(state, q1, "b")
+            self.assertEqual(result["next_question"], q1.id)
+        result = AdaptiveEngine.evaluate(state, q1, "b")
+        self.assertEqual(result["next_question"], self.topics[0][2][1].id)
 
-        result = AdaptiveScoringService.evaluate(state, q_analyze, "A", 5.0)
+    def test_mastery_moves_in_the_right_direction(self):
+        state = self._fresh_state()
+        before = state.mastery
+        AdaptiveEngine.evaluate(state, self.topics[0][2][0], "a")
+        self.assertGreater(state.mastery, before)
 
-        self.assertTrue(result["node_changed"])
-        self.assertEqual(result["next_node"], next_lesson.id)
-        self.assertEqual(result["next_question"], q_next.id)
+    def test_answer_matching_forms(self):
+        mcq = self.topics[0][2][0]
+        self.assertTrue(answer_is_correct(mcq, "a"))
+        self.assertTrue(answer_is_correct(mcq, "A"))
+        self.assertTrue(answer_is_correct(mcq, "Correct"))
+        self.assertFalse(answer_is_correct(mcq, "b"))
+        tf = Question.objects.create(
+            material=self.topics[0][1],
+            prompt="Sky is blue?",
+            question_type=Question.Type.TRUE_FALSE,
+            choices=["True", "False"],
+            correct_answer="true",
+            order=9,
+        )
+        self.assertTrue(answer_is_correct(tf, "true"))
+        self.assertTrue(answer_is_correct(tf, "a"))
+        self.assertFalse(answer_is_correct(tf, "false"))
 
-    def test_wrong_answer_remediates_with_easier_unattempted_question(self):
-        chunk = _make_chunk(self.lesson_node, order=0, title="Matter")
-        q_medium = _make_question(chunk, "understand", difficulty="medium")
-        q_easy = _make_question(chunk, "understand", difficulty="easy")
-        state = self._start_state(chunk, q_medium)
 
-        result = AdaptiveScoringService.evaluate(state, q_medium, "B", 5.0)
+class EnrollmentAndProgressApiTests(APITestCase):
+    def setUp(self):
+        self.teacher = User.objects.create_user(
+            username="teach", password="pw", role=User.Role.TEACHER, is_verified=True
+        )
+        self.student = User.objects.create_user(
+            username="stu", password="pw", role=User.Role.STUDENT, is_verified=True
+        )
+        self.course, self.module, self.topics = _course_with_content(
+            topics=1, questions_per_topic=2
+        )
 
-        self.assertFalse(result["is_correct"])
-        self.assertFalse(result["chunk_changed"])
-        self.assertEqual(result["next_question"], q_easy.id)
-        self.assertLess(result["mastery"], 0.30)
+    def test_enroll_then_progress_shows_not_started(self):
+        self.client.force_authenticate(self.teacher)
+        resp = self.client.post(
+            f"/api/adaptive/courses/{self.course.id}/enrollments/",
+            {"student_id": self.student.id},
+        )
+        self.assertEqual(resp.status_code, 201)
+
+        progress = self.client.get(f"/api/adaptive/courses/{self.course.id}/progress/")
+        self.assertEqual(progress.status_code, 200)
+        self.assertEqual(len(progress.data["rows"]), 1)
+        row = progress.data["rows"][0]
+        self.assertFalse(row["started"])
+        self.assertEqual(row["total_modules"], 1)
+
+    def test_start_requires_enrollment(self):
+        self.client.force_authenticate(self.student)
+        resp = self.client.post("/api/adaptive/start/", {"course_id": self.course.id})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_student_lesson_read_endpoints(self):
+        Enrollment.objects.create(student=self.student, course=self.course)
+        self.client.force_authenticate(self.student)
+
+        courses = self.client.get("/api/adaptive/my-courses/")
+        self.assertEqual(courses.status_code, 200)
+        self.assertEqual(courses.data[0]["id"], self.course.id)
+        self.assertEqual(courses.data[0]["question_count"], 2)
+
+        lessons = self.client.get(
+            f"/api/adaptive/my-courses/{self.course.id}/lessons/"
+        )
+        self.assertEqual(lessons.status_code, 200)
+        lesson_id = lessons.data[0]["id"]
+
+        package = self.client.get(f"/api/adaptive/lessons/{lesson_id}/")
+        self.assertEqual(package.status_code, 200)
+        self.assertTrue(package.data["has_questions"])
+
+    def test_student_lesson_read_requires_enrollment(self):
+        self.client.force_authenticate(self.student)
+        resp = self.client.get(
+            f"/api/adaptive/my-courses/{self.course.id}/lessons/"
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_full_student_flow_updates_progress(self):
+        Enrollment.objects.create(student=self.student, course=self.course)
+        self.client.force_authenticate(self.student)
+
+        start = self.client.post("/api/adaptive/start/", {"course_id": self.course.id})
+        self.assertEqual(start.status_code, 201)
+        state_id = start.data["learning_state"]["id"]
+        first_q = start.data["lesson"]["questions"][0]["id"]
+
+        submit = self.client.post(
+            "/api/adaptive/submit-response/",
+            {"learning_state_id": state_id, "question_id": first_q, "selected_answer": "a"},
+        )
+        self.assertEqual(submit.status_code, 200)
+        self.assertTrue(submit.data["is_correct"])
+
+        self.client.force_authenticate(self.teacher)
+        progress = self.client.get(f"/api/adaptive/courses/{self.course.id}/progress/")
+        row = progress.data["rows"][0]
+        self.assertTrue(row["started"])
+        self.assertEqual(row["questions_answered"], 1)
+        self.assertEqual(row["correct_rate"], 1.0)
 
 
-class ResolveStartTests(TestCase):
-    def test_resolve_start_picks_first_chunk_and_lowest_tier_question(self):
-        course = CourseGroup.objects.create(title="Science 7")
-        module = _make_module(course, order=0)
-        lesson_node = _make_lesson_node(module, course, "Matter")
-        chunk = _make_chunk(lesson_node, order=0, title="Matter")
-        q_remember = _make_question(chunk, "remember")
-        _make_question(chunk, "understand")
+class ReviewPackageApiTests(APITestCase):
+    def setUp(self):
+        self.teacher = User.objects.create_user(
+            username="teach", password="pw", role=User.Role.TEACHER, is_verified=True
+        )
+        self.course, self.module, self.topics = _course_with_content(
+            topics=1, questions_per_topic=2
+        )
+        material = self.topics[0][1]
+        material.generated_json = {
+            "narration_script": [
+                {"order": 0, "content": "Intro narration.", "title": "Intro"},
+                {"order": 1, "content": "Second part.", "title": "Part 2"},
+            ],
+            "lesson_playlist": [
+                {
+                    "order": 0,
+                    "title": "Intro",
+                    "type": "lesson_content",
+                    "narration_item_order": 0,
+                    "audio_url": "/media/audio_lessons/material_x/playlist_item_1.mp3",
+                },
+                {
+                    "order": 1,
+                    "title": "Part 2",
+                    "type": "lesson_content",
+                    "narration_item_order": 1,
+                },
+            ],
+        }
+        material.save(update_fields=["generated_json"])
 
-        resolved_chunk, question = resolve_start(lesson_node)
+    def test_module_summary_and_package(self):
+        self.client.force_authenticate(self.teacher)
+        summaries = self.client.get(f"/api/courses/{self.course.id}/review/modules/")
+        self.assertEqual(summaries.status_code, 200)
+        self.assertEqual(summaries.data[0]["track_count"], 2)
+        self.assertEqual(summaries.data[0]["question_count"], 2)
 
-        self.assertEqual(resolved_chunk.id, chunk.id)
-        self.assertEqual(question.id, q_remember.id)
-
-    def test_resolve_start_returns_none_when_no_text_chunks(self):
-        course = CourseGroup.objects.create(title="Science 7")
-        module = _make_module(course, order=0)
-        lesson_node = _make_lesson_node(module, course, "Empty Lesson")
-
-        resolved_chunk, question = resolve_start(lesson_node)
-
-        self.assertIsNone(resolved_chunk)
-        self.assertIsNone(question)
+        package = self.client.get(
+            f"/api/courses/{self.course.id}/review/modules/{self.module.id}/package/"
+        )
+        self.assertEqual(package.status_code, 200)
+        lesson = package.data["lessons"][0]
+        self.assertEqual(len(lesson["tracks"]), 2)
+        self.assertTrue(lesson["tracks"][0]["audio_ready"])
+        self.assertFalse(lesson["tracks"][1]["audio_ready"])
+        self.assertEqual(lesson["tracks"][0]["text"], "Intro narration.")
+        self.assertTrue(lesson["has_questions"])

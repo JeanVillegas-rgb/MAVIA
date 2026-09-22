@@ -77,6 +77,19 @@ export function useAudioPlayer(onFinish?: () => void) {
     [onStatus]
   );
 
+  // Tear the player down completely rather than pausing it. Anything that
+  // ends the audio phase -- skipping to the questions, a re-teach, backing
+  // out -- must leave nothing able to resume underneath the next voice. A
+  // paused player can be restarted by a stray status callback; a removed one
+  // cannot, and returning to the phase reloads from scratch anyway.
+  const stop = useCallback(() => {
+    subRef.current?.remove();
+    subRef.current = null;
+    playerRef.current?.remove();
+    playerRef.current = null;
+    setState({ ...INITIAL });
+  }, []);
+
   const play = useCallback(async () => {
     playerRef.current?.play();
   }, []);
@@ -89,5 +102,5 @@ export function useAudioPlayer(onFinish?: () => void) {
     await playerRef.current?.seekTo(Math.max(0, millis) / 1000);
   }, []);
 
-  return { ...state, load, play, pause, seek };
+  return { ...state, load, play, pause, seek, stop };
 }

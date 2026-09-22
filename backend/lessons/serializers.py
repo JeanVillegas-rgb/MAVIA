@@ -77,6 +77,7 @@ class CourseListSerializer(serializers.ModelSerializer):
     node_count = serializers.SerializerMethodField()
     has_outline = serializers.SerializerMethodField()
     outline_approved = serializers.SerializerMethodField()
+    enrolled_count = serializers.SerializerMethodField()
 
     class Meta:
         model = CourseGroup
@@ -87,8 +88,13 @@ class CourseListSerializer(serializers.ModelSerializer):
             "node_count",
             "has_outline",
             "outline_approved",
+            "enrolled_count",
             "created_at",
         ]
+
+    def get_enrolled_count(self, obj):
+        # Reverse relation from adaptive.Enrollment (related_name="enrollments").
+        return obj.enrollments.count()
 
     def get_node_count(self, obj):
         if not self.get_outline_approved(obj):

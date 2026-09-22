@@ -218,12 +218,18 @@ button {
   transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not([aria-disabled="true"]) {
   filter: brightness(1.05);
   transform: translateY(-1px);
 }
 
-.btn:disabled {
+.btn:disabled,
+/* The bundle controls stay in the tab order while they cannot be used, so a
+   screen reader still reads their names; they look the part all the same.
+   The "Move to..." control is a <select>, not a `.btn`, but it sits in the
+   same row and needs the same disabled look. */
+.btn[aria-disabled="true"],
+.concept-bundle-move-to select[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -1125,6 +1131,32 @@ button {
   max-width: 730px;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.version-review-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.version-generation-progress {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.9rem 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #b9ddd8;
+  border-radius: 12px;
+  background: #effaf8;
+  color: #165c56;
+}
+
+.version-generation-progress p {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .connection-eyebrow {
@@ -3555,9 +3587,13 @@ button {
 .topic-detail-page {
   width: min(1420px, calc(100% - 3rem));
   gap: 1.25rem;
+  /* Pack rows at the top: a stretched grid spread a short page's spare height
+     across its rows, inflating the header card on a topic with no PDFs yet. */
+  align-content: start;
 }
 
 .topic-detail-overview-card {
+  align-content: start;
   padding: 1.5rem 1.75rem;
   border-color: #dbe4ea;
   border-radius: 14px;
@@ -3757,6 +3793,95 @@ button {
   border-bottom: 0;
 }
 
+/* A concept's objects from one PDF, kept together in that file's own order.
+   Same rhythm as .connection-object-row, so a bundle reads as a group of those
+   rows rather than as a new kind of card. */
+.concept-bundle-list {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0 1rem 0.4rem;
+}
+
+.concept-bundle {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid #e7edf0;
+  border-radius: 9px;
+  background: #fbfcfd;
+}
+
+.concept-bundle-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.7rem 0.8rem 0;
+}
+
+.concept-bundle-head h5 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.concept-bundle-head small {
+  color: #64748b;
+}
+
+.concept-bundle .connection-object-list {
+  padding: 0 0.8rem;
+}
+
+.concept-bundle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.4rem 1.1rem;
+}
+
+/* The row's controls answer two different questions -- which concept this
+   object belongs to, and where it sits inside this one file -- so they are
+   grouped and each group says which. Flat, they read as four similar buttons
+   and the arrows looked as though they moved objects between concepts. */
+.concept-bundle-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.concept-bundle-action-label {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.concept-bundle-action-group.is-order {
+  padding-left: 0.9rem;
+  border-left: 1px solid #e2e8f0;
+}
+
+@media (max-width: 720px) {
+  .concept-bundle-action-group.is-order {
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+.concept-bundle-move-to select {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  font-size: 0.78rem;
+}
+
+.concept-bundle-nudge {
+  min-width: 2.1rem;
+  line-height: 1;
+}
+
 .connection-object-row:hover {
   background: #fbfdfd;
 }
@@ -3855,6 +3980,47 @@ button {
   top: 1.25rem;
   max-height: calc(100vh - 2.5rem);
   overflow: hidden;
+}
+
+/* "Next step: Question pairs" is the last child of this aside, which clips its
+   overflow. On a normal laptop (1536x864) the heading, step indicator, intro,
+   navigator and the clamped review card together fill the panel exactly, so the
+   button renders one pixel below the visible edge and cannot be seen or
+   clicked. That makes step 1 look mandatory when nothing in the code gates it.
+   Lay the panel out as a column instead: the card list takes the leftover
+   space and scrolls, and the action row stays pinned in view at any height. */
+.connection-review-layout.has-recommendations > .match-suggestion-panel.panel-aside {
+  display: flex;
+  flex-direction: column;
+}
+
+.connection-review-layout.has-recommendations
+  > .panel-aside
+  > .match-suggestion-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+}
+
+.connection-review-layout.has-recommendations
+  > .panel-aside
+  > .match-suggestion-list
+  > .match-suggestion-card {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.connection-review-layout.has-recommendations
+  > .panel-aside
+  > .review-step-actions-next {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f0e3c4;
 }
 
 .match-suggestion-heading {
@@ -4301,10 +4467,184 @@ button {
   flex: none;
 }
 
+/* Each version of one concept, labelled. Without the labels the three texts
+   read as one long passage repeated three times. */
+.publish-version-set {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.publish-version {
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid #cbd5e1;
+  border-radius: 0 7px 7px 0;
+  background: #fff;
+}
+
+.publish-version h6 {
+  margin: 0 0 0.3rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+/* Colour carries the version, so the eye can find one without reading labels. */
+.publish-version.is-normal { border-left-color: #64748b; }
+.publish-version.is-simplified { border-left-color: #2f9e8f; }
+.publish-version.is-elaborated { border-left-color: #7c6bd6; }
+
+.publish-version-missing {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+/* One block per version, each naming its source and listing the objects it is
+   made of. Replaces the old "representative + Other variation" list, which
+   printed a supplied version's wording twice and gave no way to tell a member
+   of the Normal bundle from a bundle supplying another version. */
+.publish-version-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+/* The whole block carries the version's colour, not just a hairline on its
+   edge. The objects inside sit on white with the tint showing around them, so
+   which version you are reading is answered by the surface rather than by a
+   3px line you have to go looking for. Tints stay pale enough to leave body
+   text at full contrast, and each one matches the label chip beside it so the
+   review screens agree with each other. */
+.publish-version-block {
+  border: 1px solid #dbe3ec;
+  border-left: 5px solid #94a3b8;
+  border-radius: 0 10px 10px 0;
+  background: #f4f7fb;
+  padding: 0.75rem 0.85rem;
+}
+
+.publish-version-block.is-normal {
+  border-color: #c7d5ec;
+  border-left-color: #29406b;
+  background: #f5f8fd;
+}
+
+.publish-version-block.is-simplified {
+  border-color: #c6e3d2;
+  border-left-color: #1f5c39;
+  background: #f3faf6;
+}
+
+.publish-version-block.is-elaborated {
+  border-color: #e6d7b8;
+  border-left-color: #6a5326;
+  background: #fdf9f1;
+}
+
+/* Nothing was written, so the block is not filled in either. */
+.publish-version-block.is-missing {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-left-color: #cbd5e1;
+  border-style: dashed;
+  padding-bottom: 0.55rem;
+}
+
+.publish-version-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+/* Darkened from #64748b: on the version tints that grey measured 4.47:1,
+   just under the 4.5:1 small-text minimum. This clears it on all four. */
+.publish-version-head small {
+  color: #5b6a80;
+  font-size: 0.78rem;
+}
+
+.publish-version-stale {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* Numbered, because the order the objects are listed in is the order the
+   version is read and heard. */
+.publish-version-objects {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+/* Each object on its own white surface, so the block's tint reads as a frame
+   around the version rather than as a wash over the text. */
+.publish-version-objects > li {
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.publish-version-objects .publish-item-heading {
+  margin-bottom: 0.2rem;
+}
+
+.publish-object-kind {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The concept is the box; its versions sit inside it with room to breathe.
+   The card was outlined by a hairline with one heavy left edge, so a filled
+   version block reaching toward that edge read as belonging to the page
+   rather than to the concept. A uniform, visible border and real inner
+   spacing make the containment obvious. Scoped to this panel so the
+   connections step is unaffected. */
+.publish-review-panel .connection-group-card {
+  border: 2px solid #c3d0e0;
+  border-radius: 12px;
+  padding: 1.15rem;
+  gap: 1rem;
+}
+
+.publish-review-panel .connection-group-card.is-connected {
+  border-color: #9db5d6;
+}
+
+/* Space between the versions themselves, so each block reads as its own
+   thing rather than as a stripe in a stack. */
+.publish-review-panel .publish-version-list {
+  gap: 1rem;
+}
+
+.publish-review-panel .connection-group-card > header {
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e8eef5;
+}
+
+/* Questions are a different kind of thing from content, so they get a
+   different surface rather than a dashed rule. Reviewers were reading straight
+   past the boundary. */
 .publish-question-list {
-  margin-top: 0.85rem;
-  padding-top: 0.7rem;
-  border-top: 1px dashed #e2e8f0;
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.85rem;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  background: #f4f8fc;
   display: grid;
   gap: 0.55rem;
 }
@@ -4314,7 +4654,8 @@ button {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #64748b;
+  color: #3f6592;
+  font-weight: 800;
 }
 
 .publish-question-empty {
@@ -4620,9 +4961,106 @@ button {
   overflow: hidden;
 }
 
+/* The inline question editor adds children the fixed-height grid was never
+   sized for. `.question-review-card` declares four rows (meta, prompt,
+   scrolling suggestion, actions); opening the editor inserts the form as a
+   fifth, so the actions row spills into an implicit row past the clamped
+   height and `overflow: hidden` swallows it — taking "Save question",
+   "Cancel", "Approve" and "Decline" with it.
+   While editing, drop the fixed height and let the card size to its content so
+   the page scrolls instead of the buttons disappearing. */
+.question-review-list.is-editing,
+.question-review-list.is-editing .question-review-card,
+.question-review-card.is-editing-content {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.question-review-card.is-editing-content {
+  grid-template-rows: none;
+}
+
+/* The suggestion pane only needs its own scrollbar while it is competing for a
+   fixed height. Once the card grows, a nested scroller just hides content. */
+.question-review-card.is-editing-content .question-review-suggestion {
+  max-height: none;
+  overflow: visible;
+}
+
+/* Keep the editor's own controls obvious and reachable. */
+.question-inline-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid #e7ecef;
+}
+
+/* Four rows, each child pinned to its own: the unit-merge note is only present
+   on some cards, and with automatic placement its absence slid the scrolling
+   pair up into the note's row -- which let the note ride over the "possible
+   match" divider in the narrow review panel. An empty row two collapses to
+   nothing when there is no note. */
 .match-suggestion-card {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   align-items: stretch;
+}
+
+.match-suggestion-card > .match-suggestion-score {
+  grid-row: 1;
+}
+
+.match-suggestion-card > p.muted-text {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  margin: 0 0 0.35rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  background: #f4f7f9;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.match-suggestion-card > .match-suggestion-pair {
+  grid-row: 3;
+}
+
+.match-suggestion-card > .match-suggestion-actions {
+  grid-row: 4;
+}
+
+/* Several merged members stack inside one side of the pair, so they need to
+   read as a list rather than as one run-on block of text. */
+.match-unit-member {
+  display: block;
+  min-width: 0;
+}
+
+.match-unit-member + .match-unit-member {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #dde5ea;
+}
+
+.match-unit-member > strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.match-unit-member > .match-source-content {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: #586878;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .match-suggestion-pair {
@@ -4984,15 +5422,1660 @@ button {
 }
 
 .question-origin-pill,
-.question-thinking-pill { border-radius: 999px; padding: 0.24rem 0.55rem; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; }
+.question-thinking-pill {
+  border-radius: 999px;
+  padding: 0.24rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .question-origin-pill { background: #e7f4ff; color: #245d91; }
 .question-origin-pill.is-manual { background: #f0e9ff; color: #6545a2; }
 .question-origin-pill.is-generated { background: #e3f8ef; color: #176b52; }
 .question-thinking-pill { background: #fff0c7; color: #835d08; }
-.question-validation-warning { margin: 0.75rem 0; padding: 0.75rem 0.9rem; border-left: 4px solid #d79516; border-radius: 0.5rem; background: #fff8e5; color: #72520f; }
-.question-validation-warning ul, .question-review-choices { margin: 0.4rem 0 0; padding-left: 1.25rem; }
-.question-inline-editor, .question-generation-tool { display: grid; gap: 0.65rem; margin: 0.8rem 0; padding: 0.9rem; border: 1px solid #c9d9eb; border-radius: 0.75rem; background: #f8fbff; }
+
+.question-validation-warning {
+  margin: 0.75rem 0;
+  padding: 0.75rem 0.9rem;
+  border-left: 4px solid #d79516;
+  border-radius: 0.5rem;
+  background: #fff8e5;
+  color: #72520f;
+}
+
+.question-validation-warning ul,
+.question-review-choices { margin: 0.4rem 0 0; padding-left: 1.25rem; }
+
+.question-inline-editor,
+.question-generation-tool {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.8rem 0;
+  padding: 0.9rem;
+  border: 1px solid #c9d9eb;
+  border-radius: 0.75rem;
+  background: #f8fbff;
+}
+
 .question-inline-editor label { display: grid; gap: 0.3rem; font-weight: 700; color: #304966; }
-.question-inline-editor input, .question-inline-editor textarea, .question-inline-editor select, .question-generation-tool select { width: 100%; border: 1px solid #bccde0; border-radius: 0.5rem; padding: 0.58rem; background: white; }
+.question-inline-editor input,
+.question-inline-editor textarea,
+.question-inline-editor select,
+.question-generation-tool select { width: 100%; border: 1px solid #bccde0; border-radius: 0.5rem; padding: 0.58rem; background: white; }
 .question-inline-editor-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 .question-generation-tool p { margin: 0; color: #526a86; }
+
+/* Reviewed questions leave the queue but stay reachable: a teacher who
+   declined by mistake needs somewhere to find it again. Collapsed by default
+   so the queue itself stays the focus. */
+.reviewed-question-block {
+  margin-top: 1.25rem;
+  border: 1px solid var(--line, #d9dee7);
+  border-radius: 10px;
+  background: var(--surface-muted, #f7f8fb);
+}
+
+.reviewed-question-block > summary {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reviewed-count {
+  font-weight: 500;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--line, #d9dee7);
+}
+
+.reviewed-question-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 1rem 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.reviewed-question-row {
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line, #e4e8ef);
+}
+
+.reviewed-question-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.reviewed-question-prompt {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+}
+
+.reviewed-status-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #e7ecf5;
+  color: #35405a;
+}
+
+/* Each outcome reads differently at a glance: teacher decisions are stronger
+   than the automatic pairing, and "unpaired" must not look like a failure. */
+.reviewed-status-chip.is-auto_confirmed { background: #e8eef8; color: #2f4a76; }
+.reviewed-status-chip.is-teacher_confirmed { background: #dff3e6; color: #1d5c34; }
+.reviewed-status-chip.is-teacher_unpaired { background: #f1ece0; color: #6a5326; }
+
+.reviewed-question-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.reviewed-question-picker {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.reviewed-question-picker select {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--line, #d9dee7);
+}
+
+.review-step-indicator.has-four-steps {
+  grid-template-columns:
+    auto minmax(0.6rem, 1fr) auto minmax(0.6rem, 1fr)
+    auto minmax(0.6rem, 1fr) auto;
+}
+
+.review-step-indicator.has-five-steps {
+  grid-template-columns:
+    auto minmax(0.4rem, 1fr) auto minmax(0.4rem, 1fr)
+    auto minmax(0.4rem, 1fr) auto minmax(0.4rem, 1fr) auto;
+}
+
+/* --- Content versions review ------------------------------------------- */
+
+.version-chunk-title {
+  margin: 1rem 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.version-slot-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.version-slot {
+  border: 1px solid var(--line, #e2e6ee);
+  border-left: 4px solid #c9d1e0;
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  background: #fff;
+}
+
+/* Each slot is colour-coded on its left edge so a teacher can tell the three
+   versions apart at a glance without reading the labels every time. */
+.version-slot.is-original { border-left-color: #4a6da7; }
+.version-slot.is-simplified { border-left-color: #3f8f5f; }
+.version-slot.is-elaborated { border-left-color: #8a6d3b; }
+.version-slot.is-extra { border-left-color: #9aa2b1; background: #fafbfc; }
+
+.version-slot-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.version-slot-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #35405a;
+}
+
+.version-slot-label.is-original,
+.version-slot-label.is-normal { background: #e6ecf7; color: #29406b; }
+.version-slot-label.is-simplified { background: #e2f2e8; color: #1f5c39; }
+.version-slot-label.is-elaborated { background: #f4ecdc; color: #6a5326; }
+.version-slot-label.is-extra { background: #eceef1; color: #4d545f; }
+
+.version-slot-origin {
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+.version-slot-text {
+  margin: 0 0 0.55rem;
+  font-size: 0.93rem;
+  line-height: 1.5;
+}
+
+.version-slot-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.version-role-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  color: #536075;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.version-slot-role-top {
+  display: flex;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.version-slot-role-top .version-role-select {
+  margin-top: 0;
+}
+
+.version-role-select select {
+  min-width: 11rem;
+  padding: 0.42rem 2rem 0.42rem 0.65rem;
+  border: 1px solid #cfd7e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #174f8f;
+  font: inherit;
+  cursor: pointer;
+}
+
+.version-role-select select:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.version-slot-editor textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line, #d9dee7);
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}
+
+.version-slot-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.version-slot-empty p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+/* A pair the heuristic could not call. Both texts are shown so the teacher
+   decides from the content, not from a score. */
+.version-pending-decision {
+  border: 1px solid #e6dfcf;
+  background: #fbf8f1;
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.85rem;
+}
+
+.version-pending-decision p {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.version-pending-decision blockquote {
+  margin: 0 0 0.6rem;
+  padding-left: 0.75rem;
+  border-left: 3px solid #ddd3bd;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.version-extra-block {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px dashed var(--line, #dfe3ea);
+}
+
+.version-extra-block h5 {
+  margin: 0 0 0.25rem;
+  font-size: 0.9rem;
+}
+
+.version-extra-block > p {
+  margin: 0 0 0.6rem;
+  color: #6b7280;
+  font-size: 0.82rem;
+}
+
+/* Publish runs in the background for minutes at a time. The trace is what
+   distinguishes "still working" from "stopped". */
+.publish-trace {
+  border: 1px solid #e6dfcf;
+  background: #fbf8f1;
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.85rem;
+}
+
+.publish-trace-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.publish-trace-count {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.publish-trace-current {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* A long pipeline is the one time the teacher can do nothing else, so the
+   progress takes the screen rather than hiding in a panel that may be
+   scrolled out of view. */
+.run-progress-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.run-progress-modal {
+  width: clamp(20rem, 52vw, 44rem);
+  max-height: 80vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.7rem;
+  padding: 1.4rem 1.5rem;
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+}
+
+.run-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.run-progress-head h3 {
+  margin: 0.1rem 0 0;
+  font-size: 1.15rem;
+}
+
+.run-progress-head-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.run-progress-count {
+  flex: none;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.run-progress-current {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #1f2937;
+}
+
+.run-progress-percent {
+  justify-self: end;
+  font-size: 0.8rem;
+  font-weight: 750;
+  color: #6b7280;
+}
+
+.publish-trace-bar {
+  height: 0.4rem;
+  margin: 0 0 0.55rem;
+  border-radius: 999px;
+  background: #ece4d3;
+  overflow: hidden;
+}
+
+.publish-trace-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 240ms ease;
+}
+
+/* Before the first counter arrives there is no fraction to show, and a bar
+   pinned at zero reads as "nothing is happening". A sliding sliver says
+   "working, position unknown" instead. */
+.publish-trace-bar.is-indeterminate > span {
+  width: 35%;
+  animation: publish-trace-sliding 1.1s ease-in-out infinite;
+}
+
+@keyframes publish-trace-sliding {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(285%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .publish-trace-bar.is-indeterminate > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
+}
+
+.publish-trace-failures {
+  margin: 0 0 0.5rem;
+  padding-left: 1.1rem;
+  color: #8a3d3d;
+  font-size: 0.85rem;
+}
+
+.publish-trace-log summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.publish-trace-log ol {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+/* --- Learning path review ---------------------------------------------- */
+
+.learning-path-page {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.learning-path-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.learning-path-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.topic-path-link {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.path-material {
+  border: 1px solid var(--line, #e2e6ee);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  background: #fff;
+}
+
+.path-material-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.path-material-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.path-material-stats {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.path-material-stats .is-warning {
+  color: #8a6d3b;
+  font-weight: 600;
+}
+
+/* A layer is the unit the ordering actually asserts: everything inside one is
+   a peer, so it is grouped rather than listed flat. */
+.path-layer {
+  border-left: 3px solid #dfe4ec;
+  padding-left: 0.8rem;
+  margin-bottom: 0.9rem;
+}
+
+.path-layer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+
+.path-layer-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #35405a;
+}
+
+.path-layer-head small {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+.path-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.path-step {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.path-step.is-floating {
+  border-color: #e6dfcf;
+  background: #fdfaf3;
+}
+
+.path-step-position {
+  flex: none;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #eef1f6;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #35405a;
+}
+
+.path-step-body { flex: 1; min-width: 0; }
+
+.path-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.path-step-section {
+  display: block;
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+.path-step-meta {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  margin-top: 0.2rem;
+}
+
+.path-chip {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.path-chip.is-image { background: #e6ecf7; color: #29406b; }
+.path-chip.is-floating { background: #f1ece0; color: #6a5326; }
+.path-chip.is-moved { background: #e2f2e8; color: #1f5c39; }
+
+.path-edge-log summary {
+  cursor: pointer;
+  font-size: 0.83rem;
+  color: #6b7280;
+}
+
+.path-edge-log ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.path-view-toggle {
+  display: flex;
+  gap: 0.35rem;
+}
+
+/* React Flow needs an explicit height or it collapses to nothing. */
+.path-graph {
+  height: 30rem;
+  border: 1px solid var(--line, #e2e6ee);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 0.6rem;
+  background: #fbfcfe;
+}
+
+.path-graph + small {
+  display: block;
+  margin: -0.3rem 0 0.8rem;
+}
+
+/* The passage itself. Collapsed by default so a long path stays scannable,
+   openable in bulk when the point is to read the sequencing. */
+.path-step-content {
+  margin: 0.3rem 0;
+}
+
+.path-step-content > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+.path-step-content > p {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  background: #f6f8fb;
+  border-left: 3px solid #dfe4ec;
+  border-radius: 4px;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* Question generation is the primary task in step 3. The centre shows the
+   learning objects being assessed; the compact question bank stays aside. */
+.question-generation-board {
+  display: grid;
+  gap: 1rem;
+  padding: 1.15rem;
+  border: 1px solid #b8d4f3;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #edf6ff 0%, #f8fbff 100%);
+}
+
+.question-generation-board h4,
+.question-generation-board p,
+.saved-question-heading p { margin: 0.25rem 0 0; }
+
+.question-generation-board p,
+.saved-question-heading p { color: #526a86; }
+
+.question-generation-board-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.question-generation-board-heading .btn { flex: 0 0 auto; }
+.question-generation-progress {
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  color: #174f4a;
+  background: #dff7f2;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+.question-learning-object-list { display: grid; gap: 0.75rem; }
+/* The card stacks: the concept and its action on one row, then whatever has
+   been generated from it beneath. It used to be a two-column grid with nowhere
+   for the result to go. */
+.question-learning-object-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid #d6e4f2;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.question-learning-object-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+}
+
+.question-learning-object-questions {
+  padding-top: 0.75rem;
+  border-top: 1px dashed #d6e4f2;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.question-learning-object-questions h5 {
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+.question-learning-object-empty {
+  margin: 0;
+  color: #697683;
+  font-size: 0.85rem;
+}
+
+.question-learning-object-questions > ol {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.generated-question-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.generated-question-row strong {
+  font-weight: 650;
+  color: #1f2937;
+}
+
+.generated-question-choices {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.15rem;
+  color: #475569;
+  font-size: 0.85rem;
+}
+
+/* The answer has to be findable at a glance during review, not hunted for. */
+.generated-question-choices .is-correct {
+  color: #166534;
+  font-weight: 700;
+}
+.question-learning-object-copy { display: grid; gap: 0.55rem; min-width: 0; }
+.question-learning-object-copy > small { color: #718096; overflow-wrap: anywhere; }
+.question-learning-object-title { display: flex; gap: 0.65rem; align-items: flex-start; }
+.question-learning-object-title > span {
+  display: grid;
+  width: 2.1rem;
+  height: 2.1rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: #1e5fa8;
+  background: #dcecff;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+.question-learning-object-title > div { display: grid; gap: 0.15rem; }
+.question-learning-object-title small { color: #51708f; }
+.question-learning-object-preview {
+  max-height: 5.2rem;
+  overflow: hidden;
+  color: #40556d;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.saved-question-heading { margin-top: 0.25rem; }
+.saved-question-list { display: grid; gap: 0.7rem; }
+.saved-question-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem 1rem;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  border: 1px solid #d9e4ef;
+  border-radius: 10px;
+  background: #fff;
+}
+.saved-question-card .question-review-meta { grid-column: 1 / -1; }
+.saved-question-card > strong { line-height: 1.45; }
+.saved-question-actions { display: flex; gap: 0.45rem; }
+.saved-question-warning { color: #9a6400; font-size: 0.78rem; font-weight: 800; }
+
+.question-tools-panel {
+  overflow-y: auto !important;
+  align-content: start;
+}
+.saved-question-sidebar { display: grid; gap: 0.7rem; }
+.saved-question-list.is-sidebar {
+  max-height: min(38vh, 24rem);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+.saved-question-list.is-sidebar .saved-question-card {
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  padding: 0.75rem;
+}
+.saved-question-list.is-sidebar .saved-question-card > small {
+  color: #718096;
+  overflow-wrap: anywhere;
+}
+.saved-question-list.is-sidebar .saved-question-actions { justify-content: flex-end; }
+
+.question-edit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(2px);
+}
+.question-edit-modal {
+  width: min(42rem, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  padding: 1.25rem;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
+}
+.question-edit-modal-head { padding: 0 0.25rem 0.5rem; }
+.question-edit-modal-head h3 { margin: 0.2rem 0 0; }
+.question-edit-modal .question-inline-editor { margin-bottom: 0; }
+
+@media (max-width: 760px) {
+  .question-learning-object-card,
+  .saved-question-card { grid-template-columns: 1fr; }
+  .question-generation-board-heading { display: grid; }
+  .question-generation-board-heading .btn { width: 100%; }
+  .saved-question-actions { justify-content: flex-end; }
+}
+
+/* Review grouping changes. The notice sits under the step-1 heading; it is
+   quiet when nothing was edited and draws the eye when something was. */
+.regrouping-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin: 0.6rem 0 0.2rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.regrouping-notice p {
+  margin: 0;
+  color: #5f6f7f;
+  font-size: 0.86rem;
+}
+
+.regrouping-notice.has-changes {
+  border-color: #f0d9a8;
+  background: #fff8e8;
+}
+
+.regrouping-notice.has-changes p {
+  color: #7a5412;
+  font-weight: 650;
+}
+
+.regrouping-modal {
+  width: clamp(22rem, 60vw, 52rem);
+}
+
+.regrouping-warning {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #f0c7c7;
+  background: #fdf1f1;
+  color: #8a3d3d;
+  font-size: 0.86rem;
+}
+
+.regrouping-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.regrouping-row {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.regrouping-row.is-chosen {
+  border-color: #9fc3ea;
+  background: #f4f9ff;
+}
+
+.regrouping-row.is-stay {
+  opacity: 0.8;
+}
+
+.regrouping-choice {
+  flex: none;
+  padding-top: 0.15rem;
+}
+
+.regrouping-body {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.regrouping-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.regrouping-source {
+  color: #6b7280;
+}
+
+.regrouping-pill {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  background: #eef2f7;
+  color: #4b5563;
+}
+
+.regrouping-pill.is-move {
+  background: #e3effc;
+  color: #1e5fa8;
+}
+
+.regrouping-pill.is-separate {
+  background: #fff1dc;
+  color: #8a5a12;
+}
+
+.regrouping-pill.is-stay {
+  background: #e6f6ef;
+  color: #0b6b4f;
+}
+
+.regrouping-pill.is-unscored {
+  background: #fdecec;
+  color: #8a3d3d;
+}
+
+.regrouping-reason,
+.regrouping-route {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #1f2937;
+}
+
+.regrouping-route {
+  font-weight: 650;
+}
+
+.regrouping-impact {
+  margin: 0.1rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: #5f6f7f;
+}
+
+.regrouping-impact .is-teacher {
+  color: #7a5412;
+}
+
+@media (max-width: 640px) {
+  .regrouping-notice {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* A version written before its Normal text changed. Publishing waits on it,
+   so it is marked where the teacher is already looking. */
+.version-slot.is-stale {
+  border-color: #f0c987;
+  box-shadow: 0 0 0 1px #f0c987 inset;
+}
+
+.version-slot-stale {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 0 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #f0d9a8;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #7a5412;
+}
+
+.version-slot-stale p {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.connection-eyebrow.is-problem {
+  color: #a23b3b;
+}
+
+.version-stale-jump {
+  border-color: #f0c987;
+  color: #7a5412;
+  background: #fff8e8;
+}
+
+/* Teacher controls for a step's prerequisites (review step 5). */
+.path-link-editor { display: grid; gap: 0.35rem; margin-top: 0.35rem; }
+.path-link-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.84rem; }
+.path-link-label { font-weight: 600; color: #35405a; }
+.path-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.2rem 0.1rem 0.55rem;
+  border: 1px solid #c9d9ec;
+  border-radius: 999px;
+  background: #eef5fc;
+  color: #1e4d7a;
+}
+.path-link-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.path-link-chip button:hover { background: #d7e7f6; }
+.path-link-add select {
+  font-size: 0.82rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px dashed #b9c4d3;
+  border-radius: 6px;
+  background: #fff;
+  color: #35405a;
+  max-width: 100%;
+}
+.path-link-suggestions summary { cursor: pointer; font-size: 0.82rem; color: #6b7280; }
+.path-link-suggestions ul { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; gap: 0.3rem; }
+.path-link-suggestions li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.84rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #edf0f5;
+  border-radius: 6px;
+  background: #fff;
+}
+.path-link-actions { display: inline-flex; gap: 0.35rem; }
+.path-changed-note {
+  margin: 0.4rem 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #f0d9a8;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #7a5412;
+  font-size: 0.86rem;
+}
+.path-link-error {
+  margin: 0.4rem 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #8a3d3d;
+  font-size: 0.86rem;
+}
+
+/* Learning path concept map (review step 5 and the learning path page).
+   Subtopic at the top, lesson headings as branches, concepts in teaching order.
+   Lines are the teaching flow; selecting a box highlights its prerequisites. */
+.cm {
+  --cm-line: #9aa6b8;
+  --cm-ink: #1f2a37;
+  --cm-card: #ffffff;
+  --cm-needed: #1d6a86;
+  --cm-leads: #2f7556;
+  --cm-gap: 22px;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.cm-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.1rem;
+  font-size: 0.88rem;
+}
+
+.cm-key {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.cm-key.is-needed { background: #d6e9f0; color: var(--cm-needed); }
+.cm-key.is-leads { background: #dcefe5; color: var(--cm-leads); }
+
+.cm-scroll {
+  overflow-x: auto;
+  padding: 1.2rem 0.6rem 1.6rem;
+  border: 1px solid #e3e8ef;
+  border-radius: 12px;
+  background: #f6f7f9;
+}
+
+.cm-canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: max-content;
+  margin: 0 auto;
+}
+
+.cm-root {
+  padding: 0.7rem 2.4rem;
+  border: 2px solid var(--cm-ink);
+  border-radius: 999px;
+  background: #cfe0f7;
+  color: var(--cm-ink);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.cm-block { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+/* The vertical line joining one block to the one above it. */
+.cm-link {
+  display: block;
+  width: 2px;
+  height: var(--cm-gap);
+  background: var(--cm-line);
+}
+
+.cm-row { display: flex; justify-content: center; }
+.cm-row .cm-card { width: 340px; }
+
+.cm-branches {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 250px);
+  gap: 0 26px;
+  padding-top: var(--cm-gap);
+  padding-bottom: var(--cm-gap);
+}
+
+/* Horizontal bars from the first column's centre to the last's, above and below. */
+.cm-branches::before,
+.cm-branches::after {
+  content: "";
+  position: absolute;
+  left: 125px;
+  right: 125px;
+  height: 2px;
+  background: var(--cm-line);
+}
+.cm-branches::before { top: 0; }
+.cm-branches::after { bottom: 0; }
+
+.cm-column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Each column drops from the top bar and rises into the bottom bar. */
+.cm-column::before,
+.cm-column::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 1px);
+  width: 2px;
+  background: var(--cm-line);
+}
+.cm-column::before { top: calc(-1 * var(--cm-gap)); height: var(--cm-gap); }
+.cm-column::after { top: 100%; height: var(--cm-gap); }
+
+.cm-heading {
+  width: 100%;
+  padding: 0.5rem 0.8rem;
+  border: 2px solid var(--cm-ink);
+  border-radius: 12px;
+  color: var(--cm-ink);
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.cm-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  position: relative;
+}
+
+/* A short line between the heading and the first box, and between boxes. */
+.cm-stack > .cm-card { position: relative; margin-top: 16px; }
+.cm-stack > .cm-card::before {
+  content: "";
+  position: absolute;
+  top: -18px;
+  left: calc(50% - 1px);
+  width: 2px;
+  height: 16px;
+  background: var(--cm-line);
+}
+
+/* A column shorter than its neighbours still reaches the bar below. */
+.cm-stack::after {
+  content: "";
+  flex: 1;
+  width: 2px;
+  min-height: 0;
+  background: var(--cm-line);
+}
+
+.cm-card {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0;
+  border: 2px solid var(--cm-ink);
+  border-radius: 10px;
+  background: var(--cm-card);
+  color: var(--cm-ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  transition: opacity 150ms ease, box-shadow 150ms ease;
+}
+
+.cm-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 2px solid var(--cm-ink);
+  font-weight: 800;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.cm-card-position {
+  flex: none;
+  min-width: 1.5rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.75);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.cm-card-summary {
+  padding: 0 0.7rem 0.6rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: #374151;
+}
+
+/* Branch colours, echoing a printed concept map. */
+.cm-heading.tone-1, .cm-card.tone-1 .cm-card-title { background: #f6c9cc; }
+.cm-heading.tone-2, .cm-card.tone-2 .cm-card-title { background: #f4dfc0; }
+.cm-heading.tone-3, .cm-card.tone-3 .cm-card-title { background: #c9dcf5; }
+.cm-heading.tone-4, .cm-card.tone-4 .cm-card-title { background: #d6cff3; }
+.cm-heading.tone-5, .cm-card.tone-5 .cm-card-title { background: #c8ebe7; }
+.cm-card.tone-plain .cm-card-title { background: #e8ecf2; }
+
+.cm-card:hover { box-shadow: 0 4px 14px rgba(31, 42, 55, 0.14); }
+.cm-card:focus-visible { outline: 3px solid var(--cm-needed); outline-offset: 3px; }
+
+.cm-card.is-selected { box-shadow: 0 0 0 4px #1f2a37; }
+.cm-card.is-needed { box-shadow: 0 0 0 4px var(--cm-needed); }
+.cm-card.is-leads { box-shadow: 0 0 0 4px var(--cm-leads); }
+.cm-card.is-dimmed { opacity: 0.35; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-card { transition: none; }
+}
+
+/* ---- Learning path review: full text, learn-first panel, path strip ---- */
+
+/* Branch colours shared by the list, the strip and the concept map. */
+.tone-1 { --tone: #f6c9cc; --tone-ink: #7c2d34; }
+.tone-2 { --tone: #f4dfc0; --tone-ink: #6b4a14; }
+.tone-3 { --tone: #c9dcf5; --tone-ink: #1f4a7a; }
+.tone-4 { --tone: #d6cff3; --tone-ink: #45338a; }
+.tone-5 { --tone: #c8ebe7; --tone-ink: #1d5c55; }
+.tone-plain { --tone: #e8ecf2; --tone-ink: #35405a; }
+
+.path-step-position[class*="tone-"] { background: var(--tone); color: var(--tone-ink); }
+
+.path-branch {
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: var(--tone);
+  color: var(--tone-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.path-step-text {
+  margin: 0.35rem 0 0.2rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: #2b3445;
+  white-space: pre-line;
+}
+
+.path-step-needs { margin: 0.35rem 0 0; font-size: 0.85rem; }
+
+/* Concept map boxes carry the whole passage. */
+.cm-card-text {
+  padding: 0 0.7rem 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #374151;
+  white-space: pre-line;
+}
+
+/* What must a student learn before this? */
+.lf {
+  margin-top: 0.7rem;
+  border: 1.5px solid #b9c9dc;
+  border-radius: 10px;
+  background: #f3f7fb;
+  overflow: hidden;
+}
+
+.lf-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.55rem 0.8rem;
+  background: #e3ecf6;
+  border-bottom: 1.5px solid #b9c9dc;
+}
+
+.lf-head h5 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #1c3553;
+}
+
+.lf-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #3d5a7a;
+  font-variant-numeric: tabular-nums;
+}
+
+.lf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem 0.8rem 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.lf-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 7px;
+  background: #ffffff;
+  border: 1px solid #d5e0ec;
+}
+
+.lf-position {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 6px;
+  background: #1c3553;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.lf-title { font-weight: 600; font-size: 0.88rem; color: #1f2a37; }
+
+.lf-remove {
+  border: 0;
+  background: transparent;
+  color: #9b3b3b;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.2rem 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lf-remove:hover { background: #fbe8e8; }
+.lf-remove:focus-visible { outline: 2px solid #9b3b3b; outline-offset: 1px; }
+
+.lf-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #1c3553;
+}
+
+.lf-add select {
+  flex: 1 1 220px;
+  max-width: 420px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #9fb4cc;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1f2a37;
+  font: inherit;
+  font-weight: 500;
+}
+
+.lf-suggestions {
+  border-top: 1px dashed #b9c9dc;
+  background: #fbfaf5;
+}
+
+.lf-suggestions summary {
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #6a5326;
+}
+
+.lf-suggestions ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.8rem 0.7rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.lf-suggestion {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #e6dcc5;
+  border-radius: 8px;
+  background: #ffffff;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.lf-suggestion-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+}
+
+.lf-branch {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.lf-flag {
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: #fbe8e8;
+  color: #8a3d3d;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.lf-suggestion-text {
+  margin: 0;
+  padding-left: 0.6rem;
+  border-left: 3px solid #e6dcc5;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: #374151;
+  white-space: pre-line;
+}
+
+.lf-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: #4b5563;
+}
+.lf-suggestion-actions > span { flex: 1 1 220px; }
+
+/* Path counts, each with a swatch matching the stroke on the concept boxes. */
+.ps-caption {
+  margin: 0.3rem 0 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 1.2rem;
+  font-size: 0.86rem;
+  color: #4b5563;
+}
+
+.ps-caption b {
+  color: #1f2a37;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.2rem;
+}
+
+.ps-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 12px;
+  margin-right: 0.4rem;
+  vertical-align: -1px;
+  border-radius: 3px;
+  background: #ffffff;
+}
+.ps-swatch.is-floating { border: 2px dashed #7c8698; }
+.ps-swatch.is-moved { border: 2px solid #c27a12; }
+
+/* Each concept is its own clearly bounded box; its stroke says its status. */
+.path-step-list { gap: 0.75rem; }
+
+.path-step {
+  padding: 0.75rem 0.85rem;
+  border: 1.5px solid #cfd6e2;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.path-step.is-floating {
+  border: 2px dashed #7c8698;
+  background: #ffffff;
+}
+
+.path-step.is-moved { border: 2px solid #c27a12; }
+
+/* Both at once: moved, and linked to nothing. */
+.path-step.is-floating.is-moved { border: 2px dashed #c27a12; }
+
+.path-chip.is-floating { background: #eef0f4; color: #4b5563; }
+.path-chip.is-moved { background: #fbeed8; color: #8a5410; }
+
+/* A bundle row's controls get their own line.
+   The row is a three-column grid -- number, copy, controls -- and at the
+   review panel's width (~380px) that third column squeezed "Move out" and the
+   "Move to…" menu on top of the object's number and title. Spanning the whole
+   row puts them underneath instead, so the title stays readable at every
+   width. Every control, its aria-label and its aria-disabled behaviour are
+   untouched: this is layout only. */
+.concept-bundle .connection-object-row,
+.concept-bundle .connection-object-row:last-child {
+  grid-template-columns: 2rem minmax(0, 1fr);
+}
+
+.concept-bundle .concept-bundle-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  margin-top: 0.15rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.concept-bundle .concept-bundle-move-to select {
+  max-width: 100%;
+}

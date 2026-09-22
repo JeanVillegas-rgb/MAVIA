@@ -1,5 +1,4 @@
 import secrets
-from django.conf import settings
 from datetime import timedelta
 
 from django.utils import timezone
@@ -36,13 +35,6 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        if not settings.EMAIL_VERIFICATION_REQUIRED:
-            token, _ = Token.objects.get_or_create(user=user)
-            return Response(
-                {"token": token.key, "user": UserSerializer(user).data,
-                 "verification_required": False},
-                status=status.HTTP_201_CREATED,
-            )
         _issue_verification(user)
         return Response(
             {
@@ -51,7 +43,6 @@ class RegisterView(generics.CreateAPIView):
                     "verify your account before logging in."
                 ),
                 "user": UserSerializer(user).data,
-                "verification_required": True,
             },
             status=status.HTTP_201_CREATED,
         )

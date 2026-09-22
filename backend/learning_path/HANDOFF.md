@@ -109,6 +109,16 @@ API for anything running in a browser.
           "category": "Facts and Information"
         }
       ],
+      "alternates": [
+        {
+          "learning_object_id": 9,
+          "material_id": 2,
+          "material_title": "states-of-matter-accessible",
+          "title": "Solid",
+          "versions": { "normal": { "...": "..." }, "simplified": null, "elaborated": null },
+          "questions": [ { "...": "..." } ]
+        }
+      ],
       "prerequisites": [2],
       "leads_to": [15]
     }
@@ -123,12 +133,14 @@ API for anything running in a browser.
 | `position` | 1-based teaching order. **Teach in this order.** |
 | `depth` | the longest chain of prerequisites leading here. `0` = needs nothing. Steps with the same depth don't depend on each other. |
 | `concept_id` | stable id of the concept for this publish. `prerequisites` / `leads_to` refer to these. |
-| `title`, `section_title` | display name, and the lesson heading it sits under (may be empty) |
-| `learning_object_id` | the object holding the Normal text. Questions and versions belong to it. |
+| `title`, `section_title` | display name, and the lesson heading it sits under (may be empty). A split passage is named without its "(Part 1 of 2)" suffix. |
+| `learning_object_id` | the object holding the Normal text -- for a split passage, its first part. Versions and questions cover **every part** of the passage, not just this object. |
 | `sources` | which uploaded PDFs contributed |
 | `versions.normal` | always present |
+| `versions.*.parts` | *(mavia addition)* one `{text, audio_url}` per chunk of the passage, in reading order. **Play these.** The chunker cuts an oversized passage into "(Part 1 of 2)" pieces; publishing merges them into one concept, but the step only records the first piece's group, so reading that group alone dropped every later part -- and, when question generation put the concept's questions on a later part, left the step with none, which made the engine skip it. `text` is the whole passage; `audio_url` is only filled when one recording covers all of it. A simplified/elaborated rung is `null` unless every part has one. |
 | `versions.simplified` / `.elaborated` | `null` if missing. A successful publish requires both, so on a published path they are normally present — still handle `null`. |
-| `questions` | final (classified, de-duplicated) questions only; drafts never appear |
+| `questions` | at most 2: the earliest-generated LOT and earliest-generated HOT question on this node (LOT first), drafts never appear. A step is one assessment, not a quiz bank -- capped here even if question generation left more than one final row per `thinking_order` on a node (seen on real data: 3-4 final rows on one concept). |
+| `alternates` | *(mavia addition, not upstream)* other uploaded PDFs' own independent take on this concept — same shape as the step itself (`versions` + `questions`), keyed to their own `learning_object_id`. Empty when only one PDF taught this concept. `mavia`'s adaptive engine reaches for one of these when re-explaining the representative's own text at every level hasn't worked; see `adaptive/PATH_MODE.md`. |
 | `prerequisites` | `concept_id`s a student needs **first**, in path order |
 | `leads_to` | `concept_id`s that build on this one |
 

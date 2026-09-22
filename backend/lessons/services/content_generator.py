@@ -1001,11 +1001,23 @@ def _remove_outline_container_objects(learning_objects: list[dict], outline_cont
     return cleaned
 
 
+def _is_image_learning_object(item: dict) -> bool:
+    return (
+        item.get("type") in {"image_description", "image"}
+        or item.get("kind") in {"image", LearningObject.Kind.IMAGE}
+        or bool(item.get("image_url"))
+    )
+
+
 def remove_structural_metadata_learning_objects(learning_objects: list[dict]) -> list[dict]:
     cleaned = [
         item
         for item in learning_objects
-        if not is_structural_metadata_label(item.get("title") or "")
+        # A figure keeps its narration even when its caption reads like a
+        # heading ("Comparison of Solid, Liquid, and Gas") -- dropping it would
+        # lose the only text a screen-reader user gets for that image.
+        if _is_image_learning_object(item)
+        or not is_structural_metadata_label(item.get("title") or "")
     ]
     for order, item in enumerate(cleaned):
         item["order"] = order
@@ -1489,10 +1501,42 @@ def _normalized_heading_label(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+# Recap / navigation headings that summarise or point at content rather than
+# teach it. A learning object whose whole title is one of these is furniture,
+# not a step -- even when the chunker has hung real (usually duplicated) prose
+# under it. Deliberately conservative: "introduction", "summary" and "overview"
+# are left out, because a lesson's only substantive prose is sometimes there.
+_RECAP_METADATA_LABELS = frozenset({
+    "key facts",
+    "key facts to remember",
+    "key points",
+    "key points for students",
+    "key points to remember",
+    "key takeaways",
+    "things to remember",
+    "points to remember",
+    "easy way to remember",
+    "simple way to remember",
+    "quick review",
+    "quick review questions",
+    "review questions",
+    "important concept to teach",
+    "teachers notes",
+    "teacher s notes",
+})
+
+_PART_OF_SUFFIX = re.compile(r"\s+part\s+\d+\s+of\s+\d+$")
+
+
 def is_structural_metadata_label(text: str) -> bool:
     label = _normalized_heading_label(text)
     if not label:
         return False
+    # "Key Facts to Remember (Part 1 of 2)" normalises with a trailing
+    # "part 1 of 2"; the label underneath it is what decides.
+    label = _PART_OF_SUFFIX.sub("", label).strip()
+    if label in _RECAP_METADATA_LABELS:
+        return True
     return bool(
         re.fullmatch(
             r"(?:module|unit|chapter|lesson|week|quarter|section|part)\s+"
@@ -3334,7 +3378,7 @@ def _sync_learning_objects(material: LearningMaterial, generated_json: dict):
     material.learning_objects.all().delete()
     synced_learning_objects = []
     for index, item in enumerate(generated_json.get("learning_objects", [])):
-        if is_structural_metadata_label(item.get("title") or ""):
+        if not _is_image_learning_object(item) and is_structural_metadata_label(item.get("title") or ""):
             continue
         is_image = item.get("type") in {"image_description", "image"} or bool(item.get("image_url"))
         kind = LearningObject.Kind.IMAGE if is_image else LearningObject.Kind.TEXT

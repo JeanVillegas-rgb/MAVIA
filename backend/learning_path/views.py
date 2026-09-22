@@ -9,9 +9,13 @@ from user.permissions import IsTeacherOrAdmin
 from .services import build_topic_path, get_published_path
 from .services.teacher_links import LinkError, add_link, decide_link
 
-# The review preview has no permission classes, deliberately: it is a
-# teacher-authoring endpoint beside `lessons` and `question_generation`, which
-# are also open, and gating only this app made the review screen unreachable.
+# Ported from Milestone1-Jean (2026-09-15), where this review preview had no
+# permission classes: that project's DRF default is AllowAny, so it and
+# several `lessons`/`question_generation` teacher-authoring endpoints were
+# open by the project's default rather than by a deliberate per-view choice.
+# mavia's default is the opposite (IsAuthenticated app-wide, opt out per
+# view) -- ported here as IsTeacherOrAdmin to match this file's own other
+# actions, rather than carry the open behavior forward silently.
 # The published path is different -- students read it -- so it requires a
 # signed-in user.
 
@@ -19,6 +23,7 @@ ANSWER_VIEWERS = {"TEACHER", "ADMIN"}
 
 
 @api_view(["GET"])
+@permission_classes([IsTeacherOrAdmin])
 def topic_learning_path(request, node_id):
     """The topic's learning path as the review screen previews it.
 

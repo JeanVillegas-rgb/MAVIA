@@ -99,7 +99,7 @@ export type RegisterPayload = {
 
 export function register(
   data: RegisterPayload
-): Promise<{ message?: string; user: User; verification_required?: boolean }> {
+): Promise<{ message: string; user: User }> {
   return request("/auth/register/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -158,6 +158,99 @@ export type ApiTrack = {
   text: string;
 };
 
+// --- learning-path ("path mode") -------------------------------------------
+// A topic published with a learning path (backend: learning_path app) walks
+// concepts in prerequisite order instead of a flat question list. Present
+// only once a topic has been published that way; a lesson/course otherwise
+// stays on the plain question list above (ApiLesson.questions).
+// See backend/adaptive/PATH_MODE.md for the full ruling this mirrors.
+
+export type Variant = "normal" | "simplified" | "elaborated";
+
+export type ApiStepQuestion = {
+  id: number;
+  text: string;
+  format: "MCQ" | "TF" | string;
+  choices: Record<string, string> | null;
+  bloom_level: string;
+  thinking_order: "LOT" | "HOT" | string;
+  difficulty: string;
+  category: string;
+};
+
+// One chunk of a concept's narration. The content chunker splits an
+// oversized passage into "(Part 1 of 2)" pieces; the backend merges those back
+// into one concept and lists every piece here, in reading order, each with its
+// own recording. Play `parts`, not `audio_url` -- that field only covers the
+// whole of `text` when there is a single part.
+export type ApiStepVersionPart = { text: string; audio_url: string };
+
+export type ApiStepVersion = {
+  text: string;
+  audio_url: string;
+  parts?: ApiStepVersionPart[];
+} | null;
+
+export type ApiStepVersions = {
+  normal: ApiStepVersion;
+  simplified: ApiStepVersion;
+  elaborated: ApiStepVersion;
+};
+
+// Another uploaded PDF's own independent telling of this step's concept —
+// same shape as the step itself. The engine switches to one of these
+// (LearningState.current_chunk) once the representative's own ladder
+// (normal/simplified/elaborated) is exhausted; see PATH_MODE.md "chunk
+// switching". Rendered by [lessonId].tsx's stepChunk() helper, which resolves
+// the active chunk's versions/questions instead of always the representative's.
+export type ApiStepAlternate = {
+  learning_object_id: number;
+  material_id: number;
+  material_title: string;
+  title: string;
+  versions: ApiStepVersions;
+  questions: ApiStepQuestion[];
+};
+
+export type ApiStep = {
+  position: number;
+  depth: number;
+  concept_id: number;
+  title: string;
+  section_title: string;
+  learning_object_id: number;
+  sources: { material_id: number; title: string }[];
+  versions: ApiStepVersions;
+  // 2 questions per concept, 1 LOT + 1 HOT — never includes correct_answer,
+  // per learning_path/HANDOFF.md: answers never reach a student's device.
+  questions: ApiStepQuestion[];
+  alternates: ApiStepAlternate[];
+  prerequisites: number[];
+  leads_to: number[];
+};
+
+export type ApiLearningState = {
+  id: number;
+  course: number;
+  current_module: number | null;
+  current_lesson_node: number | null;
+  current_question: number | null;
+  current_question_attempts: number;
+  // Path-mode fields — null/"normal" while a topic is in the legacy flat mode.
+  current_step_position: number | null;
+  current_generated_question: number | null;
+  remediation_target_position: number | null;
+  current_chunk: number | null;
+  current_variant: Variant;
+  mastery: number;
+  attempts: number;
+  completed: boolean;
+  started_at: string;
+  updated_at: string;
+};
+
+// -----------------------------------------------------------------------
+
 export type ApiLesson = {
   id: number;
   title: string;
@@ -187,31 +280,66 @@ export function resolveMediaUrl(path: string): string {
 }
 
 export function fetchMyCourses(): Promise<ApiCourse[]> {
-  return request("/adaptive-portal/my-courses/");
+  return request("/adaptive/my-courses/");
 }
 
 export function fetchMyCourseLessons(courseId: number | string): Promise<ApiLesson[]> {
-  return request(`/adaptive-portal/my-courses/${courseId}/lessons/`);
+  return request(`/adaptive/my-courses/${courseId}/lessons/`);
 }
 
 export function fetchLessonPackage(lessonId: number | string): Promise<ApiLesson> {
-  return request(`/adaptive-portal/lessons/${lessonId}/`);
+  return request(`/adaptive/lessons/${lessonId}/`);
 }
 
-export function startLearning(courseId: number | string) {
-  return request("/adaptive-portal/start/", {
+export type ApiStartResult = {
+  learning_state: ApiLearningState;
+  lesson: ApiLesson | null;
+  // Present only when this student's next content is a published-path
+  // concept rather than the plain question list on `lesson`.
+  current_step: ApiStep | null;
+};
+
+// `lessonNodeId` is the topic the player has open. The engine's cursor is
+// course-wide, so without it the two can disagree -- the student taps one
+// lesson and is served another's concept, or a finished course leaves them
+// with no assigned question and the player quietly falls back to a flat
+// playlist with no questions at all.
+export function startLearning(
+  courseId: number | string,
+  lessonNodeId?: number | string
+): Promise<ApiStartResult> {
+  return request("/adaptive/start/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ course_id: courseId }),
+    body: JSON.stringify({
+      course_id: courseId,
+      ...(lessonNodeId != null ? { lesson_node_id: Number(lessonNodeId) } : {}),
+    }),
   });
 }
+
+export type ApiSubmitResult = {
+  is_correct: boolean;
+  mastery: number;
+  completed: boolean;
+  next_module: number | null;
+  next_lesson_node: number | null;
+  next_question: number | null;
+  // Path-mode only (undefined in legacy mode):
+  next_step_position?: number | null;
+  remediation_target_position?: number | null;
+  current_chunk?: number | null;
+  current_variant?: Variant;
+  current_step: ApiStep | null;
+  lesson: ApiLesson | null;
+};
 
 export function submitResponse(params: {
   learning_state_id: number;
   question_id: number;
   selected_answer: string;
-}) {
-  return request("/adaptive-portal/submit-response/", {
+}): Promise<ApiSubmitResult> {
+  return request("/adaptive/submit-response/", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
