@@ -138,10 +138,8 @@ def reset_reachability_cache() -> None:
         return
 
 
-def nearby_lesson_text(
-    blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, fallback="", siblings=None,
-):
-    """The lesson text printed around this figure, nearest first.
+def _nearby_blocks(blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, siblings=None):
+    """The lesson text blocks printed around this figure, in reading order.
 
     What used to fill this slot was the document's opening, whatever page the
     figure was on. On a one-page handout that is the text beside the figure by
@@ -155,7 +153,7 @@ def nearby_lesson_text(
     """
     on_page = [item for item in blocks if item.get("page") == page_number and (item.get("text") or "").strip()]
     if not on_page:
-        return fallback
+        return []
 
     def top(item):
         box = item.get("bbox") or (0, 0, 0, 0)
@@ -182,7 +180,7 @@ def nearby_lesson_text(
             )
         ]
         if not on_page:
-            return fallback
+            return []
 
     if bbox:
         centre = (float(bbox[1]) + float(bbox[3])) / 2
@@ -202,7 +200,57 @@ def nearby_lesson_text(
         kept.append(item)
         used += len(text) + 1
     kept.sort(key=top)
-    return "\n".join(" ".join((item.get("text") or "").split()) for item in kept)[:limit]
+    return kept
+
+
+def _block_text(blocks, limit=_MAX_NEARBY_TEXT):
+    return "\n".join(" ".join((item.get("text") or "").split()) for item in blocks)[:limit]
+
+
+def nearby_lesson_text(
+    blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, fallback="", siblings=None,
+):
+    """The lesson text printed around this figure, in reading order."""
+    kept = _nearby_blocks(
+        blocks, page_number=page_number, bbox=bbox, limit=limit, siblings=siblings,
+    )
+    return _block_text(kept, limit) if kept else fallback
+
+
+def lesson_text_around(
+    blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, siblings=None,
+):
+    """Split that text into what the lesson has said and what it will say.
+
+    A figure is usually printed above the passage that explains it, so a
+    description that explains the concept in full says it first and the lesson
+    then says it again moments later. The student hears the same thing twice
+    and the figure's own contribution -- what it actually looks like -- is
+    crowded out.
+
+    Position is what tells the two apart, and the distinction only exists
+    because the figure's box is known. A figure with nothing below it is
+    explained in full, as it must be: nothing follows to do the explaining.
+    """
+    kept = _nearby_blocks(
+        blocks, page_number=page_number, bbox=bbox, limit=limit, siblings=siblings,
+    )
+    if not kept or not bbox:
+        return {"before": _block_text(kept, limit), "after": ""}
+
+    figure_top, figure_bottom = float(bbox[1]), float(bbox[3])
+
+    def top(item):
+        return float((item.get("bbox") or (0, 0, 0, 0))[1])
+
+    # A block straddling the figure's own band is counted as already said:
+    # treating it as upcoming would suppress the description on the strength
+    # of a caption or a stray line beside the graphic.
+    before = [item for item in kept if top(item) < figure_bottom]
+    after = [item for item in kept if top(item) >= figure_bottom]
+    if figure_top == figure_bottom:  # a zero-height box tells us nothing
+        before, after = kept, []
+    return {"before": _block_text(before, limit), "after": _block_text(after, limit)}
 
 
 def build_prompt(
@@ -212,6 +260,7 @@ def build_prompt(
     caption: str = "",
     visible_text: str = "",
     nearby_is_fallback: bool = False,
+    upcoming_text: str = "",
 ) -> str:
     """Role, Task, Context, Format -- four labelled sections, not one paragraph.
 
@@ -258,6 +307,11 @@ def build_prompt(
         context_lines.append(
             f'Lesson text near the figure: "{nearby_text.strip()[:_MAX_NEARBY_TEXT]}"'
         )
+    if upcoming_text:
+        context_lines.append(
+            "Lesson text printed immediately after the figure, which the student "
+            f'is about to hear: "{upcoming_text.strip()[:_MAX_NEARBY_TEXT]}"'
+        )
     if context_lines:
         heading = (
             "CONTEXT (background only — this is what the student has already "
@@ -272,6 +326,16 @@ def build_prompt(
             heading += (
                 " Where it already explains an idea in words, do not explain "
                 "it again -- give the visual specifics those words leave out."
+            )
+        if upcoming_text:
+            # The lesson teaches this concept in words moments later. A
+            # narration that teaches it first makes the student hear it twice
+            # and crowds out what only the figure can give them, so the figure
+            # introduces what is shown and the lesson keeps the explaining.
+            heading += (
+                " The lesson explains that last passage immediately after this "
+                "figure, so do not explain it yourself: say what is shown and "
+                "leave the reason to the lesson."
             )
         sections.append(heading + "):\n" + "\n".join(context_lines))
 
@@ -411,6 +475,7 @@ def describe_image_for_lesson(
     caption: str = "",
     visible_text: str = "",
     nearby_is_fallback: bool = False,
+    upcoming_text: str = "",
 ) -> str:
     """A spoken explanation of what the figure teaches, or "" if unavailable."""
     if not image_bytes:
@@ -425,6 +490,7 @@ def describe_image_for_lesson(
         caption=caption,
         visible_text=visible_text,
         nearby_is_fallback=nearby_is_fallback,
+        upcoming_text=upcoming_text,
     )
     cache_key = _cache_key(image_bytes, prompt, model)
     cached = _cached_description(cache_key)

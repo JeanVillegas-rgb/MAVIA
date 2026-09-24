@@ -15,7 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 
-from .image_describer import describe_image_for_lesson, nearby_lesson_text
+from .image_describer import describe_image_for_lesson, lesson_text_around
 from .instructional_content_classifier import (
     classify_instructional_blocks,
     detect_instructional_document_role,
@@ -1060,15 +1060,19 @@ def describe_pdf_images(
             # document's opening, which only happened to be the right passage
             # on a one-page handout. ``nearby_text`` remains the fallback for
             # a page that holds no text of its own.
-            figure_text = nearby_text
+            figure_text, upcoming = nearby_text, ""
             if blocks:
-                figure_text = nearby_lesson_text(
+                around = lesson_text_around(
                     blocks,
                     page_number=image.get("page_number"),
                     bbox=image.get("bbox"),
-                    fallback=nearby_text,
                     siblings=images,
                 )
+                # The passage below the figure is what the lesson is about to
+                # say, so the narration introduces the figure instead of
+                # teaching the same thing a moment early.
+                figure_text = around["before"] or nearby_text
+                upcoming = around["after"]
             # Text the figure was never printed beside cannot be what the
             # lesson "already said", so it must not carry the instruction not
             # to say it again: a figure alone on its page would be told to
@@ -1080,6 +1084,7 @@ def describe_pdf_images(
                 caption=caption,
                 visible_text=visible_text,
                 nearby_is_fallback=not blocks or figure_text == nearby_text,
+                upcoming_text=upcoming,
             )
 
         description = model_description or existing or caption

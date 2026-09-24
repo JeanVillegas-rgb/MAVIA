@@ -149,3 +149,55 @@ class FallbackContextTests(SimpleTestCase):
         )
 
         self.assertIn("do not explain it again", prompt)
+
+
+class TextAroundTests(SimpleTestCase):
+    """What the lesson has said already, and what it is about to say.
+
+    A figure printed above its own explanation was given that explanation and
+    described it in full, so the narration taught the concept and the lesson
+    then taught it again a moment later. Position tells the two apart.
+    """
+
+    blocks = [
+        block(1, "Matter exists in three everyday states.", 100),
+        block(1, "In a solid, the particles are tightly packed together.", 700),
+        block(1, "In a liquid, the particles slide past one another.", 800),
+    ]
+    figure = (0.0, 300.0, 400.0, 600.0)
+
+    def test_text_above_and_below_are_reported_separately(self):
+        around = image_describer.lesson_text_around(
+            self.blocks, page_number=1, bbox=self.figure,
+        )
+
+        self.assertIn("three everyday states", around["before"])
+        self.assertNotIn("three everyday states", around["after"])
+        self.assertIn("tightly packed", around["after"])
+        self.assertIn("slide past", around["after"])
+
+    def test_a_figure_with_nothing_after_it_has_no_upcoming_text(self):
+        """A food web with no explanation below must still be explained fully."""
+        around = image_describer.lesson_text_around(
+            self.blocks, page_number=1, bbox=(0.0, 900.0, 400.0, 1000.0),
+        )
+
+        self.assertEqual(around["after"], "")
+        self.assertIn("tightly packed", around["before"])
+
+
+class UpcomingTextPromptTests(SimpleTestCase):
+    def test_the_model_is_told_not_to_pre_empt_the_explanation_below(self):
+        prompt = image_describer.build_prompt(
+            lesson_title="States of matter",
+            upcoming_text="In a solid, the particles are tightly packed together.",
+        )
+
+        self.assertIn("tightly packed", prompt)
+        self.assertIn("immediately after", prompt)
+        self.assertIn("do not explain it yourself", prompt)
+
+    def test_nothing_below_leaves_the_description_free_to_explain(self):
+        prompt = image_describer.build_prompt(lesson_title="States of matter")
+
+        self.assertNotIn("do not explain it yourself", prompt)
