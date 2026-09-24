@@ -2350,11 +2350,18 @@ function LearningObjectConnections({
       || busyAction
       || !unclassifiedGroupSignature
     ) return;
-    const runKey = `${topicId}:${unclassifiedGroupSignature}`;
+    // Keyed on the uploaded material, never on which concepts are still
+    // unclassified: a concept the model fails on stays unclassified, which
+    // would shrink that list, change the key and launch the identical run a
+    // second time. The material signature is what a new upload changes and
+    // what a classification run leaves alone, so the run fires once per batch
+    // of new content and a failure reaches the teacher instead of retrying
+    // itself.
+    const runKey = `${topicId}:${materialSignature}`;
     if (automaticClassificationRef.current === runKey) return;
     automaticClassificationRef.current = runKey;
     generateAllVersions();
-  }, [reviewStep, loading, busyAction, topicId, unclassifiedGroupSignature]);
+  }, [reviewStep, loading, busyAction, topicId, materialSignature, unclassifiedGroupSignature]);
 
   function toggleSelection(objectId) {
     if (reviewStep !== "objects") return;

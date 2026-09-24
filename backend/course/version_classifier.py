@@ -24,9 +24,14 @@ def _prompt(members, representative=None):
         for position, item in enumerate(members, start=1)
     ]
     original_rule = (
-        "ORIGINAL is already fixed below. Do not classify it; classify every CANDIDATE."
+        "ORIGINAL is already fixed below and is not a choice. Never return ORIGINAL; "
+        "give every CANDIDATE one of the roles listed."
         if representative
         else "Choose exactly one ORIGINAL: the most complete, balanced baseline explanation."
+    )
+    original_role_line = (
+        "" if representative
+        else "- ORIGINAL: the balanced baseline used to generate any missing versions\n"
     )
     original = (
         json.dumps(
@@ -40,8 +45,7 @@ def _prompt(members, representative=None):
     return f"""Compare teacher-provided versions of one already-grouped concept.
 
 {original_rule} Assign every listed learning object exactly one role:
-- ORIGINAL: the balanced baseline used to generate any missing versions
-- SIMPLIFIED: expresses the same essential meaning more clearly or accessibly
+{original_role_line}- SIMPLIFIED: expresses the same essential meaning more clearly or accessibly
 - ELABORATED: expresses the same meaning with useful explanation or detail
 - EXTRA: useful equivalent wording that does not clearly fill either role
 
@@ -139,6 +143,10 @@ def classify_group_versions(members, *, representative=None):
         return {}
     model = settings.CONTENT_VERSION_LLM_MODEL
     base_prompt = _prompt(members, representative=representative)
+    # A role the parser refuses must not be one the model is allowed to return.
+    # The prompt alone did not stop it: a concept was discarded outright every
+    # time the model reached for ORIGINAL after one was already fixed.
+    offered_slots = sorted(VALID_SLOTS - {"ORIGINAL"} if representative else VALID_SLOTS)
     correction = ""
     for attempt in range(2):
         try:
@@ -162,7 +170,7 @@ def classify_group_versions(members, *, representative=None):
                                         "position": {"type": "integer"},
                                         "slot": {
                                             "type": "string",
-                                            "enum": sorted(VALID_SLOTS),
+                                            "enum": offered_slots,
                                         },
                                         "confidence": {"type": "number"},
                                         "reason": {"type": "string"},
@@ -196,4 +204,5 @@ def classify_group_versions(members, *, representative=None):
                 "\n\nYour previous response was invalid: " + str(exc)
                 + f" Return exactly {len(members)} assignments in candidate order, "
                   "using positions 1 through " + str(len(members)) + " exactly once."
+                + " Use only these slots: " + ", ".join(offered_slots) + "."
             )
