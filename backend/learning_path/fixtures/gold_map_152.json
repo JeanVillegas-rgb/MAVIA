@@ -1,0 +1,27 @@
+{
+  "topic_id": 152,
+  "_note": "The teacher's map for 'Solid, Liquid and Gas' (same lesson as gold_map_62), applied to the concepts the pipeline derived on the 2026-09-21 upload. concept_keys maps a derived concept id to the teacher's concept it belongs to; a derived concept the teacher's map does not name is absent and exports as null. Two keys appear twice because the pipeline split a concept the teacher keeps whole.",
+  "concept_keys": {
+    "327": "matter",
+    "328": "solid",
+    "329": "liquid",
+    "330": "gas",
+    "331": "comparing",
+    "403": "comparing",
+    "351": "changing",
+    "352": "changing",
+    "335": "examples",
+    "404": "examples",
+    "348": "examples"
+  },
+  "required": [
+    ["matter", "solid"], ["matter", "liquid"], ["matter", "gas"],
+    ["solid", "comparing"], ["liquid", "comparing"], ["gas", "comparing"],
+    ["solid", "changing"], ["liquid", "changing"], ["gas", "changing"],
+    ["comparing", "changing"]
+  ],
+  "parallel": [["solid", "liquid", "gas"]],
+  "structural": ["examples"],
+  "expected_order": ["matter", "solid", "liquid", "gas", "comparing", "changing", "examples"],
+  "known_missing": [["comparing", "changing"]]
+}

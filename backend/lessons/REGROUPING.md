@@ -199,9 +199,9 @@ Each proposal contains:
 
 **Frontend**
 
-- `frontend/src/api.js`: `fetchRegroupingPreview`, `applyRegrouping`
-- `frontend/src/pages/TopicDetailPage.jsx`: the step-1 notice and button, the `RegroupingBusy` progress popup, the `RegroupingReview` preview dialog
-- `frontend/src/styles/pipeline.css`: `.regrouping-*` styles
+- `web-app/src/api.js`: `fetchRegroupingPreview`, `applyRegrouping`
+- `web-app/src/pages/TopicDetailPage.jsx`: the step-1 notice and button, the `RegroupingBusy` progress popup, the `RegroupingReview` preview dialog
+- `web-app/src/styles/pipeline.css`: `.regrouping-*` styles
 
 **Tests**
 

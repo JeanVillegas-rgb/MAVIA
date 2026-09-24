@@ -36,3 +36,16 @@ Thumbs.db
 *.p12
 *.key
 *.mobileprovision
+
+# Personal AI-briefing notes (not shared with the team)
+AI_CONTEXT.md
+
+# Trained Bloom's classifier weights (~483 MB; regenerate from the training notebook)
+backend/question_generation/classifier/trained_model/
+
+# Local pre-change database snapshots
+backend/db.sqlite3.pre-*
+
+# Thesis manuscript drafts (kept out of the shared repo)
+MAVIA MANUSCRIPT.docx
+MAVIA CHAPTER 3.docx

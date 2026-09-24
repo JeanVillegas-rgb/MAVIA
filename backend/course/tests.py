@@ -1,11 +1,63 @@
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-from django.test import TestCase, override_settings
+import requests
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 
 from .models import CourseModule, LessonNode, LessonVariant
-from .variant_generator import VariantGenerationError, _parse_response, generate_standalone_variants
+from .variant_generator import (
+    VariantGenerationError,
+    _parse_response,
+    _request_variants,
+    generate_standalone_variants,
+)
+
+
+def _ollama_reply(text):
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"response": text}
+    return response
+
+
+class VariantRequestRetryTests(SimpleTestCase):
+    GOOD_REPLY = (
+        '{"simplified": "A solid keeps its shape.",'
+        ' "elaborated": "A solid keeps a fixed shape and a fixed volume."}'
+    )
+
+    def setUp(self):
+        self.learning_object = SimpleNamespace(
+            title="Solid",
+            content="A solid has a fixed shape and a fixed volume.",
+        )
+
+    @patch("course.variant_generator.requests.post")
+    def test_unreadable_reply_is_retried(self, post):
+        post.side_effect = [_ollama_reply(""), _ollama_reply(self.GOOD_REPLY)]
+
+        variants = _request_variants(self.learning_object, "gemma3:4b")
+
+        self.assertEqual(variants["SIMPLIFIED"], "A solid keeps its shape.")
+        self.assertEqual(post.call_count, 2)
+
+    @patch("course.variant_generator.requests.post")
+    def test_gives_up_after_three_unreadable_replies(self, post):
+        post.side_effect = [_ollama_reply("not json") for _ in range(3)]
+
+        with self.assertRaisesMessage(VariantGenerationError, "valid JSON"):
+            _request_variants(self.learning_object, "gemma3:4b")
+        self.assertEqual(post.call_count, 3)
+
+    @patch("course.variant_generator.requests.post")
+    def test_unreachable_ollama_is_not_retried(self, post):
+        post.side_effect = requests.Timeout("timed out")
+
+        with self.assertRaisesMessage(VariantGenerationError, "Gemma request failed"):
+            _request_variants(self.learning_object, "gemma3:4b")
+        self.assertEqual(post.call_count, 1)
 
 
 @override_settings(

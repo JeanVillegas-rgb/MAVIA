@@ -4,7 +4,7 @@ Written for another coding agent joining this repository cold. Read this before
 changing anything, then read `docs/AGENT_LOG.md` for what has happened most
 recently and to record your own work.
 
-Last updated: 2026-09-21 (evening) · Branch `jean-latest`
+Last updated: 2026-09-22 · Branch `jean-jure-latest`
 
 New to the project? Read `docs/ONBOARDING.md` first — it says what to read,
 in what order, and how to get the app running.
@@ -45,16 +45,23 @@ prompt, 2026-09-21). That is their call; say whose file you are touching.
   **sentence-transformers** pair (all-MiniLM-L6-v2 + cross-encoder
   stsb-roberta-base) for grouping and for the learning path.
 - TTS: Edge TTS (needs network access to `speech.platform.bing.com`).
-- Frontend: React 18 + Vite in `frontend/`. **`frontend/src/styles/pipeline.css`
-  is the imported stylesheet; `frontend/src/index.css` is a near-duplicate that
-  is not imported** — the codebase mirrors CSS into both. There is **no
-  frontend test runner at all**.
+- Frontend: React 18 + Vite in **`web-app/`**, mobile in **`mobile-app/`**
+  (Expo). Renamed from `frontend/` and `mobile/` by the 2026-09-22 merge; both
+  old directories were deleted on 2026-09-22 once confirmed to hold nothing but
+  `node_modules/` and a build cache. **Each app needs its own `npm install`** —
+  `node_modules` is not tracked, so it did not survive the rename, and
+  `npm run dev` without it fails with `'vite' is not recognized`, which reads
+  like a broken PATH and is not.
+  `web-app/src/main.jsx` imports **`styles/mavia.css`** and
+  **`styles/pipeline.css`**, the latter marked legacy plain CSS for the ported
+  content-generation pages; `styles/base.css` sits beside them. The old
+  `index.css` mirror is gone. There is **no frontend test runner at all**.
 
 ### Running things
 
 ```bash
-cd backend && python manage.py test -v 1      # 827 tests, all passing at HEAD
-cd frontend && npm run build                  # must stay clean; do not commit frontend/dist
+cd backend && python manage.py test -v 1      # 889 tests, all passing at HEAD
+cd web-app  && npm run build                  # must stay clean (dist/ is gitignored now)
 ```
 
 System `python` (no venv). Shell is Git Bash on Windows.
@@ -77,8 +84,17 @@ System `python` (no venv). Shell is Git Bash on Windows.
 5. **Audio** — Edge TTS per object; a version plays its objects' clips in order.
 6. **Publishing** — a completeness gate, then audio, then the learning path is
    derived and saved as `LearningPathStep` rows.
-7. **Adaptive serving** — BKT + DQN are described in the manuscript but **do
-   not exist in the codebase yet**. Do not assume they are there.
+7. **Adaptive serving** — merged from the groupmate's branch 2026-09-22.
+   `backend/adaptive/` walks a published path in **path mode**: steps by
+   `position`, questions from `question_generation.GeneratedQuestion`, content
+   escalating normal → simplified → elaborated on a miss, then a detour
+   through the step's nearest prerequisite, then the concept's alternate PDF.
+   **BKT is implemented** (`adaptive/services.py::_bkt_update`), reading
+   `adaptive_config.AdaptiveConfig` so an admin can tune `p_guess`, `p_slip`
+   and `p_learn` without a redeploy. Read `backend/adaptive/PATH_MODE.md`
+   first. **DQN is still manuscript-only in the Django app** — the RL work
+   lives in `notebook/mavia_rl/` (env, agent, training, evaluation) and is not
+   wired into serving.
 
 ---
 
@@ -185,6 +201,14 @@ Keep that structure; measurement changes are allowed if documented.
 - Examples-type concepts take part in no pair and are ordered last; the
   contrast veto covers "unlike", "while", "than" and friends; there is no
   cross-section cap.
+- **Coordinate siblings need a naming reference** (added 2026-09-22). Two
+  passages under one heading, neither of which is what that heading names, are
+  parallel material (Solid, Liquid and Gas under "Matter"). Between two of
+  them an edge needs a reference that *names* its target — the name, a head
+  word, or section containment — not merely shared vocabulary, because
+  parallel passages share vocabulary by construction. The concept the heading
+  names is the parent, not a sibling; a concept under no heading is nobody's
+  sibling. Keys on the documents' own headings, never on a title's words.
 - Constants (calibrated 2026-09-17, documented in
   `docs/learning_path_revision_2026-09-17.md`): `REF_MAX_DF_RATIO = 0.34`,
   `REF_MARGIN = 0.0`, `PHRASE_COSINE = 0.80`, `MIN_IOL_MARGIN = 0.25`.
@@ -202,6 +226,19 @@ Current, and **must not regress**:
 |---|---|---|---|
 | 62 Solid, Liquid and Gas | 10 / 10 | 0 | matches |
 | 79 Reproduction Among Flowering Plants | 4 / 8 | 0 | matches |
+| 152 Solid, Liquid and Gas *as the pipeline groups it today* | 9 / 10 | 0 | matches |
+
+**Topic 152 is a third fixture, added 2026-09-22, and it is a different kind.**
+62 and 79 hold the *teacher's* grouping and an older upload's text; 152 holds
+`concepts_for_topic` output for a real topic — the pipeline's own 14 concepts,
+their members, headings and order. That distinction is not cosmetic: the same
+lesson in the teacher's 7-concept shape shows **no** forbidden edge, while the
+pipeline's 14-concept shape accepted `Solid → Gas`, because
+`REF_MAX_DF_RATIO` scales with the concept count. A fixture built from the
+teacher's grouping cannot see the failure the teacher sees. Written by
+`python manage.py export_live_concepts <topic> <map> <out>`; several concepts
+may share a gold key, and a concept the map does not name carries `null` and is
+derived-with but not scored. Its one `known_missing` is `comparing → changing`.
 
 The four missing topic-79 edges are recorded in the fixtures as
 `known_missing`, so the test fails on a **new** gap, a forbidden edge, a wrong
@@ -330,30 +367,34 @@ version, and no concept served short of its bundle.
 
 ## 7. Open items
 
-**The two that matter most**
+**The two that mattered most — one fixed, one is not a code problem**
 
-Both are the *same root cause*: an edge is accepted partly on "does B use A's
+Both came from the same place: an edge is accepted partly on "does B use A's
 distinctive terms", and a term only stops being distinctive once more than
 `REF_MAX_DF_RATIO` (0.34) of the concepts use it. With few concepts, an
 ordinary English word survives that filter, and `REF_MARGIN = 0.0` lets a
 reference score of 0.02 cast a full vote.
 
-- **Topic 152 accepts `Solid → Gas`**, which the gold standard forbids — solid
-  and gas are parallel states. The terms that carried it are `drawn`, `spaced`,
-  `dots`, `compress`: vocabulary from the two *diagram descriptions*, not
-  science. Regenerating the figure descriptions may or may not remove it, since
-  "drawn as spaced dots" is a reasonable way to describe a diagram.
-- **Topic 163 links three unrelated lessons.** 24 of its 45 accepted edges
-  cross between organ systems (`Stomach → Spine`, `Skull → Large intestine`,
-  `The Digestive System → Support`). The terms behind them are `person`,
-  `still`, `way`, `strong`. Two independent fixes: split the topic so each
-  organ system is its own topic (the criteria assume a topic *is* a lesson),
-  and raise the evidence bar so one common word cannot carry a criterion.
+- **Topic 152's `Solid → Gas` is fixed** (2026-09-22) by the coordinate-sibling
+  rule in §4. It was carried by `drawn`, `spaced`, `dots`, `compress` —
+  vocabulary from the two *diagram descriptions*, not science. Both gold
+  topics are unchanged; topic 152 is 9/10 with 0 forbidden.
+- **Topic 163 should be three topics, and that is the fix.** Every criterion
+  assumes a topic *is* a lesson; 163's three PDFs are the Skeletal, Digestive
+  and Circulatory systems. 20 of its 41 accepted edges cross between systems
+  (`Stomach → Spine`, `Skull → Large intestine`). Re-derived as three separate
+  topics it produces **22 accepted edges, none crossing lessons**, and all 22
+  are plausible. The coordinate-sibling rule does not help here and was not
+  expected to — concepts from different PDFs share no heading. **This is a
+  teacher action in the UI, not code.**
 
-**A blunt threshold will not fix either.** Legitimate accepted edges sit just
-as low — `Matter → Comparing` at 0.0257, `Gas → Changing` at 0.0207. The
-candidate fix is to stop non-technical and *rendering* vocabulary counting as
-distinctive at all.
+**Neither a threshold nor a vocabulary filter can do this job**, and both are
+now measured rather than argued. Sorted by `ref_forward`: `Gas → Changing`
+0.0206 (required), `Solid → Gas` 0.0369 (forbidden), `Comparing → Changing`
+0.0441 (required); by carrying terms, 1 / 4 / 3. And a non-technical-vocabulary
+filter built to the stated principle takes gold topic 62 from 10/10 to 9/10,
+because its required `Comparing → Changing` is itself carried by `explain`,
+`four`, `outline`. See `docs/learning_path_revision_2026-09-17.md`.
 
 **Decided, not yet done**
 
@@ -365,17 +406,30 @@ distinctive at all.
   because the other PDF has no matching section, so it needs **Move into
   another concept…** by hand. They currently share a name, and the same-name
   veto blocks `comparing → changing` in either direction — this is the one
-  required edge missing from 152.
+  required edge missing from 152. "Comparing the Three States" is split the
+  same way (331 and 403). **When 318/319 are joined,
+  `gold_map_152.json`'s `known_missing` must be emptied and the fixture
+  re-exported**, or `test_gold_paths` fails on a closed gap — which is what it
+  is for.
+- **Split topic 163 into three topics**, one per organ system. Measured: 41
+  accepted edges → 22, and 20 wrong ones disappear. See §7 above.
 - **Empty concept groups are not cleaned up when a material is deleted.**
   `remove_empty_learning_object_groups` exists but the delete endpoint does not
   call it. None are empty right now, so this is latent rather than active.
 
 **Known, deliberately deferred**
 
-- **The gold fixtures cannot catch the figure-description failure.** They hold
-  an older upload's text, with no such descriptions, so `test_gold_paths.py`
-  stays green while live output carries a forbidden edge. A fixture built from
-  text the current extraction produces would close that gap.
+- ~~**The gold fixtures cannot catch the figure-description failure.**~~
+  Closed 2026-09-22 by the topic-152 fixture (§4). Note what it took: a
+  fixture with today's *text* was not enough — it needed today's *grouping*
+  too, because `REF_MAX_DF_RATIO` scales with the concept count and the
+  teacher's 7-concept shape shows no forbidden edge where the pipeline's
+  14-concept shape does.
+- **Head words can be ordinary adjectives.** On topic 163 "small intestine"
+  lends "small" a full name-weight reference (0.5) to anything saying "small",
+  which is how `Small intestine → Spine` is accepted. `head_words` only checks
+  that a head word is unambiguous *among the concept names*, not that it is a
+  term at all. Not addressed.
 - Extraction (groupmate's): titles cut mid-sentence ("Matter usually exists in
   one of three everyday states" whose text begins "solid, liquid, and gas…"),
   section headings lost on some figures. A description phrased around what is
@@ -402,7 +456,9 @@ distinctive at all.
   Read the newest spec before changing grouping, versions or the learning path.
 - **Never stage** `backend/course/tests.py` or `backend/course/variant_generator.py`
   without checking — the user keeps uncommitted work there — and never commit
-  `frontend/dist/*` except as a deliberate rebuild, or `MAVIA MANUSCRIPT.docx`.
+  `MAVIA MANUSCRIPT.docx`. The old "commit `frontend/dist` as a deliberate
+  rebuild" rule is gone: `web-app/.gitignore` ignores `dist/`, so a build no
+  longer dirties the tree.
 - Use explicit `git add <path>`; do not `git add -A`.
 - Commit messages end with a blank line then the co-author line the session is
   told to use.

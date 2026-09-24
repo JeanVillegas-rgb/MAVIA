@@ -4,7 +4,7 @@ from django.core import mail
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from .models import EmailVerificationToken, User
 
@@ -259,3 +259,81 @@ class MeAndLogoutTests(APITestCase):
     def test_logout_requires_authentication(self):
         response = self.client.post("/api/auth/logout/")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class PublicEndpointSessionTests(APITestCase):
+    """A stray admin session must not break signing up or logging in.
+
+    Regression, 2026-09-22. `AllowAny` does not stop DRF running its default
+    authenticators, and `SessionAuthentication` enforces CSRF as soon as a
+    session cookie identifies an active user. Cookies are scoped to a host and
+    not a port, so a teacher who opens Django admin on :8000 leaves a session
+    cookie the web app on :5173 sends with every call. Sign-up then failed with
+    "CSRF Failed: Origin checking failed", which reads like a broken form and
+    is not. The web app is token-authenticated and never sends a CSRF token, so
+    trusting the origin alone would only have changed the message to "CSRF
+    cookie not set".
+    """
+
+    def setUp(self):
+        self.staff = User.objects.create_user(
+            username="siteadmin",
+            email="siteadmin@example.com",
+            password="StrongPass123!",
+            role=User.Role.ADMIN,
+            is_verified=True,
+            is_staff=True,
+            is_superuser=True,
+        )
+        # The browser state this is about: logged into Django admin, posting
+        # from the web app's origin, with CSRF actually enforced.
+        self.client = APIClient(enforce_csrf_checks=True)
+        self.client.force_login(self.staff)
+
+    def test_register_works_while_logged_into_django_admin(self):
+        response = self.client.post("/api/auth/register/", {
+            "username": "newteacher2",
+            "email": "newteacher2@example.com",
+            "password": "StrongPass123!",
+            "first_name": "New",
+            "last_name": "Teacher",
+            "role": User.Role.TEACHER,
+        }, format="json", HTTP_ORIGIN="http://localhost:5173")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertTrue(User.objects.filter(username="newteacher2").exists())
+
+    def test_login_works_while_logged_into_django_admin(self):
+        User.objects.create_user(
+            username="verifiedteacher",
+            email="verifiedteacher@example.com",
+            password="StrongPass123!",
+            role=User.Role.TEACHER,
+            is_verified=True,
+        )
+
+        response = self.client.post("/api/auth/login/", {
+            "username": "verifiedteacher",
+            "password": "StrongPass123!",
+        }, format="json", HTTP_ORIGIN="http://localhost:5173")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertIn("token", response.data)
+
+    def test_the_session_user_never_leaks_into_a_public_endpoint(self):
+        """The admin's session must not authenticate the caller of a public view.
+
+        Registering while an admin session exists must create the account the
+        request asked for, not act as the admin.
+        """
+        response = self.client.post("/api/auth/register/", {
+            "username": "newteacher3",
+            "email": "newteacher3@example.com",
+            "password": "StrongPass123!",
+            "first_name": "New",
+            "last_name": "Teacher",
+            "role": User.Role.TEACHER,
+        }, format="json", HTTP_ORIGIN="http://localhost:5173")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data["user"]["username"], "newteacher3")

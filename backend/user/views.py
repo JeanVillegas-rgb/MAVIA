@@ -27,8 +27,29 @@ def _issue_verification(user):
     return verification
 
 
+# The four public endpoints below authenticate nobody, on purpose.
+#
+# `AllowAny` says "no permission required"; it does not stop DRF *running* the
+# default authenticators first. `SessionAuthentication` is one of them, and it
+# enforces CSRF as soon as a session cookie identifies an active user. Cookies
+# are scoped to a host, not a port, so opening Django admin on :8000 leaves a
+# session cookie the web app on :5173 sends with every call -- and signing up
+# then fails with "CSRF Failed: Origin checking failed", which reads like a
+# broken form. Seen 2026-09-22, right after a `createsuperuser` and an admin
+# login.
+#
+# Emptying `authentication_classes` is the fix rather than trusting more
+# origins: whoever happens to be logged in has nothing to do with registering,
+# logging in, or clicking a link in a verification email, so these views should
+# not look at a session at all. Authenticated endpoints are unaffected -- they
+# send `Authorization: Token ...`, which `TokenAuthentication` accepts first,
+# so `SessionAuthentication` never runs for them either.
+PUBLIC_ENDPOINT_AUTHENTICATION = []
+
+
 class RegisterView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = PUBLIC_ENDPOINT_AUTHENTICATION
     serializer_class = RegisterSerializer
 
     def create(self, request, *args, **kwargs):
@@ -50,6 +71,7 @@ class RegisterView(generics.CreateAPIView):
 
 class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = PUBLIC_ENDPOINT_AUTHENTICATION
 
     def get(self, request, token):
         verification = EmailVerificationToken.objects.filter(token=token).first()
@@ -81,6 +103,7 @@ class VerifyEmailView(APIView):
 
 class ResendVerificationView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = PUBLIC_ENDPOINT_AUTHENTICATION
 
     def post(self, request):
         email = request.data.get("email")
@@ -100,6 +123,7 @@ class ResendVerificationView(APIView):
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = PUBLIC_ENDPOINT_AUTHENTICATION
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)

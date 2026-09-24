@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1990" height="1210" viewBox="0 0 1990 1210">
+<rect width="1990" height="1210" fill="#f3f4f6"/>
+<text x="48" y="62" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="31" font-weight="600" fill="#1c3557" letter-spacing="0.3">MAVIA ERD 2 — CONCEPTS, VERSIONS, AND THE LEARNING PATH</text>
+<text x="50" y="90" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="14.5" fill="#74797f">Cross-PDF concept grouping, which PDF supplies which version of a concept, and the prerequisite graph a published path is ordered from</text>
+<line x1="48" y1="112" x2="1942" y2="112" stroke="#c9ccd1" stroke-width="1.2"/>
+<polyline points="375,271 430,271" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<circle cx="387.0" cy="271.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><line x1="380.0" y1="277.5" x2="380.0" y2="264.5" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="411.0" cy="271.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M417.0,264.0 L429.0,271.0 L417.0,278.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="760,288 815,288" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="767.0" y1="294.5" x2="767.0" y2="281.5" stroke="#55606b" stroke-width="1.6"/><line x1="774.0" y1="294.5" x2="774.0" y2="281.5" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="796.0" cy="288.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M802.0,281.0 L814.0,288.0 L802.0,295.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="1200,288 1145,288" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<circle cx="1188.0" cy="288.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><line x1="1195.0" y1="281.5" x2="1195.0" y2="294.5" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1164.0" cy="288.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1158.0,295.0 L1146.0,288.0 L1158.0,281.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="1290,401 1290,530 690,530 690,620" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="1283.5" y1="408.0" x2="1296.5" y2="408.0" stroke="#55606b" stroke-width="1.6"/><line x1="1283.5" y1="415.0" x2="1296.5" y2="415.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="690.0" cy="601.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M697.0,607.0 L690.0,619.0 L683.0,607.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="120,368 120,555 1260,555 1260,401" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="113.5" y1="375.0" x2="126.5" y2="375.0" stroke="#55606b" stroke-width="1.6"/><line x1="113.5" y1="382.0" x2="126.5" y2="382.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1260.0" cy="420.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1253.0,414.0 L1260.0,402.0 L1267.0,414.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="205,368 205,580 1700,580 1700,500" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="198.5" y1="375.0" x2="211.5" y2="375.0" stroke="#55606b" stroke-width="1.6"/><line x1="198.5" y1="382.0" x2="211.5" y2="382.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1700.0" cy="519.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1693.0,513.0 L1700.0,501.0 L1707.0,513.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="290,368 290,605 1245,605 1245,620" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="283.5" y1="375.0" x2="296.5" y2="375.0" stroke="#55606b" stroke-width="1.6"/><line x1="283.5" y1="382.0" x2="296.5" y2="382.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1245.0" cy="601.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1252.0,607.0 L1245.0,619.0 L1238.0,607.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="560,368 560,620" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="553.5" y1="375.0" x2="566.5" y2="375.0" stroke="#55606b" stroke-width="1.6"/><line x1="553.5" y1="382.0" x2="566.5" y2="382.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="560.0" cy="601.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M567.0,607.0 L560.0,619.0 L553.0,607.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="900,434 900,620" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="893.5" y1="441.0" x2="906.5" y2="441.0" stroke="#55606b" stroke-width="1.6"/><line x1="893.5" y1="448.0" x2="906.5" y2="448.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="900.0" cy="601.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M907.0,607.0 L900.0,619.0 L893.0,607.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<polyline points="1040,434 1040,620" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<circle cx="1040.0" cy="446.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><line x1="1033.5" y1="439.0" x2="1046.5" y2="439.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1040.0" cy="601.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1047.0,607.0 L1040.0,619.0 L1033.0,607.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<text x="1050" y="470" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11" fill="#5d6873">source</text>
+<polyline points="1345,401 1345,620" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="1338.5" y1="408.0" x2="1351.5" y2="408.0" stroke="#55606b" stroke-width="1.6"/><line x1="1338.5" y1="415.0" x2="1351.5" y2="415.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1345.0" cy="608.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><line x1="1351.5" y1="615.0" x2="1338.5" y2="615.0" stroke="#55606b" stroke-width="1.6"/>
+<polyline points="1530,330 1562,330 1562,700 1585,700" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="1537.0" y1="336.5" x2="1537.0" y2="323.5" stroke="#55606b" stroke-width="1.6"/><line x1="1544.0" y1="336.5" x2="1544.0" y2="323.5" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1566.0" cy="700.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1572.0,693.0 L1584.0,700.0 L1572.0,707.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<text x="1400" y="716" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11" fill="#5d6873">prerequisite / dependent</text>
+<polyline points="320,368 320,985 1760,985 1760,945" fill="none" stroke="#55606b" stroke-width="1.5" stroke-linejoin="round"/>
+<line x1="313.5" y1="375.0" x2="326.5" y2="375.0" stroke="#55606b" stroke-width="1.6"/><line x1="313.5" y1="382.0" x2="326.5" y2="382.0" stroke="#55606b" stroke-width="1.6"/>
+<circle cx="1760.0" cy="964.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1753.0,958.0 L1760.0,946.0 L1767.0,958.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<rect x="45" y="175" width="330" height="193" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M45,180 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="63" y="200" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">OUTLINE NODE</text>
+<text x="59" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="117" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="46" y1="246" x2="374" y2="246" stroke="#dfe2e6" stroke-width="1"/>
+<text x="59" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="117" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">course_id</text>
+<line x1="46" y1="279" x2="374" y2="279" stroke="#dfe2e6" stroke-width="1"/>
+<text x="59" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="117" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">parent_id?</text>
+<line x1="46" y1="312" x2="374" y2="312" stroke="#dfe2e6" stroke-width="1"/>
+<text x="117" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">title / order / published</text>
+<line x1="103" y1="213" x2="103" y2="345" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M45,345 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="59" y="361" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">lessons_outlinenode</text>
+<rect x="430" y="175" width="330" height="193" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M430,180 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="448" y="200" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">LEARNING MATERIAL</text>
+<text x="444" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="502" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="431" y1="246" x2="759" y2="246" stroke="#dfe2e6" stroke-width="1"/>
+<text x="444" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="502" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">course_id</text>
+<line x1="431" y1="279" x2="759" y2="279" stroke="#dfe2e6" stroke-width="1"/>
+<text x="502" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">title / pdf_file</text>
+<line x1="431" y1="312" x2="759" y2="312" stroke="#dfe2e6" stroke-width="1"/>
+<text x="502" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">status</text>
+<line x1="488" y1="213" x2="488" y2="345" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M430,345 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="444" y="361" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">lessons_learningmaterial</text>
+<rect x="815" y="175" width="330" height="259" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M815,180 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="833" y="200" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">LEARNING OBJECT</text>
+<text x="829" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="887" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="816" y1="246" x2="1144" y2="246" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="887" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">material_id</text>
+<line x1="816" y1="279" x2="1144" y2="279" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="887" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">concept_id?</text>
+<line x1="816" y1="312" x2="1144" y2="312" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="887" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">represented_by_id?</text>
+<line x1="816" y1="345" x2="1144" y2="345" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="366" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">title / content</text>
+<line x1="816" y1="378" x2="1144" y2="378" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="399" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">order</text>
+<line x1="873" y1="213" x2="873" y2="411" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M815,411 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="427" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">lessons_learningobject</text>
+<rect x="1200" y="175" width="330" height="226" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M1200,180 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="1218" y="200" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">CONCEPT GROUP</text>
+<text x="1214" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="1272" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="1201" y1="246" x2="1529" y2="246" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1214" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1272" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">outline_node_id</text>
+<line x1="1201" y1="279" x2="1529" y2="279" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1272" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">label</text>
+<line x1="1201" y1="312" x2="1529" y2="312" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1272" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">label_locked</text>
+<line x1="1201" y1="345" x2="1529" y2="345" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1272" y="366" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">created_at</text>
+<line x1="1258" y1="213" x2="1258" y2="378" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M1200,378 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1214" y="394" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">lessons_conceptgroup</text>
+<rect x="1585" y="175" width="330" height="325" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M1585,180 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="1603" y="200" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">MATCH SUGGESTION</text>
+<text x="1599" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="1657" y="234" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="1586" y1="246" x2="1914" y2="246" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1657" y="267" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">outline_node_id</text>
+<line x1="1586" y1="279" x2="1914" y2="279" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1657" y="300" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">source_object_id  U</text>
+<line x1="1586" y1="312" x2="1914" y2="312" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1657" y="333" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">candidate_object_id  U</text>
+<line x1="1586" y1="345" x2="1914" y2="345" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="366" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">similarity_score</text>
+<line x1="1586" y1="378" x2="1914" y2="378" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="399" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">confidence</text>
+<line x1="1586" y1="411" x2="1914" y2="411" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="432" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">status</text>
+<line x1="1586" y1="444" x2="1914" y2="444" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="465" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">evidence</text>
+<line x1="1643" y1="213" x2="1643" y2="477" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M1585,477 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="493" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">lessons_matchsuggestion</text>
+<rect x="430" y="620" width="330" height="259" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M430,625 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="448" y="645" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">CONCEPT BUNDLE ROLE</text>
+<text x="444" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="502" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="431" y1="691" x2="759" y2="691" stroke="#dfe2e6" stroke-width="1"/>
+<text x="444" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="502" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">concept_id  U</text>
+<line x1="431" y1="724" x2="759" y2="724" stroke="#dfe2e6" stroke-width="1"/>
+<text x="444" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="502" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">material_id  U</text>
+<line x1="431" y1="757" x2="759" y2="757" stroke="#dfe2e6" stroke-width="1"/>
+<text x="502" y="778" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">role  U</text>
+<line x1="431" y1="790" x2="759" y2="790" stroke="#dfe2e6" stroke-width="1"/>
+<text x="502" y="811" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">assigned_by</text>
+<line x1="431" y1="823" x2="759" y2="823" stroke="#dfe2e6" stroke-width="1"/>
+<text x="502" y="844" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">decided_at</text>
+<line x1="488" y1="658" x2="488" y2="856" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M430,856 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="444" y="872" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">lessons_conceptbundlerole</text>
+<rect x="815" y="620" width="330" height="325" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M815,625 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="833" y="645" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">LESSON VARIANT</text>
+<text x="829" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="887" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="816" y1="691" x2="1144" y2="691" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="887" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">learning_object_id  U</text>
+<line x1="816" y1="724" x2="1144" y2="724" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="887" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">source_object_id?</text>
+<line x1="816" y1="757" x2="1144" y2="757" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="778" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">variant  U</text>
+<line x1="816" y1="790" x2="1144" y2="790" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="811" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">narration</text>
+<line x1="816" y1="823" x2="1144" y2="823" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="844" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">audio_url</text>
+<line x1="816" y1="856" x2="1144" y2="856" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="877" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">origin / assigned_by</text>
+<line x1="816" y1="889" x2="1144" y2="889" stroke="#dfe2e6" stroke-width="1"/>
+<text x="887" y="910" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">source_fingerprint</text>
+<line x1="873" y1="658" x2="873" y2="922" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M815,922 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="829" y="938" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">content_lessonvariant</text>
+<rect x="1200" y="620" width="330" height="259" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M1200,625 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="1218" y="645" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">LEARNING PATH STEP</text>
+<text x="1214" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="1272" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="1201" y1="691" x2="1529" y2="691" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1214" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1272" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">outline_node_id  U</text>
+<line x1="1201" y1="724" x2="1529" y2="724" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1214" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1272" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">concept_id  U</text>
+<line x1="1201" y1="757" x2="1529" y2="757" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1272" y="778" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">position  U</text>
+<line x1="1201" y1="790" x2="1529" y2="790" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1272" y="811" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">depth</text>
+<line x1="1201" y1="823" x2="1529" y2="823" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1272" y="844" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">published_at</text>
+<line x1="1258" y1="658" x2="1258" y2="856" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M1200,856 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1214" y="872" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">learning_path_learningpathstep</text>
+<rect x="1585" y="620" width="330" height="325" rx="5" fill="#ffffff" stroke="#8a9099" stroke-width="1.1"/>
+<path d="M1585,625 a5,5 0 0 1 5,-5 h320 a5,5 0 0 1 5,5 v33 h-330 z" fill="#e8650d"/>
+<text x="1603" y="645" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="15" font-weight="600" fill="#ffffff" letter-spacing="0.4">CONCEPT PREREQUISITE</text>
+<text x="1599" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">PK</text>
+<text x="1657" y="679" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">id</text>
+<line x1="1586" y1="691" x2="1914" y2="691" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1657" y="712" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">outline_node_id</text>
+<line x1="1586" y1="724" x2="1914" y2="724" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1657" y="745" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">prerequisite_id  U</text>
+<line x1="1586" y1="757" x2="1914" y2="757" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="778" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" font-weight="700" fill="#e8650d" letter-spacing="0.3">FK</text>
+<text x="1657" y="778" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">dependent_id  U</text>
+<line x1="1586" y1="790" x2="1914" y2="790" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="811" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">status / source</text>
+<line x1="1586" y1="823" x2="1914" y2="823" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="844" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">cross_section</text>
+<line x1="1586" y1="856" x2="1914" y2="856" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="877" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">evidence</text>
+<line x1="1586" y1="889" x2="1914" y2="889" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1657" y="910" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="13" fill="#33383d">decided_at</text>
+<line x1="1643" y1="658" x2="1643" y2="922" stroke="#dfe2e6" stroke-width="1"/>
+<path d="M1585,922 h330 v18 a5,5 0 0 1 -5,5 h-320 a5,5 0 0 1 -5,-5 z" fill="#fbfbfc" stroke="#dfe2e6" stroke-width="1"/>
+<text x="1599" y="938" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="10.5" fill="#8d9298">learning_path_conceptprerequisite</text>
+<line x1="48" y1="1092" x2="1942" y2="1092" stroke="#c9ccd1" stroke-width="1.2"/>
+<text x="48" y="1122" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#6b7178">PK = primary key   FK = foreign key   ? = nullable   U = part of a unique constraint</text>
+<line x1="560" y1="1118" x2="638" y2="1118" stroke="#55606b" stroke-width="1.5"/>
+<line x1="567.0" y1="1124.5" x2="567.0" y2="1111.5" stroke="#55606b" stroke-width="1.6"/><line x1="574.0" y1="1124.5" x2="574.0" y2="1111.5" stroke="#55606b" stroke-width="1.6"/>
+<text x="650" y="1122" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#6b7178">exactly one</text>
+<line x1="810" y1="1118" x2="888" y2="1118" stroke="#55606b" stroke-width="1.5"/>
+<circle cx="822.0" cy="1118.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><line x1="815.0" y1="1124.5" x2="815.0" y2="1111.5" stroke="#55606b" stroke-width="1.6"/>
+<text x="900" y="1122" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#6b7178">zero or one</text>
+<line x1="1060" y1="1118" x2="1138" y2="1118" stroke="#55606b" stroke-width="1.5"/>
+<circle cx="1079.0" cy="1118.0" r="4.2" fill="#ffffff" stroke="#55606b" stroke-width="1.6"/><path d="M1073.0,1125.0 L1061.0,1118.0 L1073.0,1111.0" fill="none" stroke="#55606b" stroke-width="1.6" stroke-linejoin="miter"/>
+<text x="1150" y="1122" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#6b7178">zero or many</text>
+<text x="50" y="1150" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#7c828a">CONCEPT BUNDLE ROLE replaces the version_selection JSON blob: unique (concept, material), plus a partial unique (concept, role) restricted to NORMAL, SIMPLIFIED and ELABORATED so EXTRA stays unbounded.</text>
+<text x="50" y="1169" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#7c828a">LESSON VARIANT stores generated wording only. A version supplied by an uploaded PDF is that PDF's own objects, referenced through CONCEPT BUNDLE ROLE rather than copied.</text>
+<text x="50" y="1188" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#7c828a">LEARNING PATH STEP: unique (outline_node, position) and unique (outline_node, concept) — a concept appears at most once in a topic's path.</text>
+<text x="50" y="1207" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#7c828a">CONCEPT PREREQUISITE: unique (prerequisite, dependent) and CHECK prerequisite &lt;&gt; dependent. Only accepted and approved rows shape the path; a teacher's approved or rejected row survives re-derivation.</text>
+<text x="50" y="1226" font-family="Segoe UI,Frutiger,Tahoma,Geneva,sans-serif" font-size="11.5" fill="#7c828a">MATCH SUGGESTION: unique (source_object, candidate_object), CHECK source &lt;&gt; candidate, and both sides must belong to the suggestion's own topic.</text>
+</svg>

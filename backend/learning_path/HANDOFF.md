@@ -206,9 +206,13 @@ A sketch, not a requirement — the rules are yours:
 - **Student progress / mastery.** That is the adaptive side's to store.
 - **Module order.** Paths are per subtopic; module and subtopic order comes from
   the course outline (`OutlineNode.order`, `parent`).
-- **The existing student apps don't read the path.** `adaptive/services.py` and
-  `adaptive_portal/services.py` still walk learning objects in PDF order. Switching
-  them over to this path is part of the interaction work.
+- ~~**The existing student apps don't read the path.**~~ No longer true as of
+  the 2026-09-22 merge. `adaptive/services.py` reads this contract in **path
+  mode** — steps by `position`, questions from the payload rather than
+  `lessons.Question`, and the `alternates` field used as a fallback
+  explanation when a learner keeps missing. `adaptive_portal`, which did still
+  walk PDF order, was deleted. Read `adaptive/PATH_MODE.md` before changing
+  anything this file documents: the engine now depends on it.
 
 ---
 

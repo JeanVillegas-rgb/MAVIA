@@ -62,7 +62,7 @@ class GeneratedQuestionSafetyTests(TestCase):
         generated = GeneratedQuestion.objects.create(
             node=learning_object, question_text=text, question_format="TF",
             correct_answer="True", bloom_level="remember", thinking_order="LOT",
-            difficulty="easy", status="final",
+            status="final",
         )
         mirror_generated_questions(learning_object, [generated])
         return Question.objects.get(adaptive_question=generated)

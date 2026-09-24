@@ -339,11 +339,14 @@ All deliberate:
 
 - **Ordering subtopics or modules.** Paths are per subtopic; their order comes
   from the course outline.
-- **Adaptive reordering, mastery tracking, remediation.** The saved path is
-  served for that work (`GET /api/learning-path/topics/<id>/published/`, see
-  `HANDOFF.md`), but the existing student apps (`adaptive/services.py`,
-  `adaptive_portal/services.py`) still walk learning objects in PDF order and
-  have not been switched to it.
+- ~~**Adaptive reordering, mastery tracking, remediation.**~~ Done on the
+  adaptive side, merged 2026-09-22. `adaptive/services.py` reads the published
+  path (`GET /api/learning-path/topics/<id>/published/`, see `HANDOFF.md`) in
+  **path mode**: steps walked by `position`, questions from
+  `question_generation.GeneratedQuestion`, and remediation through a step's
+  nearest prerequisite. BKT mastery is real (`_bkt_update`), tuned through
+  `adaptive_config.AdaptiveConfig`. See `adaptive/PATH_MODE.md`.
+  `adaptive_portal`, the older flat PDF-order walker, was deleted with it.
 - **Showing the effect of an approval before it is made.**
 - **Confirming the cross-section rule on a second topic.**
 
@@ -363,3 +366,25 @@ edges such as Solid -> Comparing.
 - The cross-section cap is removed; `cross_section` is still stored.
 
 Before/after numbers: `docs/learning_path_revision_2026-09-17.md`.
+
+## Revision 2026-09-22: coordinate siblings need a naming reference
+
+One veto added, over the same document structure `contained_in` already reads.
+Two passages under a single heading, neither of which is what that heading
+names, are **coordinate siblings** — Solid, Liquid and Gas under "Matter";
+Support, Protection and Movement under "The Skeletal System". Between two
+siblings, an edge now needs a reference that *names* its target (the target's
+name, a head-word mention, or section containment). Sharing incidental
+vocabulary is not enough, because parallel passages share vocabulary by
+construction: the author describes each state of matter the same way.
+
+- `criteria.presented_in_parallel` / `criteria.names_the_target`.
+- The concept a shared heading *names* is the parent, not a sibling, so
+  Matter -> Solid is untouched.
+- A concept sitting under no heading is nobody's sibling, the same rule
+  `crosses_sections` follows.
+- This is **not** the removed sibling rule: that one keyed on the words of the
+  topic's *title*, this one on the documents' own headings.
+
+Measurements, and the direction this was chosen over:
+`docs/learning_path_revision_2026-09-17.md`.

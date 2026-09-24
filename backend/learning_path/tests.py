@@ -122,7 +122,7 @@ class PublishedPathTests(TopicFixture):
         GeneratedQuestion.objects.create(
             node=self.objects["Solid"], question_text="Does a solid keep its shape?",
             question_format="TF", correct_answer="True", explanation="Its particles are fixed.",
-            bloom_level="remember", thinking_order="LOT", difficulty="easy", status="final",
+            bloom_level="remember", thinking_order="LOT", status="final",
         )
         GeneratedQuestion.objects.create(
             node=self.objects["Solid"], question_text="A draft", question_format="TF",
@@ -250,17 +250,17 @@ class PublishedPathTests(TopicFixture):
         GeneratedQuestion.objects.create(
             node=self.objects["Solid"], question_text="Second LOT (should be dropped)",
             question_format="TF", correct_answer="True", thinking_order="LOT",
-            bloom_level="remember", difficulty="easy", status="final",
+            bloom_level="remember", status="final",
         )
         GeneratedQuestion.objects.create(
             node=self.objects["Solid"], question_text="A HOT question",
             question_format="TF", correct_answer="False", thinking_order="HOT",
-            bloom_level="analyze", difficulty="hard", status="final",
+            bloom_level="analyze", status="final",
         )
         GeneratedQuestion.objects.create(
             node=self.objects["Solid"], question_text="Second HOT (should be dropped)",
             question_format="TF", correct_answer="True", thinking_order="HOT",
-            bloom_level="analyze", difficulty="hard", status="final",
+            bloom_level="analyze", status="final",
         )
 
         solid = next(step for step in self._get("TEACHER").json()["steps"] if step["title"] == "Solid")
@@ -415,12 +415,12 @@ class SplitPassageTests(TestCase):
         self.question = GeneratedQuestion.objects.create(
             node=self.parts[1], question_text="Can one flower hold male and female parts?",
             question_format="TF", correct_answer="True", bloom_level="remember",
-            thinking_order="LOT", difficulty="easy", status="final",
+            thinking_order="LOT", status="final",
         )
         GeneratedQuestion.objects.create(
             node=self.parts[2], question_text="Does the stamen make pollen?",
             question_format="TF", correct_answer="True", bloom_level="remember",
-            thinking_order="LOT", difficulty="easy", status="final",
+            thinking_order="LOT", status="final",
         )
         save_learning_path(self.topic)
         self.path = get_published_path(self.topic, include_answers=False)

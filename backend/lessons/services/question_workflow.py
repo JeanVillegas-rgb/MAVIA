@@ -116,7 +116,6 @@ def enriched_question_values(prompt, question_type, choices, correct_answer) -> 
         "content_fingerprint": question_fingerprint(prompt),
         "bloom_level": classification["bloom_level"],
         "thinking_order": classification["thinking_order"] or "",
-        "difficulty": classification["difficulty"],
         "category": classification["category"],
         "validation_status": (
             Question.ValidationStatus.NEEDS_REVIEW if issues else Question.ValidationStatus.READY
@@ -204,7 +203,6 @@ def sync_question_to_adaptive(question: Question):
         "correct_answer": adaptive_answer,
         "bloom_level": question.bloom_level,
         "thinking_order": question.thinking_order,
-        "difficulty": question.difficulty,
         "category": question.category,
         "status": "final",
     }
@@ -290,7 +288,6 @@ def mirror_generated_questions(node, generated_questions):
                 content_fingerprint=fingerprint,
                 bloom_level=generated.bloom_level,
                 thinking_order=generated.thinking_order,
-                difficulty=generated.difficulty,
                 category=generated.category,
                 validation_status=Question.ValidationStatus.READY,
                 validation_issues=[],

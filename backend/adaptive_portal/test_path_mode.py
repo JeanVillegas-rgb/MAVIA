@@ -59,13 +59,13 @@ def _published_topic(*, with_prerequisite=True):
     questions["Matter"] = GeneratedQuestion.objects.create(
         node=objects["Matter"], question_text="Does matter take up space?",
         question_format="TF", correct_answer="True", explanation="Matter has volume.",
-        bloom_level="remember", thinking_order="LOT", difficulty="easy", status="final",
+        bloom_level="remember", thinking_order="LOT", status="final",
     )
     questions["Solid"] = GeneratedQuestion.objects.create(
         node=objects["Solid"], question_text="Which keeps a fixed shape?",
         question_format="MCQ", choices={"A": "Solid", "B": "Liquid"}, correct_answer="A",
         explanation="A solid's particles are locked in place.",
-        bloom_level="remember", thinking_order="LOT", difficulty="easy", status="final",
+        bloom_level="remember", thinking_order="LOT", status="final",
     )
     return course, module, topic, groups, questions
 
@@ -87,7 +87,7 @@ def _published_topic_with_alternate(*, with_prerequisite=False):
         node=alt_object, question_text="Alt: which keeps a fixed shape?",
         question_format="MCQ", choices={"A": "Solid", "B": "Gas"}, correct_answer="A",
         explanation="Same idea, a different book's words.",
-        bloom_level="remember", thinking_order="LOT", difficulty="easy", status="final",
+        bloom_level="remember", thinking_order="LOT", status="final",
     )
     return course, module, topic, groups, questions, alt_object, alt_question
 
@@ -121,7 +121,7 @@ def _published_chain(length):
         question = GeneratedQuestion.objects.create(
             node=obj, question_text=f"{title}: correct or not?",
             question_format="TF", correct_answer="True", explanation="",
-            bloom_level="remember", thinking_order="LOT", difficulty="easy", status="final",
+            bloom_level="remember", thinking_order="LOT", status="final",
         )
         if index > 0:
             ConceptPrerequisite.objects.create(

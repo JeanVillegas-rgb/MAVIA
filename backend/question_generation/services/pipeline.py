@@ -7,7 +7,7 @@ from math import ceil
 from django.conf import settings
 from django.db import transaction
 
-from .bloom_classifier import BLOOM_TO_DIFFICULTY, BloomClassifier
+from .bloom_classifier import BloomClassifier
 from .question_generator import (
     generate_questions,
     question_bank_fingerprint,
@@ -389,12 +389,6 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
 
         draft.bloom_level = bloom_level
         draft.thinking_order = thinking_order
-        # A different axis from thinking_order, kept for the adaptive
-        # engine's difficulty-based remediation — see GeneratedQuestion.
-        # Derived straight from bloom_level rather than trusted from the
-        # classifier's return value, so a classifier/stub that only returns
-        # bloom_level/thinking_order/category still works.
-        draft.difficulty = classification.get("difficulty") or BLOOM_TO_DIFFICULTY.get(bloom_level, "")
         draft.category = classification["category"]
         draft.status = "final"
         counts[thinking_order] += 1
@@ -435,7 +429,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
         if reject_ids:
             GeneratedQuestion.objects.filter(id__in=reject_ids).delete()
         GeneratedQuestion.objects.bulk_update(
-            keep, ["bloom_level", "thinking_order", "difficulty", "category", "status"]
+            keep, ["bloom_level", "thinking_order", "category", "status"]
         )
 
         material = node.material

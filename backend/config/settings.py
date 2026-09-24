@@ -122,6 +122,29 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://127\.0\.0\.1:\d+$",
 ]
 
+# CORS says which origins the *browser* may read a response from. This says
+# which origins Django will accept an unsafe request from, and the two are
+# separate checks -- passing CORS does not get you past CSRF.
+#
+# It matters here because DRF's SessionAuthentication enforces CSRF whenever a
+# session cookie identifies an active user (rest_framework/authentication.py:
+# "Unauthenticated, CSRF validation not required"). The web app is served from
+# :5173 and the API from :8000, so the Origin never matches the API's own host.
+# Nothing goes wrong until someone opens Django admin in the same browser --
+# that sets a session cookie, and from then on every write from the web app
+# fails with "CSRF Failed: Origin checking failed", *including registration*,
+# which is otherwise AllowAny. Seen 2026-09-22 straight after a
+# `createsuperuser` and an admin login; it looks like a broken sign-up form and
+# is not.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",

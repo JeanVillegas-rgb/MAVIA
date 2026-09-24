@@ -37,7 +37,9 @@ from .services.criteria import (
     inbound_outbound,
     inbound_outbound_ratios,
     key_terms,
+    names_the_target,
     only_contrastive_mentions,
+    presented_in_parallel,
     reference_details,
     reference_matrix,
     semantic_reference,
@@ -661,3 +663,105 @@ class SectionContainmentTests(TestCase):
 
         self.assertNotIn((1, 1), matrix)
         self.assertFalse(any(term.startswith("section:") for terms in matched.values() for term in terms))
+
+
+def _fillers():
+    """Four unrelated concepts, so a topic is big enough to have key terms.
+
+    `key_terms` allows a term used by at most `floor(n * REF_MAX_DF_RATIO)` of
+    the concepts, so with fewer than six concepts a word shared by two of them
+    is dropped before any criterion sees it.
+    """
+    return [
+        Headed(3, 2, "Roots", "Roots take in water from the ground."),
+        Headed(4, 3, "Leaves", "Leaves make food using sunlight."),
+        Headed(5, 4, "Stem", "The stem holds the plant upright."),
+        Headed(6, 5, "Flower", "The flower attracts insects."),
+    ]
+
+
+class ParallelPresentationTests(TestCase):
+    """Coordinate siblings, and the naming reference that still gets through.
+
+    Regression, live topic 152 (2026-09-22): `Solid -> Gas` was accepted on
+    "compress", "dot", "drawn" and "spaced" -- the vocabulary both diagram
+    descriptions share because they describe two diagrams the same way. The
+    gold map declares solid, liquid and gas parallel. See
+    `docs/learning_path_revision_2026-09-17.md`.
+    """
+
+    def test_two_passages_under_one_heading_are_parallel(self):
+        solid = Headed(1, 0, "Solid", "Particles are drawn as evenly spaced dots.", ("Matter",))
+        gas = Headed(2, 1, "Gas", "Particles are drawn as widely spaced dots.", ("Matter",))
+
+        self.assertTrue(presented_in_parallel(solid, gas, {1: "solid", 2: "gas"}))
+
+    def test_the_concept_the_heading_names_is_the_parent_not_a_sibling(self):
+        """"Matter" sitting under the "Matter" heading still precedes Solid."""
+        matter = Headed(1, 0, "Matter", "Matter has mass.", ("Matter",))
+        solid = Headed(2, 1, "Solid", "A solid keeps its shape.", ("Matter",))
+
+        self.assertFalse(presented_in_parallel(matter, solid, {1: "matter", 2: "solid"}))
+
+    def test_passages_under_different_headings_are_not_parallel(self):
+        solid = Headed(1, 0, "Solid", "A solid keeps its shape.", ("Matter",))
+        comparing = Headed(2, 1, "Comparing", "The table compares them.", ("Comparing the Three States",))
+
+        self.assertFalse(presented_in_parallel(solid, comparing, {1: "solid", 2: "comparing"}))
+
+    def test_a_concept_under_no_heading_is_parallel_to_nothing(self):
+        """The same rule `crosses_sections` follows: a closing comparison or an
+        opening definition sits under no section and is nobody's sibling."""
+        solid = Headed(1, 0, "Solid", "A solid keeps its shape.", ("Matter",))
+        changing = Headed(2, 1, "Changing", "Heat changes the state.", ("",))
+
+        self.assertFalse(presented_in_parallel(solid, changing, {1: "solid", 2: "changing"}))
+
+    def test_a_naming_reference_is_not_shared_vocabulary(self):
+        self.assertTrue(names_the_target("solid", ["place", "solid"]))
+        self.assertTrue(names_the_target("seed formation", ["head:seed"]))
+        self.assertTrue(names_the_target("matter", ["section:matter"]))
+        self.assertFalse(names_the_target("solid", ["compress", "dot", "drawn", "spaced"]))
+        self.assertFalse(names_the_target(None, ["drawn"]))
+
+    def test_siblings_sharing_only_vocabulary_lose_their_edge(self):
+        """The whole rule, end to end, on the shape topic 152 actually has."""
+        solid = Headed(1, 0, "Solid", "Particles are drawn as evenly spaced dots.", ("Matter",))
+        gas = Headed(2, 1, "Gas", "Particles are drawn as widely spaced dots.", ("Matter",))
+        # Six concepts, not four: `REF_MAX_DF_RATIO` allows a term in at most
+        # `floor(6 * 0.34) = 2` of them, which is what lets a word shared by
+        # exactly these two still count as distinctive -- the condition the
+        # live topic meets and the condition this rule exists for.
+        concepts = [solid, gas, *_fillers()]
+
+        matrix = reference_matrix(concepts, LiteralRuntime())
+        ratios = inbound_outbound_ratios(concepts, matrix)
+        raw = decide(cast_votes(solid, gas, matrix, ratios))
+        pairs = {
+            (row["prerequisite"].id, row["dependent"].id)
+            for row in decide_pairs(concepts, LiteralRuntime())
+        }
+
+        self.assertIsNotNone(raw, "the criteria still vote for this pair; the veto is what stops it")
+        self.assertNotIn((1, 2), pairs)
+
+    def test_a_sibling_that_names_its_target_keeps_its_edge(self):
+        """Regression, topic 79: seed -> fruit. Seed formation and Fruit
+        formation are siblings under "How Flowering Plants Reproduce", and the
+        edge between them is one the teacher requires -- Fruit's text says
+        "seed", so it is referring, not merely sharing words."""
+        seed = Headed(1, 0, "Seed formation", "The ovule becomes a seed.", ("How Flowering Plants Reproduce",))
+        fruit = Headed(
+            2, 1, "Fruit formation",
+            "The ovary ripens into a fruit that protects the seed.",
+            ("How Flowering Plants Reproduce",),
+        )
+        concepts = [seed, fruit, *_fillers()]
+
+        pairs = {
+            (row["prerequisite"].id, row["dependent"].id)
+            for row in decide_pairs(concepts, LiteralRuntime())
+        }
+
+        self.assertTrue(presented_in_parallel(seed, fruit, {1: "seed formation", 2: "fruit formation"}))
+        self.assertIn((1, 2), pairs)
