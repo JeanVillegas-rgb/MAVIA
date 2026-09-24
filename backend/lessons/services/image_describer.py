@@ -235,22 +235,59 @@ def lesson_text_around(
     kept = _nearby_blocks(
         blocks, page_number=page_number, bbox=bbox, limit=limit, siblings=siblings,
     )
-    if not kept or not bbox:
-        return {"before": _block_text(kept, limit), "after": ""}
-
-    figure_top, figure_bottom = float(bbox[1]), float(bbox[3])
 
     def top(item):
         return float((item.get("bbox") or (0, 0, 0, 0))[1])
 
-    # A block straddling the figure's own band is counted as already said:
-    # treating it as upcoming would suppress the description on the strength
-    # of a caption or a stray line beside the graphic.
-    before = [item for item in kept if top(item) < figure_bottom]
-    after = [item for item in kept if top(item) >= figure_bottom]
-    if figure_top == figure_bottom:  # a zero-height box tells us nothing
+    if kept and bbox:
+        figure_top, figure_bottom = float(bbox[1]), float(bbox[3])
+        # A block straddling the figure's own band is counted as already said:
+        # treating it as upcoming would suppress the description on the
+        # strength of a caption or a stray line beside the graphic.
+        before = [item for item in kept if top(item) < figure_bottom]
+        after = [item for item in kept if top(item) >= figure_bottom]
+        if figure_top == figure_bottom:  # a zero-height box tells us nothing
+            before, after = kept, []
+    else:
         before, after = kept, []
+
+    # A figure at the foot of a page, or alone on one, is explained overleaf.
+    # Each side is filled from the neighbouring page only when the figure's own
+    # page has nothing there, so a figure already sitting with its passage is
+    # never given another page's as well.
+    if not before:
+        before = _page_blocks(blocks, page_number - 1, limit, tail=True)
+    if not after:
+        after = _page_blocks(blocks, page_number + 1, limit, tail=False)
     return {"before": _block_text(before, limit), "after": _block_text(after, limit)}
+
+
+def _page_blocks(blocks, page_number, limit, *, tail):
+    """One neighbouring page's text, from the end of it or the start."""
+    def top(item):
+        return float((item.get("bbox") or (0, 0, 0, 0))[1])
+
+    rows = sorted(
+        (
+            item for item in blocks
+            if item.get("page") == page_number and (item.get("text") or "").strip()
+        ),
+        key=top,
+    )
+    if not rows:
+        return []
+    # The page before a figure ends where the figure begins, so its closing
+    # text is what leads into it; the page after opens with what follows.
+    ordered = list(reversed(rows)) if tail else rows
+    kept, used = [], 0
+    for item in ordered:
+        text = " ".join((item.get("text") or "").split())
+        if kept and used + len(text) + 1 > limit:
+            break
+        kept.append(item)
+        used += len(text) + 1
+    kept.sort(key=top)
+    return kept
 
 
 def build_prompt(

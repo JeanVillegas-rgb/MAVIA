@@ -201,3 +201,42 @@ class UpcomingTextPromptTests(SimpleTestCase):
         prompt = image_describer.build_prompt(lesson_title="States of matter")
 
         self.assertNotIn("do not explain it yourself", prompt)
+
+
+class PageBreakTests(SimpleTestCase):
+    """A figure explained on the next page is still explained after it.
+
+    A figure printed at the foot of a page -- or alone on one -- has its
+    passage overleaf. Looking only at the figure's own page found nothing, so
+    the narration was left free to teach the concept the next page teaches.
+    """
+
+    blocks = [
+        block(1, "Matter exists in three everyday states.", 100),
+        block(2, "In a solid, the particles are tightly packed together.", 100),
+        block(2, "In a liquid, the particles slide past one another.", 200),
+        block(3, "Melting turns a solid into a liquid.", 100),
+    ]
+
+    def test_a_figure_alone_on_its_page_reads_the_next_page_as_upcoming(self):
+        around = image_describer.lesson_text_around(
+            self.blocks, page_number=2, bbox=(0.0, 300.0, 400.0, 500.0),
+        )
+        # Page 2 has text above the figure, so only "after" needs the overleaf.
+        self.assertIn("tightly packed", around["before"])
+        self.assertIn("Melting", around["after"])
+
+    def test_an_empty_page_takes_context_from_both_neighbours(self):
+        around = image_describer.lesson_text_around(
+            self.blocks, page_number=1, bbox=(0.0, 300.0, 400.0, 500.0),
+        )
+
+        self.assertIn("three everyday states", around["before"])
+        self.assertIn("tightly packed", around["after"])
+
+    def test_the_last_page_has_nothing_upcoming(self):
+        around = image_describer.lesson_text_around(
+            self.blocks, page_number=3, bbox=(0.0, 300.0, 400.0, 500.0),
+        )
+
+        self.assertEqual(around["after"], "")
