@@ -156,7 +156,10 @@ def _request_variants_once(learning_object, model):
                     },
                     "required": ["simplified", "elaborated"],
                 },
-                "options": {"temperature": 0.1, "num_predict": 1024},
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": settings.ADAPTIVE_VARIANT_NUM_PREDICT,
+                },
             },
             timeout=settings.ADAPTIVE_VARIANT_TIMEOUT,
         )
@@ -215,6 +218,11 @@ def generate_standalone_variants(outline_node):
     cached_count = 0
     errors = []
 
+    # Decide what needs generating (DB reads on this thread), then fan the
+    # Ollama calls out. A publish run is dominated by N sequential calls to a
+    # local model; those calls touch no ORM state, so they parallelise cleanly
+    # while every write stays on this thread.
+    pending = []
     for learning_object in standalone:
         fingerprint = _fingerprint(learning_object)
         cached = LessonVariant.objects.filter(
@@ -226,37 +234,70 @@ def generate_standalone_variants(outline_node):
         if cached == 2:
             cached_count += 2
             continue
+        pending.append((learning_object, fingerprint))
 
-        try:
-            variants = _request_variants(learning_object, model)
-            with transaction.atomic():
-                for variant, narration in variants.items():
-                    LessonVariant.objects.update_or_create(
-                        learning_object=learning_object,
-                        variant=variant,
-                        defaults={
-                            "narration": narration,
-                            "audio_url": "",
-                            "source_fingerprint": fingerprint,
-                            "generator_model": model,
-                            "generated_at": timezone.now(),
-                        },
-                    )
-                generated_count += len(variants)
-        except VariantGenerationError as exc:
+    outcomes = _request_variants_bulk(
+        [obj for obj, _ in pending], model, settings.ADAPTIVE_VARIANT_CONCURRENCY
+    )
+
+    for learning_object, fingerprint in pending:
+        outcome = outcomes[learning_object.id]
+        if isinstance(outcome, VariantGenerationError):
             logger.warning(
                 "Adaptive variant generation failed: learning_object=%s model=%s error=%s",
                 learning_object.id,
                 model,
-                exc,
+                outcome,
             )
-            errors.append({"learning_object_id": learning_object.id, "detail": str(exc)})
+            errors.append({"learning_object_id": learning_object.id, "detail": str(outcome)})
+            continue
+
+        with transaction.atomic():
+            for variant, narration in outcome.items():
+                LessonVariant.objects.update_or_create(
+                    learning_object=learning_object,
+                    variant=variant,
+                    defaults={
+                        "narration": narration,
+                        "audio_url": "",
+                        "source_fingerprint": fingerprint,
+                        "generator_model": model,
+                        "generated_at": timezone.now(),
+                    },
+                )
+            generated_count += len(outcome)
 
     return {
         "generated_count": generated_count,
         "cached_count": cached_count,
         "errors": errors,
     }
+
+
+def _request_variants_bulk(learning_objects, model, concurrency):
+    """``{learning_object_id: variants dict | VariantGenerationError}``.
+
+    Threads here do network I/O only -- no ORM access -- so Django's per-thread
+    connections and SQLite's write lock never come into play. Order does not
+    matter: the caller writes results back in its own order.
+    """
+    if not learning_objects:
+        return {}
+
+    def _one(learning_object):
+        try:
+            return learning_object.id, _request_variants(learning_object, model)
+        except VariantGenerationError as exc:
+            return learning_object.id, exc
+
+    workers = max(1, min(concurrency, len(learning_objects)))
+    if workers == 1:
+        return dict(_one(obj) for obj in learning_objects)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(pool.map(_one, learning_objects))
 
 
 STALE_VERSION_DETAIL = (

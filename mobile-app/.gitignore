@@ -1,7 +1,6 @@
 node_modules/
 .expo/
 dist/
-dist-merge-check/
 web-build/
 *.jks
 *.p8
@@ -14,3 +13,4 @@ web-build/
 npm-debug.*
 *.log
 .DS_Store
+scripts/.transcripts/

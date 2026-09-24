@@ -19,7 +19,17 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "MAVIA listens for spoken commands like \"please repeat\" so you can hear a lesson again.",
+          "speechRecognitionPermission": "MAVIA listens for spoken commands like \"please repeat\" so you can hear a lesson again.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ]
     ]
   }
 }

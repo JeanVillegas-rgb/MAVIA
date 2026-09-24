@@ -2,9 +2,12 @@ from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-# The incoming adaptive_portal engine reads these BKT weights and starting
-# mastery. The legacy adaptive engine is unchanged. Default difficulty is
-# reserved: the portal currently follows question order, not Bloom tiers.
+# Mirrors the module-level constants the adaptive engine's Bayesian
+# Knowledge Tracing scorer used in the Milestone1-Jean prototype
+# (backend/adaptive/services.py: P_GUESS, P_SLIP, P_LEARN, MASTERY_CEILING,
+# STARTING_MASTERY, DEFAULT_DIFFICULTY). When that engine is ported into
+# mavia, its scorer should read AdaptiveConfig.load() instead of hardcoded
+# constants — this app exists so admins can tune it without a redeploy.
 
 UNIT_INTERVAL = [MinValueValidator(0.0), MaxValueValidator(1.0)]
 

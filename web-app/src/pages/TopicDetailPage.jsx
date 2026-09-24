@@ -27,8 +27,10 @@ import {
   editVersionText,
   generateObjectVersions,
   keepVersionText,
+  moveObjectOut,
+  moveObjectToConcept,
+  reorderObject,
   reviewQuestionPairing,
-  separateLearningObject,
   startQuestionGeneration,
   updateLearningObject,
   updateTopicQuestion,
@@ -52,6 +54,12 @@ function findTopLevelNode(topic, allTopics) {
     current = parent;
   }
   return current;
+}
+
+function withUnpublishedNote(message, data) {
+  return data?.unpublished
+    ? `${message} The topic was unpublished; republish it when ready.`
+    : message;
 }
 
 function isImageLearningObject(item) {
@@ -348,17 +356,27 @@ function ObjectPairsPanel({
                     <strong>{Math.round(suggestion.similarity_score * 100)}%</strong>
                     <em>{suggestion.confidence} confidence</em>
                   </div>
+                  {(suggestion.source_extra_ids?.length > 0 || suggestion.candidate_extra_ids?.length > 0) && (
+                    <p className="muted-text">
+                      Accepting puts every object on both sides into one concept. Each keeps its own
+                      text, and you can move any of them back out afterwards.
+                    </p>
+                  )}
                   <div className="match-suggestion-pair">
                     <div className="match-source-card">
                       <div className="match-source-label">
                         <span aria-hidden="true">A</span>
                         <small>{sourceMaterial?.filename || `PDF ${source.material}`}</small>
                       </div>
-                      <strong>{source.title}</strong>
-                      {source.image_url && (
-                        <img className="review-source-image" src={source.image_url} alt={source.title || "Source A"} />
-                      )}
-                      <p className="match-source-content">{source.content || "No narration content."}</p>
+                      {(suggestion.source_members?.length ? suggestion.source_members : [source]).map((member) => (
+                        <div key={member.id} className="match-unit-member">
+                          <strong>{member.title}</strong>
+                          {member.image_url && (
+                            <img className="review-source-image" src={member.image_url} alt={member.title || "Source A"} />
+                          )}
+                          <p className="match-source-content">{member.content || "No narration content."}</p>
+                        </div>
+                      ))}
                     </div>
                     <div className="match-pair-connector" aria-hidden="true">
                       <span>+</span>
@@ -369,11 +387,15 @@ function ObjectPairsPanel({
                         <span aria-hidden="true">B</span>
                         <small>{candidateMaterial?.filename || `PDF ${candidate.material}`}</small>
                       </div>
-                      <strong>{candidate.title}</strong>
-                      {candidate.image_url && (
-                        <img className="review-source-image" src={candidate.image_url} alt={candidate.title || "Source B"} />
-                      )}
-                      <p className="match-source-content">{candidate.content || "No narration content."}</p>
+                      {(suggestion.candidate_members?.length ? suggestion.candidate_members : [candidate]).map((member) => (
+                        <div key={member.id} className="match-unit-member">
+                          <strong>{member.title}</strong>
+                          {member.image_url && (
+                            <img className="review-source-image" src={member.image_url} alt={member.title || "Source B"} />
+                          )}
+                          <p className="match-source-content">{member.content || "No narration content."}</p>
+                        </div>
+                      ))}
                     </div>
                   </div>
                   <div className="match-suggestion-actions">
@@ -399,6 +421,29 @@ function ObjectPairsPanel({
   );
 }
 
+
+// The three versions a learner is offered, in the order they are shown.
+export const VERSION_ROLES = [
+  { key: "normal", label: "Normal" },
+  { key: "simplified", label: "Simplified" },
+  { key: "elaborated", label: "Elaborated" },
+];
+
+// "3 versions from 2 files" rather than "6 variations": the old count was the
+// concept's object count, which is not the number of versions a learner is
+// offered and read as though the lesson said six different things.
+function versionSummary(group) {
+  const slots = group.versions?.slots || {};
+  const present = VERSION_ROLES.filter(({ key }) => slots[key]);
+  const files = new Set(
+    present
+      .filter((role) => slots[role.key].source !== "generated")
+      .map((role) => slots[role.key].material),
+  );
+  const versions = `${present.length} version${present.length === 1 ? "" : "s"}`;
+  if (!files.size) return versions;
+  return `${versions} from ${files.size} file${files.size === 1 ? "" : "s"}`;
+}
 
 // A question leaves the review queue as soon as the teacher has ruled on it.
 // Declining sets `teacher_unpaired`, which is a decision -- not an unreviewed
@@ -545,6 +590,9 @@ export function versionOriginLabel(entry, materialTitle) {
     : "AI generated";
   if (entry.assigned_by === "teacher") return `${source} · Teacher confirmed`;
   if (entry.assigned_by === "llm_validated") return `${source} · AI classified`;
+  // Not an AssignedBy choice: a bundle a newer teacher decision pushed out of
+  // this slot. Said plainly, because the teacher never chose this role.
+  if (entry.assigned_by === "displaced_by_teacher") return `${source} · Moved out of its slot`;
   return source;
 }
 
@@ -941,6 +989,10 @@ function VersionReviewPanel({
                   text={entry?.text}
                   originLabel={versionOriginLabel(entry, materialTitleFor(entry))}
                   busy={busyKeys.includes(busyAction)}
+                  // A version a PDF supplies has no stored row to edit or keep:
+                  // it is the other file's own text, corrected by moving its
+                  // objects, not by retyping them here.
+                  readOnly={Boolean(entry) && !entry.id}
                   stale={Boolean(entry?.stale)}
                   busyLabel={busyAction === generateKey ? "Regenerating, this takes a few minutes…" : ""}
                   onKeep={() => onKeepVersion(entry.id)}
@@ -973,8 +1025,8 @@ function VersionReviewPanel({
                 Preserved as alternatives. Select a source below to replace a main version.
               </p>
               {versions.extras.map((entry) => (
-                <div key={entry.id}><VersionSlotCard
-                  key={entry.id}
+                <div key={entry.id ?? `bundle-${entry.material}`}><VersionSlotCard
+                  key={entry.id ?? `bundle-${entry.material}`}
                   slotKey="extra"
                   heading="Extra"
                   entry={entry}
@@ -1552,9 +1604,13 @@ function RunProgress({
   const callerReports = Boolean(currentOverride) || indexOverride !== null;
   const index = callerReports ? indexOverride : progress?.data?.index;
   const total = callerReports ? totalOverride : progress?.data?.total;
+  // A caller may name what it is working on without counting it, which leaves
+  // the position undefined -- so check for a real number rather than for any
+  // total, or the bar reads "NaN%" beside a blank count.
+  const counted = Number.isFinite(index) && Number.isFinite(total) && total > 0;
   // Indeterminate until the first counter arrives -- a bar pinned at zero
   // reads as "nothing is happening", which is the opposite of the truth.
-  const percent = total ? Math.round((index / total) * 100) : null;
+  const percent = counted ? Math.round((index / total) * 100) : null;
   const currentLine = currentOverride || latest?.message || "Starting…";
 
   if (dismissed && !running) return null;
@@ -1581,7 +1637,7 @@ function RunProgress({
             <h3>{heading}</h3>
           </div>
           <div className="run-progress-head-side">
-            {total ? (
+            {counted ? (
               <span className="run-progress-count">
                 {unit} {index} of {total}
               </span>
@@ -1641,6 +1697,7 @@ function PublishPanel({
   topicId,
   topic,
   groups,
+  materialById,
   confirmedSourceCount,
   busyAction,
   onReviewStepChange,
@@ -1688,7 +1745,7 @@ ${question.prompt}`,
   }
 
   return (
-    <section className="connection-review-panel" aria-labelledby="publish-panel-title">
+    <section className="connection-review-panel publish-review-panel" aria-labelledby="publish-panel-title">
       <div className="connection-review-heading">
         <div>
           <span className="connection-eyebrow">Final review</span>
@@ -1730,55 +1787,77 @@ ${question.prompt}`,
                     <h4>{group.label || group.learning_objects[0]?.title || "Untitled concept"}</h4>
                   </div>
                   <span className={`connection-status ${isConnected ? "is-connected" : "is-single"}`}>
-                    {isConnected
-                      ? `${group.learning_objects.length} variations`
-                      : "Single variation"}
+                    {versionSummary(group)}
                   </span>
                 </header>
-                <div className="publish-object-list">
-                  {group.learning_objects.map((item) => {
-                    const isRepresentative =
-                      Number(item.id) === Number(group.versions?.representative_id);
-                    const slots = group.versions?.slots || {};
-                    // "Normal" is the representative's own text -- unlike the
-                    // other two it is not a stored slot, so it is read from the
-                    // object rather than from `slots`.
-                    const versions = isRepresentative
-                      ? [
-                        { key: "normal", label: "Normal", text: item.content },
-                        { key: "simplified", label: "Simplified", text: slots.simplified?.text },
-                        { key: "elaborated", label: "Elaborated", text: slots.elaborated?.text },
-                      ]
-                      : [{ key: "normal", label: "Other variation", text: item.content }];
+                {/* One block per version, each naming where it came from and
+                    which objects it is made of. Every object appears exactly
+                    once, under the role it actually plays -- the screen used
+                    to show the concept's lead with its own text as "Normal"
+                    and every other object as "Other variation", which said
+                    nothing about what those objects were for and printed a
+                    supplied version's wording twice. */}
+                <div className="publish-version-list">
+                  {VERSION_ROLES.map(({ key, label }) => {
+                    const slot = group.versions?.slots?.[key];
+                    if (!slot) {
+                      return (
+                        <section className={`publish-version-block is-${key} is-missing`} key={key}>
+                          <header className="publish-version-head">
+                            <span className={`version-slot-label is-${key}`}>{label}</span>
+                            <small>Not generated yet</small>
+                          </header>
+                        </section>
+                      );
+                    }
+                    const objects = slot.objects || [];
+                    const material = materialById.get(Number(slot.material));
+                    const from = slot.source === "generated"
+                      ? `Generated from the Normal version · ${objects.length} segment${objects.length === 1 ? "" : "s"}`
+                      : `${material?.filename || material?.title || `PDF ${slot.material}`} · ${objects.length} object${objects.length === 1 ? "" : "s"}`;
                     return (
-                      <div className="publish-object-item" key={item.id}>
-                        <div className="publish-item-heading">
-                          <strong>{item.title}</strong>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-small"
-                            disabled={Boolean(busyAction) || Boolean(deletingKey)}
-                            onClick={() => handleDeleteObject(item)}
-                          >
-                            {deletingKey === `object-${item.id}` ? "Deleting..." : "Delete"}
-                          </button>
-                        </div>
-                        <div className="publish-version-set">
-                          {versions.map((version) => (
-                            <section className={`publish-version is-${version.key}`} key={version.key}>
-                              <h6>{version.label}</h6>
-                              {version.text ? (
-                                <FormattedLearningObjectContent
-                                  content={version.text}
-                                  className="learning-object-content-text"
-                                />
-                              ) : (
-                                <p className="publish-version-missing">Not generated yet.</p>
-                              )}
-                            </section>
+                      <section className={`publish-version-block is-${key}`} key={key}>
+                        <header className="publish-version-head">
+                          <span className={`version-slot-label is-${key}`}>{label}</span>
+                          <small>{from}</small>
+                          {slot.stale && (
+                            <span className="publish-version-stale" role="status">
+                              Written before the Normal text changed
+                            </span>
+                          )}
+                        </header>
+                        <ol className="publish-version-objects">
+                          {objects.map((object) => (
+                            <li key={`${key}-${object.id}`}>
+                              <div className="publish-item-heading">
+                                <strong>{object.title}</strong>
+                                {object.kind === "image" && (
+                                  <span className="publish-object-kind">figure</span>
+                                )}
+                                {/* Deleting removes the object from the lesson,
+                                    so it is offered where the object is shown,
+                                    and only where the object really lives --
+                                    a generated segment is not an object. */}
+                                {slot.source !== "generated" && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-small"
+                                    disabled={Boolean(busyAction) || Boolean(deletingKey)}
+                                    aria-label={`Delete "${object.title}"`}
+                                    onClick={() => handleDeleteObject(object)}
+                                  >
+                                    {deletingKey === `object-${object.id}` ? "Deleting..." : "Delete"}
+                                  </button>
+                                )}
+                              </div>
+                              <FormattedLearningObjectContent
+                                content={object.text || ""}
+                                className="learning-object-content-text"
+                              />
+                            </li>
                           ))}
-                        </div>
-                      </div>
+                        </ol>
+                      </section>
                     );
                   })}
                 </div>
@@ -2025,6 +2104,17 @@ function LearningObjectConnections({
   const [regroupPreview, setRegroupPreview] = useState(null);
   const [regroupSelectedIds, setRegroupSelectedIds] = useState([]);
   const automaticClassificationRef = useRef("");
+  // The bundle controls, keyed `${object id}-${action}`, and the one to focus
+  // again once a correction has come back. See `bundleControlKey`.
+  const bundleControlRefs = useRef(new Map());
+  const refocusAfterCorrection = useRef("");
+  // The review panel itself: rendered for the whole "objects" step regardless
+  // of filter or search, so it is where focus lands when a correction's own
+  // control (and its row's "Move to..." fallback) is no longer rendered --
+  // Move out on the last object of another PDF in a filtered/searched view
+  // sends the object into a one-PDF concept the view then hides, leaving
+  // neither control mounted.
+  const reviewPanelRef = useRef(null);
 
   const materialSignature = useMemo(
     () => materials
@@ -2066,6 +2156,19 @@ function LearningObjectConnections({
     if (resources) logLearningObjectMatchDebug(resources);
   }, [resources]);
 
+  // Grouping can place corroborated objects into one concept on its own, and a
+  // placement unpublishes the topic so the published lesson never describes
+  // content that changed. Nothing else announces that, so the panel says it.
+  // The payload's flag is fresh; the course record the page was loaded with is
+  // not, so a disagreement means grouping is what changed it.
+  const payloadPublished = resources?.outline_node?.published;
+  const sawPublishedRef = useRef(Boolean(topic?.published));
+  useEffect(() => {
+    if (payloadPublished) sawPublishedRef.current = true;
+  }, [payloadPublished]);
+  const unpublishedByGrouping = payloadPublished === false
+    && (sawPublishedRef.current || Boolean(topic?.published));
+
   const groups = resources?.learning_object_groups || [];
   const matchSuggestions = resources?.match_suggestions || [];
   const allQuestionPairings = resources?.question_pairings || [];
@@ -2088,15 +2191,55 @@ function LearningObjectConnections({
     });
     return result;
   }, [groups]);
-  const connectedGroups = groups.filter((group) => group.learning_objects.length > 1);
-  const singletonGroups = groups.filter((group) => group.learning_objects.length === 1);
+  // Keyboard focus across a bundle correction.
+  //
+  // Every correction replaces the whole payload, so the row the teacher just
+  // pressed in is unmounted and mounted again -- and when the object moves to
+  // another concept it is mounted somewhere else entirely. A teacher on a
+  // screen reader would land back at the top of the page after every press.
+  // The controls therefore keep themselves in the tab order (`aria-disabled`
+  // rather than `disabled`, which blurs a focused element the moment it is
+  // set), and the control that was pressed is focused again once the request
+  // has come back and the new payload has rendered.
+  function bundleControlKey(item, action) {
+    return `${item.id}-${action}`;
+  }
+
+  function registerBundleControl(key) {
+    return (element) => {
+      if (element) bundleControlRefs.current.set(key, element);
+      else bundleControlRefs.current.delete(key);
+    };
+  }
+
+  // The destinations a "Move to..." menu offers: every other concept of this
+  // topic, named the way the cards name them so the two cannot disagree.
+  function conceptName(group) {
+    return group.label || group.learning_objects?.[0]?.title || "Untitled concept";
+  }
+
+  function otherConcepts(groupId) {
+    return groups.filter((group) => group.id !== groupId);
+  }
+
+  // How many PDFs teach this concept. That -- not how many objects one PDF
+  // chops it into -- is what "Grouped", "Standalone" and "N variations" are
+  // about: the teacher is judging cross-PDF corroboration here, and a concept
+  // one PDF teaches as three objects is still a single variation.
+  function variationCount(group) {
+    if (group.bundles) return group.bundles.length;
+    return new Set((group.learning_objects || []).map((item) => item.material)).size;
+  }
+
+  const connectedGroups = groups.filter((group) => variationCount(group) > 1);
+  const singletonGroups = groups.filter((group) => variationCount(group) === 1);
   const unclassifiedGroupSignature = groups
     .filter((group) => group.versions?.classification_complete === false)
     .map((group) => group.id)
     .join(",");
   const visibleGroups = groups.filter((group) => {
-    if (filter === "connected" && group.learning_objects.length <= 1) return false;
-    if (filter === "single" && group.learning_objects.length !== 1) return false;
+    if (filter === "connected" && variationCount(group) <= 1) return false;
+    if (filter === "single" && variationCount(group) !== 1) return false;
     const query = searchTerm.trim().toLocaleLowerCase();
     if (!query) return true;
     const searchableText = [
@@ -2224,21 +2367,76 @@ function LearningObjectConnections({
     }
   }
 
-  async function separateObject(item) {
-    if (reviewStep !== "objects") return;
-    setBusyAction(`separate-${item.id}`);
+  // Every correction to an automatic bundle runs through one handler shape:
+  // call, replace the payload, say what happened. Buttons only -- the teachers
+  // this is built for work with a screen reader, so nothing is dragged.
+  async function runBundleCorrection(item, call, describe, focusKey = "") {
+    if (reviewStep !== "objects" || busyAction) return;
+    if (focusKey) refocusAfterCorrection.current = focusKey;
+    setBusyAction(`move-${item.id}`);
     onError("");
     onMessage("");
     try {
-      const data = await separateLearningObject(courseId, topicId, item.id);
+      const data = await call();
       setResources(data);
+      // The object is not where it was, so a tick left on it would make the
+      // next "Connect selected objects" act on a stale selection.
       setSelectedIds((current) => current.filter((id) => id !== item.id));
-      onMessage(`“${item.title}” is now a separate learning object group.`);
+      onMessage(withUnpublishedNote(describe, data));
     } catch (err) {
       onError(err.message);
     } finally {
       setBusyAction("");
     }
+  }
+
+  // Runs after the corrected payload has rendered, so the control is the new
+  // DOM node rather than the unmounted one. The object may have moved into
+  // another concept, where the "Move out" button is gone the moment its new
+  // concept holds it alone -- so the row's "Move to..." menu, which is always
+  // rendered, is the fallback that keeps the teacher on the object they just
+  // moved instead of at the top of the page. Under a filter or search that
+  // new concept's row can itself be hidden -- a one-PDF concept Move out just
+  // created is filtered out by "Grouped", for instance -- so neither control
+  // exists to receive focus. The review panel landmark is the last resort:
+  // it is rendered for the whole "objects" step no matter what the filter or
+  // search hides, so focus never falls all the way back to the document body.
+  useEffect(() => {
+    if (busyAction || !refocusAfterCorrection.current) return;
+    const [objectId] = refocusAfterCorrection.current.split("-");
+    const target = [refocusAfterCorrection.current, `${objectId}-move-to`]
+      .map((key) => bundleControlRefs.current.get(key))
+      .find((element) => element && element.isConnected && !element.disabled);
+    refocusAfterCorrection.current = "";
+    if (target) target.focus();
+    else if (reviewPanelRef.current) reviewPanelRef.current.focus();
+  }, [busyAction, resources]);
+
+  function moveObjectOutOfBundle(item) {
+    return runBundleCorrection(
+      item,
+      () => moveObjectOut(courseId, topicId, item.id),
+      `“${item.title}” is now a concept of its own.`,
+      bundleControlKey(item, "move-out"),
+    );
+  }
+
+  function moveObjectToGroup(item, groupId, groupLabelText) {
+    return runBundleCorrection(
+      item,
+      () => moveObjectToConcept(courseId, topicId, item.id, groupId),
+      `“${item.title}” was moved to “${groupLabelText}”.`,
+      bundleControlKey(item, "move-to"),
+    );
+  }
+
+  function moveObjectWithinBundle(item, direction) {
+    return runBundleCorrection(
+      item,
+      () => reorderObject(courseId, topicId, item.id, direction),
+      `“${item.title}” moved ${direction} in its file’s bundle.`,
+      bundleControlKey(item, direction),
+    );
   }
 
   async function reviewMatchSuggestion(suggestion, decision) {
@@ -2275,7 +2473,7 @@ function LearningObjectConnections({
       setResources(data);
       onMessage(
         decision === "accept"
-          ? "Suggested learning objects were connected."
+          ? withUnpublishedNote("Suggested learning objects were connected.", data)
           : "Suggested connection was rejected and the objects remain separate.",
       );
     } catch (err) {
@@ -2610,6 +2808,8 @@ function LearningObjectConnections({
       <section
         className="connection-review-panel"
         aria-labelledby="connection-review-title"
+        ref={reviewPanelRef}
+        tabIndex={-1}
       >
       <div className="connection-review-heading">
         <div>
@@ -2618,9 +2818,16 @@ function LearningObjectConnections({
           {(resources?.grouping_warnings || []).map((warning) => (
             <p role="alert" key={warning}>{warning}</p>
           ))}
+          {unpublishedByGrouping && (
+            <p role="status" className="connection-unpublished-note">
+              Grouping changed, so this topic was unpublished. Republish when you are ready.
+            </p>
+          )}
           <p>
-            Review learning objects from every PDF and connect equivalent content into one concept group.
-            Each object remains a separate variation for the learning-path module.
+            Each concept shows one block per PDF: everything that file teaches about it, in the
+            file’s own order. If an object is in the wrong concept, give it a concept of its own
+            or move it into another one. The arrows only change the order inside that file’s
+            block — they never move an object between concepts.
           </p>
         </div>
         <span className="connection-source-count">
@@ -2701,7 +2908,8 @@ function LearningObjectConnections({
           ) : (
             <div className="connection-group-list">
               {visibleGroups.map((group, groupIndex) => {
-                const isConnected = group.learning_objects.length > 1;
+                const variations = variationCount(group);
+                const isConnected = variations > 1;
                 const groupNumber = groupIndex + 1;
                 return (
                   <article className={`connection-group-card ${isConnected ? "is-connected" : ""}`} key={group.id}>
@@ -2712,79 +2920,187 @@ function LearningObjectConnections({
                       </div>
                       <span className={`connection-status ${isConnected ? "is-connected" : "is-single"}`}>
                         {isConnected
-                          ? `${group.learning_objects.length} variations`
+                          ? `${variations} variations`
                           : "Single variation"}
                       </span>
                     </header>
 
-                    <div className="connection-object-list">
-                      {group.learning_objects.map((item, itemIndex) => {
-                        const material = materialById.get(Number(item.material));
-                        const isImage = isImageLearningObject(item);
-                        const isMissingImageDescription = isImage && !item.content?.trim();
+                    <div className="concept-bundle-list">
+                      {(group.bundles || []).map((bundle, bundleIndex) => {
+                        const bundleMaterial = materialById.get(Number(bundle.material));
+                        const fileName = bundleMaterial?.filename
+                          || bundleMaterial?.title
+                          || `PDF ${bundle.material}`;
+                        const lastIndex = bundle.learning_objects.length - 1;
                         return (
-                          <div className="connection-object-row" key={item.id}>
-                            {reviewStep === "objects" && (
-                              <label className="connection-object-select">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedIds.includes(item.id)}
-                                  disabled={Boolean(busyAction)}
-                                  onChange={() => toggleSelection(item.id)}
-                                />
-                                <span className="sr-only">Select {item.title}</span>
-                              </label>
-                            )}
-                            <div className="connection-object-copy">
-                              <div className="connection-object-title-row">
-                                <span className="connection-object-order">{groupNumber}.{itemIndex + 1}</span>
-                                <strong>{item.title}</strong>
-                              </div>
-                              {isImage && item.image_url && (
-                                <figure className="learning-object-image-preview connection-object-image">
-                                  <img src={item.image_url} alt={item.title || "Image learning object"} />
-                                </figure>
-                              )}
-                              {isImage && (
-                                <div className={`image-description-notice ${isMissingImageDescription ? "is-missing" : ""}`}>
-                                  {isMissingImageDescription ? (
-                                    <span className="warning-mark warning-mark-small" aria-hidden="true">!</span>
-                                  ) : (
-                                    <span className="image-kind-icon" aria-hidden="true" />
-                                  )}
-                                  <span>
-                                    {isMissingImageDescription
-                                      ? "No image narration is available. Start Ollama, then confirm again to retry."
-                                      : "Image narration included."}
-                                  </span>
-                                </div>
-                              )}
-                              <FormattedLearningObjectContent
-                                content={item.content}
-                                className={`learning-object-content-text connection-object-full-content ${
-                                  isImage ? "image-description-text" : ""
-                                }`.trim()}
-                              />
+                          <section
+                            className="concept-bundle"
+                            key={bundle.material}
+                            aria-label={`What ${fileName} teaches about this concept`}
+                          >
+                            <header className="concept-bundle-head">
+                              <h5>{fileName}</h5>
+                              {/* No role badge here. This step settles which
+                                  objects teach the same thing; what each PDF's
+                                  bundle is used for is decided in step 2. */}
                               <small>
-                                {item.kind === "image" ? "Image learning object" : "Text learning object"}
-                                {item.section_title ? ` · Section: ${item.section_title}` : ""}
+                                {bundle.learning_objects.length} object{bundle.learning_objects.length === 1 ? "" : "s"},
+                                {" "}in the order this file teaches them
                               </small>
-                              <div className="connection-object-source-footer">
-                                <strong>Source material:</strong>{" "}
-                                <span>{material?.filename || material?.title || `PDF ${item.material}`}</span>
-                              </div>
+                            </header>
+                            <div className="connection-object-list">
+                              {bundle.learning_objects.map((item, itemIndex) => {
+                                const isImage = isImageLearningObject(item);
+                                const isMissingImageDescription = isImage && !item.content?.trim();
+                                const moving = busyAction === `move-${item.id}`;
+                                return (
+                                  <div className="connection-object-row" key={item.id}>
+                                    {reviewStep === "objects" && (
+                                      <label className="connection-object-select">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedIds.includes(item.id)}
+                                          aria-disabled={Boolean(busyAction)}
+                                          onChange={() => {
+                                            if (busyAction) return;
+                                            toggleSelection(item.id);
+                                          }}
+                                        />
+                                        <span className="sr-only">Select {item.title}</span>
+                                      </label>
+                                    )}
+                                    <div className="connection-object-copy">
+                                      <div className="connection-object-title-row">
+                                        <span className="connection-object-order">
+                                          {groupNumber}.{bundleIndex + 1}.{itemIndex + 1}
+                                        </span>
+                                        <strong>{item.title}</strong>
+                                      </div>
+                                      {isImage && item.image_url && (
+                                        <figure className="learning-object-image-preview connection-object-image">
+                                          <img src={item.image_url} alt={item.title || "Image learning object"} />
+                                        </figure>
+                                      )}
+                                      {isImage && (
+                                        <div className={`image-description-notice ${isMissingImageDescription ? "is-missing" : ""}`}>
+                                          {isMissingImageDescription ? (
+                                            <span className="warning-mark warning-mark-small" aria-hidden="true">!</span>
+                                          ) : (
+                                            <span className="image-kind-icon" aria-hidden="true" />
+                                          )}
+                                          <span>
+                                            {isMissingImageDescription
+                                              ? "No image narration is available. Start Ollama, then confirm again to retry."
+                                              : "Image narration included."}
+                                          </span>
+                                        </div>
+                                      )}
+                                      <FormattedLearningObjectContent
+                                        content={item.content}
+                                        className={`learning-object-content-text connection-object-full-content ${
+                                          isImage ? "image-description-text" : ""
+                                        }`.trim()}
+                                      />
+                                      <small>
+                                        {item.kind === "image" ? "Image learning object" : "Text learning object"}
+                                        {item.section_title ? ` · Section: ${item.section_title}` : ""}
+                                      </small>
+                                    </div>
+                                    {reviewStep === "objects" && (
+                                      // Every control here is `aria-disabled`, never
+                                      // `disabled`: a disabled element is blurred the moment
+                                      // the flag is set and announces nothing at a bundle's
+                                      // edge. Each handler guards the press instead, and the
+                                      // effect above puts focus back on the control that was
+                                      // pressed once the corrected payload has rendered.
+                                      <div className="concept-bundle-actions">
+                                        {/* Two questions, so two labelled groups. These used to be one row
+                                            of four controls where "Move out" and "Move to..." both read as
+                                            "move" -- one makes a new concept, the other joins an existing
+                                            one -- and the arrows sat beside them looking as though they
+                                            changed concepts too, when they only reorder within one file. */}
+                                        <div
+                                          className="concept-bundle-action-group"
+                                          role="group"
+                                          aria-label={`Which concept "${item.title}" belongs to`}
+                                        >
+                                          <span className="concept-bundle-action-label" aria-hidden="true">Wrong concept?</span>
+                                          {group.learning_objects.length > 1 && (
+                                            <button
+                                              type="button"
+                                              className="btn btn-secondary btn-small"
+                                              ref={registerBundleControl(bundleControlKey(item, "move-out"))}
+                                              aria-disabled={Boolean(busyAction)}
+                                              aria-label={`Give "${item.title}" a concept of its own, separate from the rest of this one`}
+                                              onClick={() => moveObjectOutOfBundle(item)}
+                                            >
+                                              {moving ? "Moving..." : "Give it its own concept"}
+                                            </button>
+                                          )}
+                                          <label className="concept-bundle-move-to">
+                                            <span className="sr-only">Move "{item.title}" into another concept that already exists</span>
+                                            <select
+                                              value=""
+                                              ref={registerBundleControl(bundleControlKey(item, "move-to"))}
+                                              aria-disabled={Boolean(busyAction) || otherConcepts(group.id).length === 0}
+                                              onChange={(event) => {
+                                                const target = otherConcepts(group.id).find(
+                                                  (candidate) => String(candidate.id) === event.target.value,
+                                                );
+                                                event.target.value = "";
+                                                if (busyAction || !target) return;
+                                                moveObjectToGroup(item, target.id, conceptName(target));
+                                              }}
+                                            >
+                                              <option value="">Move into another concept...</option>
+                                              {otherConcepts(group.id).map((candidate) => (
+                                                <option key={candidate.id} value={candidate.id}>
+                                                  {conceptName(candidate)}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </label>
+                                        </div>
+                                        <div
+                                          className="concept-bundle-action-group is-order"
+                                          role="group"
+                                          aria-label={`Where "${item.title}" sits in ${fileName}`}
+                                        >
+                                          <span className="concept-bundle-action-label" aria-hidden="true">Order in this file</span>
+                                          <button
+                                            type="button"
+                                            className="btn btn-secondary btn-small concept-bundle-nudge"
+                                            ref={registerBundleControl(bundleControlKey(item, "up"))}
+                                            aria-disabled={Boolean(busyAction) || itemIndex === 0}
+                                            aria-label={`Move "${item.title}" earlier in ${fileName}`}
+                                            onClick={() => {
+                                              if (busyAction || itemIndex === 0) return;
+                                              moveObjectWithinBundle(item, "up");
+                                            }}
+                                          >
+                                            <span aria-hidden="true">↑</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-secondary btn-small concept-bundle-nudge"
+                                            ref={registerBundleControl(bundleControlKey(item, "down"))}
+                                            aria-disabled={Boolean(busyAction) || itemIndex === lastIndex}
+                                            aria-label={`Move "${item.title}" later in ${fileName}`}
+                                            onClick={() => {
+                                              if (busyAction || itemIndex === lastIndex) return;
+                                              moveObjectWithinBundle(item, "down");
+                                            }}
+                                          >
+                                            <span aria-hidden="true">↓</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
-                            {isConnected && reviewStep === "objects" && (
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-small"
-                                disabled={Boolean(busyAction)}
-                                onClick={() => separateObject(item)}
-                              >
-                                {busyAction === `separate-${item.id}` ? "Separating…" : "Separate"}
-                              </button>
-                            )}
-                          </div>
+                          </section>
                         );
                       })}
                     </div>
@@ -2963,6 +3279,7 @@ function LearningObjectConnections({
           topicId={topicId}
           topic={topic}
           groups={groups}
+          materialById={materialById}
           confirmedSourceCount={confirmedSourceCount}
           busyAction={busyAction}
           onReviewStepChange={onReviewStepChange}

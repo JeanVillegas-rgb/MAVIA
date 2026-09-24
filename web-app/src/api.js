@@ -265,6 +265,36 @@ export function separateLearningObject(courseId, nodeId, learningObjectId) {
   );
 }
 
+// Corrections to an automatic bundle: the object leaves, moves, or changes place.
+export function moveObjectOut(courseId, nodeId, learningObjectId) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/move-out/`,
+    { method: "POST" },
+  );
+}
+
+export function moveObjectToConcept(courseId, nodeId, learningObjectId, groupId) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/move-to/`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ group_id: groupId }),
+    },
+  );
+}
+
+export function reorderObject(courseId, nodeId, learningObjectId, direction) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/reorder/`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction }),
+    },
+  );
+}
+
 export function acceptLearningObjectMatchSuggestion(courseId, nodeId, suggestionId) {
   return request(
     `/courses/${courseId}/outline-nodes/${nodeId}/match-suggestions/${suggestionId}/accept/`,
@@ -316,10 +346,6 @@ export function deleteTopicQuestion(courseId, nodeId, questionId) {
   );
 }
 
-export function fetchQuestionGenerationTrace(runId) {
-  return request(`/generation/runs/${runId}/events/`);
-}
-
 export function deleteTopicLearningObject(courseId, nodeId, objectId) {
   return request(
     `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${objectId}/`,
@@ -347,15 +373,15 @@ export function fetchModulePackage(courseId, moduleId) {
 }
 
 export function fetchCourseProgress(courseId) {
-  return request(`/adaptive-portal/courses/${courseId}/progress/`);
+  return request(`/adaptive/courses/${courseId}/progress/`);
 }
 
 export function fetchEnrollments(courseId) {
-  return request(`/adaptive-portal/courses/${courseId}/enrollments/`);
+  return request(`/adaptive/courses/${courseId}/enrollments/`);
 }
 
 export function addEnrollment(courseId, studentId) {
-  return request(`/adaptive-portal/courses/${courseId}/enrollments/`, {
+  return request(`/adaptive/courses/${courseId}/enrollments/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ student_id: studentId }),
@@ -363,14 +389,14 @@ export function addEnrollment(courseId, studentId) {
 }
 
 export function removeEnrollment(courseId, enrollmentId) {
-  return request(`/adaptive-portal/courses/${courseId}/enrollments/${enrollmentId}/`, {
+  return request(`/adaptive/courses/${courseId}/enrollments/${enrollmentId}/`, {
     method: "DELETE",
   });
 }
 
 export function searchStudents(query = "") {
   const q = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
-  return request(`/adaptive-portal/students/${q}`);
+  return request(`/adaptive/students/${q}`);
 }
 
 // A teacher says a concept needs another first. Returns the updated preview.
@@ -427,6 +453,10 @@ export function editVersionText(courseId, nodeId, variantId, narration) {
 // Pass the highest seq already seen so each poll returns only what is new.
 export function fetchGenerationRunEvents(runId, after = 0) {
   return request(`/generation/runs/${runId}/events/?after=${after}`);
+}
+
+export function fetchQuestionGenerationTrace(runId) {
+  return request(`/generation/runs/${runId}/events/`);
 }
 
 // Where each edited learning object now belongs. Proposes only; changes nothing.

@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 from django.test import TestCase
 from rest_framework import status
-from rest_framework.test import APIClient
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject
+from lessons.tests import authenticated_api_client
 
 from .models import GenerationEvent, GenerationRun
 from .tracing import run_tracer
@@ -72,7 +72,7 @@ class TraceEndpointKindTests(TestCase):
     """One dialog serves every pipeline, so it has to know which one it shows."""
 
     def setUp(self):
-        self.client = APIClient()
+        self.client = authenticated_api_client()
 
     def test_trace_reports_the_kind_of_run(self):
         run = GenerationRun.objects.create(kind=GenerationRun.Kind.PUBLISH)
@@ -102,7 +102,7 @@ class ConcurrentRunGuardTests(TestCase):
     """
 
     def setUp(self):
-        self.client = APIClient()
+        self.client = authenticated_api_client()
         self.course = CourseGroup.objects.create(title="Science")
         self.material = LearningMaterial.objects.create(
             course=self.course,

@@ -8,8 +8,10 @@ import {
 
 const NAV = [
   { to: "/admin", label: "Overview", icon: "▤", end: true },
-  { to: "/courses", label: "Courses", icon: "▦" },
+  { to: "/admin/users", label: "Users", icon: "◍" },
+  { to: "/admin/courses", label: "Courses", icon: "▦" },
   { to: "/admin/adaptive-weights", label: "Adaptive weights", icon: "⚖" },
+  { to: "/admin/settings", label: "Settings", icon: "⚙" },
 ];
 
 const TRACING_FIELDS = [
@@ -34,7 +36,7 @@ const MASTERY_FIELDS = [
   {
     key: "starting_mastery",
     label: "Starting mastery",
-    help: "Starting mastery for a new enrollment-based learning state. Existing states are unchanged.",
+    help: "Mastery score a learner begins each new lesson node with.",
   },
   {
     key: "mastery_ceiling",

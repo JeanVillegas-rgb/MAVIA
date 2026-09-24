@@ -26,7 +26,7 @@ export default function RegisterScreen() {
     setSubmitting(true);
     try {
       // This app is the student experience, so role is fixed — no picker.
-      const result = await register({
+      await register({
         username,
         email,
         password,
@@ -34,11 +34,7 @@ export default function RegisterScreen() {
         last_name: lastName,
         role: "STUDENT",
       });
-      if (result.verification_required === false) {
-        router.replace("/login");
-      } else {
-        setDone(true);
-      }
+      setDone(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {

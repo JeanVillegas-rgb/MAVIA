@@ -52,7 +52,10 @@ class TopicFixture(TestCase):
 
 class TopicPreviewTests(TopicFixture):
     def _path(self):
-        body = self._client().get(f"/api/learning-path/topics/{self.topic.id}/").json()
+        # The preview is teacher/admin-gated in mavia (see views.py's
+        # topic_learning_path) -- unlike unauthenticated access, which
+        # PublishedPathTests below covers separately.
+        body = self._client("TEACHER").get(f"/api/learning-path/topics/{self.topic.id}/").json()
         return body["paths"][0] if body["paths"] else None
 
     def test_one_path_for_the_whole_topic(self):
@@ -77,7 +80,7 @@ class TopicPreviewTests(TopicFixture):
     def test_a_topic_with_no_grouped_content_has_no_path(self):
         empty = OutlineNode.objects.create(course=self.course, title="Empty", order=1, depth=0)
 
-        body = self._client().get(f"/api/learning-path/topics/{empty.id}/").json()
+        body = self._client("TEACHER").get(f"/api/learning-path/topics/{empty.id}/").json()
 
         self.assertEqual(body["paths"], [])
 
@@ -179,12 +182,92 @@ class PublishedPathTests(TopicFixture):
         self.assertEqual(response.status_code, 404)
         self.assertIsNone(get_published_path(self.topic))
 
+    def test_normal_variant_uses_the_already_generated_lesson_audio(self):
+        """The "normal" variant's audio isn't synthesized separately (unlike
+        simplified/elaborated, via LessonVariant) -- it's whatever the
+        material's own lesson-playlist TTS pass already produced for this
+        LearningObject's narration. Each playlist entry names the
+        LearningObject it speaks for (see course.models.audio_clip_for).
+        Regression test for the mobile "quick check comes before the lesson
+        chunk" bug -- normal audio was always "" before this, so path mode
+        skipped straight to questions for every concept's first attempt."""
+        self.material.generated_json = {
+            **self.material.generated_json,
+            "lesson_audio_generated": True,
+            "lesson_playlist": [
+                {"learning_object_id": self.objects[title].id, "audio_url": f"/media/audio_lessons/{title.lower()}.mp3"}
+                for title in ("Matter", "Solid", "Liquid")
+            ],
+        }
+        self.material.save()
+
+        body = self._get("TEACHER").json()
+
+        by_title = {step["title"]: step for step in body["steps"]}
+        self.assertEqual(by_title["Matter"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/matter.mp3")
+        self.assertEqual(by_title["Solid"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/solid.mp3")
+        self.assertEqual(by_title["Liquid"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/liquid.mp3")
+
+    def test_normal_audio_from_a_playlist_written_before_objects_were_named(self):
+        """Materials processed before playlist entries named their object keep
+        their recordings: those entries are matched by position instead."""
+        self.material.generated_json = {
+            **self.material.generated_json,
+            "lesson_audio_generated": True,
+            "lesson_playlist": [
+                {"narration_item_order": 1, "audio_url": "/media/audio_lessons/matter.mp3"},
+                {"narration_item_order": 2, "audio_url": "/media/audio_lessons/solid.mp3"},
+                {"narration_item_order": 3, "audio_url": "/media/audio_lessons/liquid.mp3"},
+            ],
+        }
+        self.material.save()
+
+        body = self._get("TEACHER").json()
+
+        by_title = {step["title"]: step for step in body["steps"]}
+        self.assertEqual(by_title["Solid"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/solid.mp3")
+        self.assertEqual(by_title["Solid"]["versions"]["normal"]["parts"][0]["audio_url"], "/media/audio_lessons/solid.mp3")
+
+    def test_normal_variant_audio_is_blank_when_the_playlist_has_no_match(self):
+        body = self._get("TEACHER").json()
+
+        for step in body["steps"]:
+            self.assertEqual(step["versions"]["normal"]["audio_url"], "")
+
     def test_the_python_function_and_the_api_agree(self):
         body = self._get("TEACHER").json()
 
         self.assertEqual(
             [step["concept_id"] for step in body["steps"]],
             [step["concept_id"] for step in get_published_path(self.topic)["steps"]],
+        )
+
+    def test_a_step_never_serves_more_than_one_lot_and_one_hot(self):
+        """Question generation isn't guaranteed to cap itself at one final
+        question per thinking_order per node -- seen on real published data
+        (3-4 final rows on one concept). A step is one assessment, not a
+        quiz bank: cap to the earliest LOT and earliest HOT, LOT first."""
+        GeneratedQuestion.objects.create(
+            node=self.objects["Solid"], question_text="Second LOT (should be dropped)",
+            question_format="TF", correct_answer="True", thinking_order="LOT",
+            bloom_level="remember", difficulty="easy", status="final",
+        )
+        GeneratedQuestion.objects.create(
+            node=self.objects["Solid"], question_text="A HOT question",
+            question_format="TF", correct_answer="False", thinking_order="HOT",
+            bloom_level="analyze", difficulty="hard", status="final",
+        )
+        GeneratedQuestion.objects.create(
+            node=self.objects["Solid"], question_text="Second HOT (should be dropped)",
+            question_format="TF", correct_answer="True", thinking_order="HOT",
+            bloom_level="analyze", difficulty="hard", status="final",
+        )
+
+        solid = next(step for step in self._get("TEACHER").json()["steps"] if step["title"] == "Solid")
+
+        self.assertEqual(
+            [(q["text"], q["thinking_order"]) for q in solid["questions"]],
+            [("Does a solid keep its shape?", "LOT"), ("A HOT question", "HOT")],
         )
 
 
@@ -283,3 +366,108 @@ class TeacherLinkTests(TopicFixture):
         with patch.object(publishing.criteria, "decide_pairs", return_value=[]):
             publishing.publish_learning_path(self.topic)
         self.assertFalse(self.teacher.get(f"{self.base}/").json()["paths"][0]["diagnostics"]["changed_since_publish"])
+
+
+class SplitPassageTests(TestCase):
+    """A passage the chunker cut into "(Part 1 of 2)" pieces is one concept.
+
+    Publishing merges the pieces, but a ``LearningPathStep`` records only the
+    first piece's group. The published path used to read just that group, so
+    the later parts' narration never reached a student -- and when question
+    generation put the concept's questions on a later part, the step had none
+    and the engine skipped the whole concept. Seen on "Reproduction Among
+    Flowering Plants": the lesson opened at its third chunk.
+    """
+
+    def setUp(self):
+        from .services.publishing import save_learning_path
+
+        course = CourseGroup.objects.create(title="Grade 5 Science")
+        self.topic = OutlineNode.objects.create(course=course, title="Reproduction", order=0, depth=0)
+        self.material = LearningMaterial.objects.create(
+            course=course, outline_node=self.topic, title="Flowers",
+            generated_json={
+                "learning_objects_confirmed": True,
+            },
+        )
+        self.parts = []
+        for order, (title, content) in enumerate([
+            ("Reproduction in Flowering Plants (Part 1 of 2)", "Flowering plants reproduce sexually."),
+            ("Reproduction in Flowering Plants (Part 2 of 2)", "A flower holds male and female parts."),
+            ("Stamen", "The stamen makes pollen."),
+        ]):
+            group = LearningObjectGroup.objects.create(outline_node=self.topic, label=title)
+            obj = LearningObject.objects.create(
+                material=self.material, group=group, title=title, content=content, order=order,
+            )
+            LessonVariant.objects.create(learning_object=obj, variant="SIMPLIFIED", narration=f"Simply: {content}")
+            self.parts.append(obj)
+        self.material.generated_json = {
+            **self.material.generated_json,
+            "lesson_audio_generated": True,
+            "lesson_playlist": [
+                {"learning_object_id": obj.id, "audio_url": url}
+                for obj, url in zip(self.parts, ("/media/part-1.mp3", "/media/part-2.mp3", "/media/stamen.mp3"))
+            ],
+        }
+        self.material.save()
+        # Generation put this concept's only question on the *second* part.
+        self.question = GeneratedQuestion.objects.create(
+            node=self.parts[1], question_text="Can one flower hold male and female parts?",
+            question_format="TF", correct_answer="True", bloom_level="remember",
+            thinking_order="LOT", difficulty="easy", status="final",
+        )
+        GeneratedQuestion.objects.create(
+            node=self.parts[2], question_text="Does the stamen make pollen?",
+            question_format="TF", correct_answer="True", bloom_level="remember",
+            thinking_order="LOT", difficulty="easy", status="final",
+        )
+        save_learning_path(self.topic)
+        self.path = get_published_path(self.topic, include_answers=False)
+
+    def test_the_split_passage_is_one_step_not_two(self):
+        self.assertEqual(
+            [step["title"] for step in self.path["steps"]],
+            ["Reproduction in Flowering Plants", "Stamen"],
+        )
+
+    def test_every_part_is_narrated_in_reading_order_with_its_own_recording(self):
+        normal = self.path["steps"][0]["versions"]["normal"]
+
+        self.assertEqual(
+            normal["parts"],
+            [
+                {"text": "Flowering plants reproduce sexually.", "audio_url": "/media/part-1.mp3"},
+                {"text": "A flower holds male and female parts.", "audio_url": "/media/part-2.mp3"},
+            ],
+        )
+        # No single file covers both parts, so the legacy field stays empty
+        # rather than pointing at a recording of half the text.
+        self.assertEqual(normal["audio_url"], "")
+        self.assertIn("A flower holds male and female parts.", normal["text"])
+
+    def test_a_rung_is_offered_only_when_every_part_has_it(self):
+        simplified = self.path["steps"][0]["versions"]["simplified"]
+        self.assertEqual(len(simplified["parts"]), 2)
+
+        LessonVariant.objects.filter(learning_object=self.parts[1], variant="SIMPLIFIED").delete()
+        path = get_published_path(self.topic, include_answers=False)
+        self.assertIsNone(path["steps"][0]["versions"]["simplified"])
+
+    def test_questions_on_a_later_part_belong_to_the_concept(self):
+        self.assertEqual([q["id"] for q in self.path["steps"][0]["questions"]], [self.question.id])
+
+    def test_a_later_part_is_not_mistaken_for_another_pdf_s_alternate(self):
+        self.assertEqual(self.path["steps"][0]["alternates"], [])
+
+    def test_a_single_chunk_keeps_its_own_recording(self):
+        stamen = self.path["steps"][1]["versions"]["normal"]
+        self.assertEqual(stamen["audio_url"], "/media/stamen.mp3")
+        self.assertEqual(len(stamen["parts"]), 1)
+
+    def test_the_engine_starts_on_the_split_concept_instead_of_skipping_it(self):
+        from adaptive.services import resolve_path_start
+
+        _path, step, question = resolve_path_start(self.topic)
+        self.assertEqual(step["position"], 1)
+        self.assertEqual(question["id"], self.question.id)

@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 from django.test import TestCase
 from rest_framework import status
-from rest_framework.test import APIClient
+from lessons.tests import authenticated_api_client
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 from lessons.services.audio_generator import generate_material_audio_playlist
@@ -410,7 +410,7 @@ class QuestionGenerationScopeTests(TestCase):
 
 class StartGenerationViewScopeTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        self.client = authenticated_api_client()
         self.course = CourseGroup.objects.create(title="Science")
         self.material = LearningMaterial.objects.create(
             course=self.course,

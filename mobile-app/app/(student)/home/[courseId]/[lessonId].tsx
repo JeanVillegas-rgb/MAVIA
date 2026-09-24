@@ -7,19 +7,28 @@ import { Ionicons } from "@expo/vector-icons";
 import IconButton from "@/components/IconButton";
 import GradientTile from "@/components/GradientTile";
 import Button from "@/components/Button";
-import QuestionCard, { Question as LegacyQuestion, SubmitResult } from "@/components/QuestionCard";
+import QuestionCard, { SubmitResult } from "@/components/QuestionCard";
 import { useAudioPlayer } from "@/hooks/useAudioPlayer";
+import { useNarration } from "@/hooks/useNarration";
+import { useVoiceCommands } from "@/voice/useVoiceCommands";
 import {
-  ApiLesson,
-  ApiStep,
   ApiSubmitResult,
-  ApiTrack,
   Variant,
   fetchLessonPackage,
   resolveMediaUrl,
   startLearning,
   submitResponse,
 } from "@/api/client";
+import {
+  INITIAL_STATE,
+  PlayerState,
+  applyResult,
+  applyStart,
+  cardKey,
+  questionsFor,
+  stepChunk,
+  tracksFor,
+} from "@/player/traversal";
 import { colors, radii, spacing } from "@/theme";
 
 function fmt(millis: number) {
@@ -28,47 +37,6 @@ function fmt(millis: number) {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-type Phase = "audio" | "questions" | "done";
-
-// --- learning-path ("path mode") adapters -----------------------------------
-// A concept step is content-shaped like one track (one narration, one
-// audio_url per variant) with 2 questions (1 LOT + 1 HOT) attached, rather
-// than a lesson's whole playlist. These adapt it to the two shapes this
-// screen already knows how to play, so nothing below needs a second render
-// path — only where a step transitions to the next one differs.
-// See backend/adaptive/PATH_MODE.md for the ruling this mirrors.
-
-function stepTrack(step: ApiStep, variant: Variant): ApiTrack {
-  const version = step.versions[variant] ?? step.versions.normal;
-  return {
-    id: `step-${step.position}`,
-    order: 0,
-    title: step.title,
-    type: "lesson_content",
-    audio_url: version?.audio_url ?? "",
-    audio_ready: Boolean(version?.audio_url),
-    text: version?.text ?? "",
-  };
-}
-
-// GeneratedQuestion never carries a correct_answer to the student (see
-// learning_path/HANDOFF.md § 3), so the mapped correct_answer is always "" —
-// QuestionCard's per-option "this was correct" highlight simply never
-// matches, which is the desired behavior here, not a bug.
-function stepQuestions(step: ApiStep): LegacyQuestion[] {
-  return step.questions.map((q, index) => ({
-    id: q.id,
-    order: index,
-    prompt: q.text,
-    question_type: q.format === "TF" ? "true_false" : "multiple_choice",
-    choices:
-      q.format === "MCQ" && q.choices
-        ? Object.keys(q.choices).sort().map((key) => q.choices![key])
-        : [],
-    correct_answer: "",
-  }));
 }
 
 const VARIANT_INFO: Record<Variant, { icon: keyof typeof Ionicons.glyphMap; label: string } | null> = {
@@ -107,72 +75,80 @@ export default function LessonPlayerScreen() {
   const router = useRouter();
   const { courseId, lessonId } = useLocalSearchParams<{ courseId: string; lessonId: string }>();
 
-  const [lesson, setLesson] = useState<ApiLesson | null>(null);
+  // The whole traversal lives in @/player/traversal as pure functions, so it
+  // can be replayed against real API payloads in a test harness. This screen
+  // only holds the result and renders it.
+  const [state, setState] = useState<PlayerState>(INITIAL_STATE);
+  const { lesson, pathStep, variant, currentChunk, remediationTarget, phase, trackIndex, questionIndex, askCount } =
+    state;
+
   const [learningStateId, setLearningStateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [phase, setPhase] = useState<Phase>("audio");
-  const [trackIndex, setTrackIndex] = useState(0);
-  const [questionIndex, setQuestionIndex] = useState(0);
-
-  // Path mode: which concept the student is on, its variant, and whether
-  // they're mid-detour through an earlier prerequisite (non-null while so).
-  const [pathStep, setPathStep] = useState<ApiStep | null>(null);
-  const [variant, setVariant] = useState<Variant>("normal");
-  const [remediationTarget, setRemediationTarget] = useState<number | null>(null);
+  // One line explaining why the content is about to change, spoken just
+  // before the narration it introduces. Mirrored into a ref so consuming it
+  // never re-runs the playback effect on its own.
+  const pendingAnnouncement = useRef<string | null>(null);
   // The last submit-response result, read by nextQuestion() once the student
   // taps past the feedback QuestionCard shows — the state transition (which
   // concept/variant comes next) was already decided server-side by then.
   const lastResult = useRef<ApiSubmitResult | null>(null);
+  // Bumped by the voice commands. `topicReplay` restarts the concept's
+  // narration from its first part; `questionRepeat` re-reads the open question.
+  const [topicReplay, setTopicReplay] = useState(0);
+  const [questionRepeat, setQuestionRepeat] = useState(0);
+  // True while an answer is on its way to the server. Leaving the question for
+  // the topic then would unmount the card mid-submit and lose its verdict.
+  const submittingRef = useRef(false);
 
   const inPathMode = pathStep !== null;
-  const tracks = inPathMode ? [stepTrack(pathStep, variant)] : lesson?.tracks ?? [];
-  const questions = inPathMode ? stepQuestions(pathStep) : lesson?.questions ?? [];
+  const tracks = tracksFor(state);
+  const questions = questionsFor(state);
   const track = tracks[trackIndex];
   const hasQuestions = inPathMode ? questions.length > 0 : lesson?.has_questions ?? false;
   const canGrade = Boolean(learningStateId) && hasQuestions;
 
+  const setTrackIndex = useCallback((next: (current: number) => number) => {
+    setState((prev) => ({ ...prev, trackIndex: next(prev.trackIndex) }));
+  }, []);
+
   const goToQuestions = useCallback(() => {
-    setPhase(canGrade ? "questions" : "done");
+    setState((prev) => ({ ...prev, phase: canGrade ? "questions" : "done" }));
   }, [canGrade]);
 
+  // Advance within the playlist, or fall through to the questions once the
+  // last track has played. Derived from `prev` rather than the render's own
+  // `tracks` so it stays correct no matter when the audio finishes.
   const handleTrackFinish = useCallback(() => {
-    setTrackIndex((current) => {
-      if (current + 1 < tracks.length) return current + 1;
-      goToQuestions();
-      return current;
+    setState((prev) => {
+      const total = tracksFor(prev).length;
+      if (prev.trackIndex + 1 < total) return { ...prev, trackIndex: prev.trackIndex + 1 };
+      return { ...prev, phase: canGrade ? "questions" : "done" };
     });
-  }, [tracks.length, goToQuestions]);
+  }, [canGrade]);
 
   const player = useAudioPlayer(handleTrackFinish);
-  const { load } = player;
+  const { load, stop: stopAudio } = player;
+  const { speak, stop: stopNarration } = useNarration();
+
+  // Read through a ref inside the playback effect: handleTrackFinish changes
+  // identity whenever the track list or grading availability does, and
+  // depending on it directly would reload (and restart) audio mid-playback.
+  const finishTrackRef = useRef(handleTrackFinish);
+  finishTrackRef.current = handleTrackFinish;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     Promise.all([
       fetchLessonPackage(lessonId),
-      startLearning(courseId).catch(() => null),
+      startLearning(courseId, lessonId).catch(() => null),
     ])
       .then(([pkg, start]) => {
         if (cancelled) return;
-        setLesson(pkg);
         setLearningStateId(start?.learning_state?.id ?? null);
-
-        const step = start?.current_step ?? null;
-        setPathStep(step);
-        if (step) {
-          const startVariant = start!.learning_state.current_variant || "normal";
-          const assignedId = start!.learning_state.current_generated_question;
-          const idx = step.questions.findIndex((q) => q.id === assignedId);
-          setQuestionIndex(idx >= 0 ? idx : 0);
-          setVariant(startVariant);
-          setRemediationTarget(start!.learning_state.remediation_target_position ?? null);
-          setPhase(stepTrack(step, startVariant).audio_ready ? "audio" : "questions");
-        } else if (pkg.tracks.length === 0) {
-          setPhase(pkg.has_questions ? "questions" : "done");
-        }
+        setState(applyStart(pkg, start));
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Couldn't load this lesson.");
@@ -185,15 +161,93 @@ export default function LessonPlayerScreen() {
     };
   }, [courseId, lessonId]);
 
-  // Point the player at the current track whenever it changes.
+  // Point the player at the current track whenever it changes, and keep the
+  // student's ears busy the whole way through. Order matters for someone
+  // working by ear alone: the spoken hand-off ("here's the same idea,
+  // explained more simply") plays first, then the narration it introduces --
+  // never the two at once. A version with no generated audio is read aloud by
+  // the device and then hands on exactly as finished audio would, so a
+  // missing mp3 stalls nobody.
   useEffect(() => {
     if (phase !== "audio" || !track) return;
-    if (track.audio_ready) {
-      load(resolveMediaUrl(track.audio_url), true);
-    } else {
+    const line = pendingAnnouncement.current;
+    pendingAnnouncement.current = null;
+
+    let cancelled = false;
+    const startTrack = () => {
+      if (cancelled) return;
+      if (track.audio_ready) {
+        load(resolveMediaUrl(track.audio_url), true);
+        return;
+      }
       load("", false);
-    }
-  }, [phase, trackIndex, track?.audio_ready, track?.audio_url, load]);
+      if (track.text) {
+        speak(track.text, {
+          onDone: () => {
+            if (!cancelled) finishTrackRef.current();
+          },
+        });
+      } else {
+        finishTrackRef.current();
+      }
+    };
+
+    if (line) speak(line, { onDone: startTrack });
+    else startTrack();
+
+    return () => {
+      // Only one voice at a time. This runs whenever the phase leaves "audio"
+      // (skipping ahead, a re-teach, backing out) and whenever the track
+      // changes, so neither a half-played mp3 nor a half-read narration is
+      // ever left talking underneath whatever speaks next.
+      cancelled = true;
+      stopNarration();
+      stopAudio();
+    };
+  }, [phase, trackIndex, track?.audio_ready, track?.audio_url, track?.text, load, speak, stopNarration, stopAudio, topicReplay]);
+
+  // Belt and braces for the phases that have no audio effect of their own:
+  // QuestionCard starts narrating from its own mount effect, which React runs
+  // *before* the parent cleanup above, so a track could otherwise get a word
+  // in over the top of the question.
+  useEffect(() => {
+    if (phase === "audio") return;
+    stopAudio();
+  }, [phase, stopAudio]);
+
+  // The done card is the one screen with nothing else to hear -- say it.
+  useEffect(() => {
+    if (phase !== "done") return;
+    speak(
+      lesson?.has_questions
+        ? "Lesson complete. Your answers have been saved."
+        : "Lesson reviewed. You've listened all the way through."
+    );
+  }, [phase, lesson?.has_questions, speak]);
+
+  // Voice commands for this screen. Add a handler here for each command in
+  // src/voice/commands.ts that should do something while a lesson is open.
+  useVoiceCommands(
+    {
+      // Play the topic again from its first part. Asked from a question, the
+      // learner goes back to the topic and returns to the same question after
+      // it -- but not while an answer is being graded or its verdict is
+      // playing, where leaving would drop the result.
+      repeatTopic: () => {
+        if (phase === "done") return;
+        if (phase === "questions" && (submittingRef.current || lastResult.current)) return;
+        setState((prev) => ({ ...prev, phase: "audio", trackIndex: prev.pathStep ? 0 : prev.trackIndex }));
+        setTopicReplay((n) => n + 1);
+      },
+      // Read the open question again. Asked while the topic is still playing,
+      // go on to the question now -- it is read aloud as it opens.
+      repeatQuestion: () => {
+        if (phase === "questions") setQuestionRepeat((n) => n + 1);
+        else if (phase === "audio" && canGrade) goToQuestions();
+      },
+    },
+    { enabled: !loading && !error }
+  );
 
   const progress = useMemo(() => {
     if (!player.durationMillis) return 0;
@@ -201,72 +255,34 @@ export default function LessonPlayerScreen() {
   }, [player.positionMillis, player.durationMillis]);
 
   async function onSubmitAnswer(answer: string): Promise<SubmitResult> {
-    const res = await submitResponse({
-      learning_state_id: learningStateId as number,
-      question_id: questions[questionIndex].id,
-      selected_answer: answer,
-    });
-    if (inPathMode) lastResult.current = res;
+    submittingRef.current = true;
+    let res: ApiSubmitResult;
+    try {
+      res = await submitResponse({
+        learning_state_id: learningStateId as number,
+        question_id: questions[questionIndex].id,
+        selected_answer: answer,
+      });
+    } finally {
+      submittingRef.current = false;
+    }
+    lastResult.current = res;
     return { is_correct: res.is_correct, mastery: res.mastery, completed: res.completed };
   }
 
-  // The ruling (backend/adaptive_portal/services.py::AdaptiveEngine.evaluate_path,
-  // mirrored here as pure state transition, no re-computation):
-  //   correct, more questions left in this concept -> next question, same concept
-  //   correct, concept cleared               -> next concept in path order (or
-  //                                              resume the one being detoured
-  //                                              through, if any), variant "normal"
-  //   wrong x3, concept has a prerequisite    -> jump to the nearest prerequisite
-  //                                              concept as a refresher
-  //   wrong x3, no prerequisite to fall back  -> same concept, de-escalated
-  //   on                                        variant (normal -> simplified ->
-  //                                              elaborated)
-  function nextQuestionPathMode() {
+  // One graded answer, one state transition. The ruling itself
+  // (backend/adaptive/services.py::AdaptiveEngine.evaluate_path) has already
+  // run server-side by the time this fires; applyResult only decides how the
+  // student is walked through whatever came back. See @/player/traversal.
+  function nextQuestion() {
     const res = lastResult.current;
     lastResult.current = null;
-    if (!res || res.completed || !res.current_step) {
-      setPathStep(null);
-      setPhase("done");
-      return;
-    }
-
-    const newStep = res.current_step;
-    const sameConcept = pathStep?.concept_id === newStep.concept_id;
-    const nextVariant = res.current_variant ?? "normal";
-
-    setPathStep(newStep);
-    setVariant(nextVariant);
-    setRemediationTarget(res.remediation_target_position ?? null);
-
-    if (sameConcept) {
-      // Still the same chunk: either the LOT->HOT move within it, or a
-      // de-escalated variant re-teaching the same pair. Stay on questions.
-      const idx = newStep.questions.findIndex((q) => q.id === res.next_question);
-      setQuestionIndex(idx >= 0 ? idx : 0);
-      setPhase("questions");
-      return;
-    }
-
-    // A different concept: advanced forward, detoured to a prerequisite, or
-    // resumed the one that was struggled on. res.next_question is whichever
-    // of its questions the server assigned first (not necessarily index 0 —
-    // a resumed concept may already have its LOT question answered, in which
-    // case the server assigns the HOT one directly).
-    const idx = newStep.questions.findIndex((q) => q.id === res.next_question);
-    setQuestionIndex(idx >= 0 ? idx : 0);
-    setTrackIndex(0);
-    setPhase(stepTrack(newStep, nextVariant).audio_ready ? "audio" : "questions");
-  }
-
-  function nextQuestion() {
-    if (inPathMode) {
-      nextQuestionPathMode();
-      return;
-    }
-    setQuestionIndex((current) => {
-      if (current + 1 < questions.length) return current + 1;
-      setPhase("done");
-      return current;
+    setState((prev) => {
+      const next = applyResult(prev, res);
+      // Hand the spoken lead-in to the playback effect, which plays it ahead
+      // of the narration it introduces.
+      pendingAnnouncement.current = next.announcement;
+      return next;
     });
   }
 
@@ -307,6 +323,11 @@ export default function LessonPlayerScreen() {
         {inPathMode && phase !== "done" && remediationTarget !== null && (
           <Notice icon="return-up-back-outline" tone="review">
             Quick review before you continue — you'll pick back up where you left off.
+          </Notice>
+        )}
+        {inPathMode && phase !== "done" && currentChunk !== null && (
+          <Notice icon="swap-horizontal-outline" tone="variant">
+            A different explanation of this idea
           </Notice>
         )}
         {inPathMode && phase !== "done" && VARIANT_INFO[variant] && (
@@ -354,7 +375,7 @@ export default function LessonPlayerScreen() {
                 accessibilityLabel="Previous track"
                 size={44}
                 disabled={trackIndex === 0}
-                onPress={() => setTrackIndex((i) => Math.max(0, i - 1))}
+                onPress={() => setTrackIndex((i: number) => Math.max(0, i - 1))}
               />
               <IconButton
                 icon="play-back"
@@ -383,7 +404,7 @@ export default function LessonPlayerScreen() {
                 accessibilityLabel="Next track"
                 size={44}
                 disabled={trackIndex + 1 >= tracks.length}
-                onPress={() => setTrackIndex((i) => Math.min(tracks.length - 1, i + 1))}
+                onPress={() => setTrackIndex((i: number) => Math.min(tracks.length - 1, i + 1))}
               />
             </View>
 
@@ -401,7 +422,7 @@ export default function LessonPlayerScreen() {
                 {tracks.map((t, i) => (
                   <Pressable
                     key={t.id}
-                    onPress={() => setTrackIndex(i)}
+                    onPress={() => setTrackIndex(() => i)}
                     style={[styles.playlistItem, i === trackIndex && styles.playlistItemActive]}
                   >
                     <Text style={styles.playlistIndex}>{i + 1}</Text>
@@ -421,10 +442,11 @@ export default function LessonPlayerScreen() {
             <Text style={styles.conceptTitle} numberOfLines={2} accessibilityRole="header">
               {pathStep.title}
             </Text>
-            {pathStep.questions[questionIndex] && (
+            {stepChunk(pathStep, currentChunk).questions[questionIndex] && (
               <View style={styles.thinkingTag}>
                 <Text style={styles.thinkingTagText}>
-                  {THINKING_LABEL[pathStep.questions[questionIndex].thinking_order] ?? "Question"}
+                  {THINKING_LABEL[stepChunk(pathStep, currentChunk).questions[questionIndex].thinking_order] ??
+                    "Question"}
                 </Text>
               </View>
             )}
@@ -433,12 +455,13 @@ export default function LessonPlayerScreen() {
 
         {phase === "questions" && questions[questionIndex] && (
           <QuestionCard
-            key={questions[questionIndex].id}
+            key={cardKey(state)}
             question={questions[questionIndex]}
             index={questionIndex}
             total={questions.length}
             onSubmit={onSubmitAnswer}
             onNext={nextQuestion}
+            repeatSignal={questionRepeat}
           />
         )}
 
@@ -472,7 +495,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headerTitle: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "800", color: colors.ink },
-  body: { paddingBottom: spacing.xl, gap: spacing.xs },
+  body: { flexGrow: 1, paddingBottom: spacing.xl, gap: spacing.xs },
   notice: {
     flexDirection: "row",
     alignItems: "center",
