@@ -1833,6 +1833,34 @@ class OutlineParserTests(TestCase):
 
         self.assertFalse(is_course_outline_document(text))
 
+    def test_document_role_classifier_rejects_assessment_heavy_learning_module(self):
+        text = """
+        English - Grade 7
+        Quarter 1 - Module 1: Analogy
+        Pretest
+        Directions: Read each item carefully and write the letter of your answer.
+        For items number 1-10, choose the best answer.
+        1. This analogy uses words having opposite meanings.
+        2. This analogy uses words having the same meaning.
+        3. Which word completes the analogy?
+        4. What relationship is shown by the pair?
+        5. arms: body :: branch: tree
+        6. portable: movable :: boastful: proud
+        7. love: hate :: kind: cruel
+        8. lawyer: defend :: architect: plan
+        9. happy: joyful :: courageous: brave
+        10. cavities: toothache :: virus: disease
+        Lesson 1: Analogy
+        What I Need to Know
+        What’s New
+        Lesson 2: Synonyms and Antonyms
+        Activity 1
+        Lesson 3: Cause and Effect
+        Quick Check
+        """
+
+        self.assertFalse(is_course_outline_document(text))
+
     def test_document_role_classifier_recognizes_curriculum_guide_schema(self):
         text = """
         Content Standards

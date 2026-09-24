@@ -1380,6 +1380,8 @@ def _document_structure_evidence(text: str) -> dict:
             "prose_ratio": 0.0,
             "outline_heading": False,
             "curriculum_schema_markers": 0,
+            "lesson_activity_markers": 0,
+            "question_lines": 0,
             "structured_items": 0,
         }
 
@@ -1430,6 +1432,29 @@ def _document_structure_evidence(text: str) -> dict:
             "grading period",
         )
     )
+    lesson_activity_markers = sum(
+        bool(
+            re.search(
+                r"^(?:pre[- ]?test|post[- ]?test|quiz|activity|exercise|assessment|"
+                r"directions?\b|for items?\b|what i need to know\b|what(?:'|’)s new\b|"
+                r"answer key\b|quick check\b)",
+                line,
+                flags=re.IGNORECASE,
+            )
+        )
+        for line in lines
+    )
+    question_lines = sum(
+        bool(re.search(r"\?\s*$", line))
+        or bool(
+            re.match(
+                r"^\d+[.)]\s+(?:what|which|who|why|how|identify|choose|complete|write)\b",
+                line,
+                flags=re.IGNORECASE,
+            )
+        )
+        for line in lines
+    )
     structured_items = explicit_items + hierarchical_items + numbered_items + bullet_items
     prose_ratio = prose_lines / max(len(lines), 1)
 
@@ -1442,6 +1467,8 @@ def _document_structure_evidence(text: str) -> dict:
         "prose_ratio": prose_ratio,
         "outline_heading": outline_heading,
         "curriculum_schema_markers": curriculum_schema_markers,
+        "lesson_activity_markers": lesson_activity_markers,
+        "question_lines": question_lines,
         "structured_items": structured_items,
     }
 
@@ -1452,9 +1479,34 @@ def is_course_outline_document(text: str) -> bool:
     if not evidence["line_count"]:
         return False
 
+    # A learning module can contain several ``Lesson N`` headings while most
+    # of its numbered lines are pre-test questions, activities, and answer
+    # choices.  Those documents used to pass the permissive explicit-item
+    # branch below.  Strong outline/schema labels are allowed to override this
+    # guard because a real curriculum outline may legitimately include an
+    # assessment column.
+    assessment_heavy = evidence["lesson_activity_markers"] >= 2 and (
+        evidence["numbered_items"] >= 8 or evidence["question_lines"] >= 4
+    )
+    has_strong_outline_identity = bool(
+        evidence["outline_heading"] or evidence["curriculum_schema_markers"] >= 2
+    )
+    if assessment_heavy and not has_strong_outline_identity:
+        return False
+
+    # Without a title such as "Course Outline" or curriculum-table markers,
+    # explicit module/lesson headings must remain a meaningful share of the
+    # detected structure.  This prevents dozens of quiz numbers from turning
+    # three incidental lesson headings into a false course outline.
+    explicit_structure_is_coherent = bool(
+        evidence["explicit_items"] >= 3
+        and evidence["structured_items"] >= 4
+        and evidence["structured_items"] <= evidence["explicit_items"] * 10
+    )
+
     return bool(
         (evidence["outline_heading"] and evidence["structured_items"] >= 2)
-        or (evidence["explicit_items"] >= 3 and evidence["structured_items"] >= 4)
+        or explicit_structure_is_coherent
         or (
             evidence["curriculum_schema_markers"] >= 2
             and evidence["hierarchical_items"] >= 2
