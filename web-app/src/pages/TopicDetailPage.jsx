@@ -1119,14 +1119,22 @@ function QuestionGenerationTool({
     [groups],
   );
 
-  async function waitForGeneration(runId) {
+  // `carried` holds the finished runs before this one. Generating every
+  // concept starts a run each, and each one's sequence begins at 1: replacing
+  // the trace with only the run in flight made the log collapse to two lines
+  // and grow back for every concept, over and over. Its own seq is therefore
+  // paired with the run it belongs to, so the accumulated lines stay distinct.
+  async function waitForGeneration(runId, carried = []) {
     let result;
+    const tag = (events) => (events || []).map(
+      (event) => ({ ...event, uid: `${runId}:${event.seq}` }),
+    );
     for (let attempt = 0; attempt < 300; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
       result = await fetchQuestionGenerationTrace(runId);
-      // The endpoint returns the run's whole event list each poll, so this is
-      // a replace rather than an append.
-      setRunEvents(result.events || []);
+      // The endpoint returns this run's whole event list each poll, so its own
+      // lines replace while everything before them is kept.
+      setRunEvents([...carried, ...tag(result.events)]);
       if (["finished", "failed"].includes(result.run.status)) break;
     }
     if (!result || result.run.status === "running") {
@@ -1136,6 +1144,7 @@ function QuestionGenerationTool({
       const failure = [...(result.events || [])].reverse().find((event) => event.event_type === "error");
       throw new Error(failure?.message || "Question generation failed.");
     }
+    return tag(result.events);
   }
 
   async function handleGenerateObject(item) {
@@ -1166,6 +1175,7 @@ function QuestionGenerationTool({
     onError("");
     onMessage("Generating one question bank from the Normal version of each concept.");
     try {
+      let carried = [];
       for (let index = 0; index < eligibleObjects.length; index += 1) {
         const item = eligibleObjects[index];
         setOuterProgress({
@@ -1174,7 +1184,7 @@ function QuestionGenerationTool({
           label: item.conceptLabel,
         });
         const started = await startQuestionGeneration(item.material, item.id);
-        await waitForGeneration(started.run_id);
+        carried = [...carried, ...await waitForGeneration(started.run_id, carried)];
       }
       onResourcesChange(await fetchLearningResources(courseId, topicId));
       onMessage("One LOTS/HOTS question bank was generated for each concept from its Normal version.");
@@ -1258,13 +1268,20 @@ function QuestionGenerationTool({
                       {produced.map((question) => (
                         <li key={question.id}>
                           <div className="generated-question-row">
-                            {question.thinking_order && (
-                              <span className="question-thinking-pill">{question.thinking_order}</span>
-                            )}
-                            {question.category && (
-                              <span className={`question-category-pill ${categoryPillClass(question.category)}`}>
-                                {question.category}
-                              </span>
+                            {/* The labels sit on their own line above the
+                                question: sharing a line with it squeezed them
+                                until "Facts and information" wrapped. */}
+                            {(question.thinking_order || question.category) && (
+                              <div className="generated-question-meta">
+                                {question.thinking_order && (
+                                  <span className="question-thinking-pill">{question.thinking_order}</span>
+                                )}
+                                {question.category && (
+                                  <span className={`question-category-pill ${categoryPillClass(question.category)}`}>
+                                    {question.category}
+                                  </span>
+                                )}
+                              </div>
                             )}
                             <strong>{question.prompt}</strong>
                           </div>
@@ -1626,8 +1643,10 @@ function RunProgress({
   // total, or the bar reads "NaN%" beside a blank count.
   const counted = Number.isFinite(index) && Number.isFinite(total) && total > 0;
   // Indeterminate until the first counter arrives -- a bar pinned at zero
-  // reads as "nothing is happening", which is the opposite of the truth.
-  const percent = counted ? Math.round((index / total) * 100) : null;
+  // reads as "nothing is happening", which is the opposite of the truth. A run
+  // that ends without ever being counted still ended, so it fills rather than
+  // carrying on sweeping under the word "Finished".
+  const percent = counted ? Math.round((index / total) * 100) : running ? null : 100;
   const currentLine = currentOverride || latest?.message || "Starting…";
 
   if (dismissed && !running) return null;
@@ -1691,7 +1710,7 @@ function RunProgress({
         {failures.length > 0 && (
           <ul className="publish-trace-failures">
             {failures.map((event) => (
-              <li key={event.seq}>{event.message}</li>
+              <li key={event.uid || event.seq}>{event.message}</li>
             ))}
           </ul>
         )}
@@ -1700,7 +1719,7 @@ function RunProgress({
           <summary>Full trace ({events.length})</summary>
           <ol>
             {events.map((event) => (
-              <li key={event.seq}>{event.message}</li>
+              <li key={event.uid || event.seq}>{event.message}</li>
             ))}
           </ol>
         </details>
@@ -3322,6 +3341,7 @@ function LearningObjectConnections({
           busyAction={busyAction}
           onReviewStepChange={onReviewStepChange}
           onResourcesChange={setResources}
+          onCourseChange={onCourseChange}
           onError={onError}
           onMessage={onMessage}
         />
@@ -3342,6 +3362,7 @@ function LearningPathReviewPanel({
   busyAction,
   onReviewStepChange,
   onResourcesChange,
+  onCourseChange,
   onError,
   onMessage,
 }) {
@@ -3440,6 +3461,10 @@ function LearningPathReviewPanel({
         }
         try {
           onResourcesChange(await fetchLearningResources(courseId, topicId));
+          // Whether the topic is published lives on the course, not on the
+          // resources -- so without this the button still read "Publish
+          // course" after a successful publish, until the page was reloaded.
+          onCourseChange(await fetchCourse(courseId));
         } catch {
           // The run is what matters; a stale panel is recoverable by reloading.
         }

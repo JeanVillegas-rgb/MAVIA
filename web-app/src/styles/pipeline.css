@@ -5429,6 +5429,8 @@ button {
   font-size: 0.72rem;
   font-weight: 800;
   text-transform: uppercase;
+  /* A label is one line. Wrapped, it reads as two labels. */
+  white-space: nowrap;
 }
 
 .question-origin-pill { background: #e7f4ff; color: #245d91; }
@@ -6201,8 +6203,18 @@ button {
 
 .generated-question-row {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+/* The labels keep their own line. Beside the question they were the column
+   that gave way, so a two-word category broke across two lines. */
+.generated-question-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .generated-question-row strong {
