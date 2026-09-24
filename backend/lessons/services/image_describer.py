@@ -138,6 +138,48 @@ def reset_reachability_cache() -> None:
         return
 
 
+def nearby_lesson_text(blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, fallback=""):
+    """The lesson text printed around this figure, nearest first.
+
+    What used to fill this slot was the document's opening, whatever page the
+    figure was on. On a one-page handout that is the text beside the figure by
+    accident; on anything longer the model was shown page one and told it was
+    looking at the text near a figure five pages away.
+
+    The budget is spent on the closest blocks, because a figure sits with the
+    passage it illustrates, but what is kept is then put back into reading
+    order: handing the model a page bottom-up would be a new way of confusing
+    it. A page holding no text at all keeps whatever the caller already had.
+    """
+    on_page = [item for item in blocks if item.get("page") == page_number and (item.get("text") or "").strip()]
+    if not on_page:
+        return fallback
+
+    def top(item):
+        box = item.get("bbox") or (0, 0, 0, 0)
+        return float(box[1])
+
+    if bbox:
+        centre = (float(bbox[1]) + float(bbox[3])) / 2
+        ordered = sorted(on_page, key=lambda item: (abs(top(item) - centre), top(item)))
+    else:
+        ordered = sorted(on_page, key=top)
+
+    kept, used = [], 0
+    for item in ordered:
+        text = " ".join((item.get("text") or "").split())
+        if not text:
+            continue
+        # The first block is taken whatever its length: a figure whose only
+        # neighbour is one long paragraph would otherwise get no context.
+        if kept and used + len(text) + 1 > limit:
+            continue
+        kept.append(item)
+        used += len(text) + 1
+    kept.sort(key=top)
+    return "\n".join(" ".join((item.get("text") or "").split()) for item in kept)[:limit]
+
+
 def build_prompt(
     *,
     lesson_title: str = "",
@@ -161,12 +203,20 @@ def build_prompt(
         "student who is following a science lesson by listening.",
 
         "TASK:\n"
-        "Explain what this figure TEACHES — the concept, process, structure, "
-        "relationship, cause and effect, or fact it exists to show. Give the "
-        "student the understanding a sighted classmate would take from "
-        "looking at it. Do NOT describe the visual layout: no colours, "
-        "arrows, shapes, positions, or labels like \"diagram\", \"chart\", "
-        "\"graph\", or \"photo\".",
+        "Say what this figure TEACHES by saying what it shows and how the "
+        "things in it differ from one another. Give the student the "
+        "understanding a sighted classmate would take from looking at it.\n"
+        "Report the visual facts that carry the meaning: how things are "
+        "arranged, how closely or widely they are spaced, how they are "
+        "grouped or ordered, how many there are, how large they are beside "
+        "each other, and the direction of any change.\n"
+        "Never mention colours. Do not say what colour anything is, not even "
+        "to tell two things apart: a student who is listening gains nothing "
+        "from it. Tell them apart by what they are, or by where they come in "
+        "the figure -- the first, the second, the third.\n"
+        "Do NOT name the artwork or its decoration either: no arrows, and "
+        "never the words \"diagram\", \"chart\", \"graph\", \"figure\" or "
+        "\"photo\".",
     ]
 
     context_lines = []
@@ -189,7 +239,14 @@ def build_prompt(
             "repeat, restate, summarise or paraphrase any of it back."
         )
         if nearby_text:
-            heading += " Describe only what the figure ADDS beyond it."
+            # A small model obeys an instruction about what to write far more
+            # reliably than one about what to leave out, so the ban is paired
+            # with the job it leaves behind: the lesson has the idea in words
+            # already, and the visual specifics are what it cannot carry.
+            heading += (
+                " Where it already explains an idea in words, do not explain "
+                "it again -- give the visual specifics those words leave out."
+            )
         sections.append(heading + "):\n" + "\n".join(context_lines))
 
     sections.append(

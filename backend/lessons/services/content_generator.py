@@ -15,7 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 
-from .image_describer import describe_image_for_lesson
+from .image_describer import describe_image_for_lesson, nearby_lesson_text
 from .instructional_content_classifier import (
     classify_instructional_blocks,
     detect_instructional_document_role,
@@ -1038,6 +1038,7 @@ def describe_pdf_images(
     nearby_text: str = "",
     *,
     use_model: bool = True,
+    blocks: list[dict] | None = None,
 ) -> list[dict]:
     """Attach a spoken explanation to each extracted figure.
 
@@ -1055,10 +1056,22 @@ def describe_pdf_images(
 
         model_description = ""
         if use_model:
+            # Each figure is given the text printed around it rather than the
+            # document's opening, which only happened to be the right passage
+            # on a one-page handout. ``nearby_text`` remains the fallback for
+            # a page that holds no text of its own.
+            figure_text = nearby_text
+            if blocks:
+                figure_text = nearby_lesson_text(
+                    blocks,
+                    page_number=image.get("page_number"),
+                    bbox=image.get("bbox"),
+                    fallback=nearby_text,
+                )
             model_description = describe_image_for_lesson(
                 image.get("image_bytes"),
                 lesson_title=lesson_title,
-                nearby_text=nearby_text,
+                nearby_text=figure_text,
                 caption=caption,
                 visible_text=visible_text,
             )
@@ -3603,7 +3616,9 @@ def generate_material_outputs(
         document_role = detect_instructional_document_role(classified_blocks)
         _trace(f"document role detected: {document_role}")
         _trace(f"recording {len(images)} images for teacher descriptions")
-        image_descriptions = describe_pdf_images(images, lesson_title, cleaned_preserved_text)
+        image_descriptions = describe_pdf_images(
+            images, lesson_title, cleaned_preserved_text, blocks=extracted_blocks,
+        )
         _trace("building learning objects")
         sections = split_classified_blocks(classified_blocks)
         learning_objects = build_section_learning_objects(classified_blocks, image_descriptions)

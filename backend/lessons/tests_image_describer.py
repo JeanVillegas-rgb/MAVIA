@@ -91,11 +91,12 @@ class BuildPromptTests(TestCase):
 
         # The context stays -- the model needs it to know what is already said.
         self.assertIn("A solid keeps a fixed shape", prompt)
-        self.assertIn("Describe only what the figure ADDS beyond it", prompt)
+        self.assertIn("do not explain it again", prompt)
+        self.assertIn("visual specifics those words leave out", prompt)
         self.assertIn("restate, summarise or paraphrase any of it back", prompt)
 
     def test_no_dont_restate_instruction_without_any_context(self):
-        self.assertNotIn("ADDS beyond it", image_describer.build_prompt())
+        self.assertNotIn("do not explain it again", image_describer.build_prompt())
 
     def test_narration_is_capped_at_the_new_maximum(self):
         narration = " ".join(f"Sentence {number}." for number in range(1, 13))
