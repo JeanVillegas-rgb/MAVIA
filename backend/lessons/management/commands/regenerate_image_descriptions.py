@@ -19,16 +19,65 @@ database by accident is not recoverable from the rows themselves. Take a
 database copy first; `--dry-run` shows what would be rewritten.
 """
 
+import re
+
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from lessons.models import LearningMaterial, LearningObject
-from lessons.services.content_generator import _title_from_teacher_text
+from lessons.services.content_generator import (
+    _title_from_teacher_text,
+    extract_instructional_pdf_tables,
+    extract_meaningful_pdf_images,
+)
+from lessons.services.instructional_content_classifier import extract_pdf_text_blocks
 from lessons.services.image_describer import (
     _MAX_NEARBY_TEXT,
     _learning_object_image_bytes,
     describe_image_for_lesson,
+    lesson_text_around,
 )
+
+_IMAGE_INDEX = re.compile(r"_img_(\d+)\.", re.IGNORECASE)
+
+
+def figure_layout(material):
+    """This PDF's text blocks and figure boxes, or ``None`` when unreadable.
+
+    The context a figure gets depends on where it sits: which page, what is
+    printed above it, what is printed below. A stored row keeps the page but
+    not the box, so the PDF is read again. Without it this command would fall
+    back to the document's opening and write narrations the extraction path
+    would never produce -- the very drift it exists to remove.
+    """
+    try:
+        path = material.pdf_file.path
+    except (ValueError, AttributeError):
+        return None
+    try:
+        blocks = extract_pdf_text_blocks(path)
+        images = [*extract_instructional_pdf_tables(path), *extract_meaningful_pdf_images(path)]
+    except Exception:  # an unreadable or moved PDF must not stop the run
+        return None
+    for position, image in enumerate(images):
+        image.setdefault("index", position)
+    return blocks, images
+
+
+def figure_box(images, learning_object):
+    """The extracted figure this row was saved from, matched on its filename.
+
+    ``save_extracted_pdf_images`` names each file after the figure's index, so
+    the stored URL is the only link back to the box it came from.
+    """
+    match = _IMAGE_INDEX.search(learning_object.image_url or "")
+    if not match:
+        return None
+    index = int(match.group(1)) - 1
+    for image in images:
+        if image.get("index") == index:
+            return image
+    return None
 
 
 def retitle(learning_object, old_description, new_description):
@@ -88,6 +137,7 @@ class Command(BaseCommand):
             return
 
         rewritten, retitled, unchanged, errors = [], [], [], []
+        layouts = {}
         for item in figures:
             material = item.material
             try:
@@ -99,13 +149,30 @@ class Command(BaseCommand):
                 errors.append((item.id, "the saved image file is unavailable"))
                 continue
 
+            if material.id not in layouts:
+                layouts[material.id] = figure_layout(material)
+            layout = layouts[material.id]
+            before = (material.extracted_text or "")[:_MAX_NEARBY_TEXT]
+            after = ""
+            image = figure_box(layout[1], item) if layout else None
+            if layout and image is not None:
+                around = lesson_text_around(
+                    layout[0],
+                    page_number=image.get("page_number"),
+                    bbox=image.get("bbox"),
+                    siblings=layout[1],
+                )
+                before, after = around["before"] or before, around["after"]
+
             description = describe_image_for_lesson(
                 image_bytes,
                 lesson_title=(
                     material.outline_node.title if material.outline_node_id else material.title
                 ),
-                nearby_text=(material.extracted_text or "")[:_MAX_NEARBY_TEXT],
+                nearby_text=before,
                 caption=item.title,
+                nearby_is_fallback=not (layout and image is not None and around["before"]),
+                upcoming_text=after,
             )
             if not description:
                 errors.append((item.id, "the model returned no narration"))
