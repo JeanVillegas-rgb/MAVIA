@@ -542,12 +542,21 @@ def _label_corroborated_decision(
     if any(item.represented_by_id is not None for item in destination_members):
         return None
 
+    # Score against the members that teach the same way. A concept's score is
+    # its weakest member's, so the prose beside a figure would otherwise set
+    # the figure's score and sink a match that belongs: measured on topic 212,
+    # one diagram scored 0.62 against the concept's other diagrams and 0.37
+    # once its four text members were counted too.
+    comparable_members = [item for item in destination_members if item.kind == kind]
+    if not comparable_members:
+        return None
+
     # Explicitly score the exact-label destination group. It may not have
     # survived the ordinary cosine top-k shortlist.
     ranked = rank_groups(
         content,
         twins,
-        {destination_group_id: destination_members},
+        {destination_group_id: comparable_members},
         thresholds={**config, "top_k": 1},
     )
     if not ranked:
@@ -612,12 +621,25 @@ def semantic_decision(
     # and its examples), so a group is no longer disqualified for already
     # holding one of this material's objects. It must still teach the same
     # kind of content and come from confirmed files.
-    eligible_groups = {
+    usable_groups = {
         group_id for group_id, rows in members.items()
         if any(item.material_id != material.id for item in rows)
-        and all(item.kind == kind
-                and (item.material.generated_json or {}).get("learning_objects_confirmed")
+        and all((item.material.generated_json or {}).get("learning_objects_confirmed")
                 for item in rows)
+    }
+    eligible_groups = {
+        group_id for group_id in usable_groups
+        if all(item.kind == kind for item in members[group_id])
+    }
+    # ``unit_matching`` places a section, its diagram and its examples into one
+    # concept, so a concept that holds both kinds is expected -- and it answers
+    # the rule above for no kind at all: text is refused for the figure inside
+    # it, a figure for the text. That sealed it against every later PDF. An
+    # exact label may reach in; ordinary scoring still may not, because two
+    # AI-written figure descriptions score high on shared stock phrasing alone.
+    label_reachable_groups = {
+        group_id for group_id in usable_groups - eligible_groups
+        if any(item.kind == kind for item in members[group_id])
     }
     rejected_ids = set()
     if source_object_id:
@@ -627,8 +649,13 @@ def semantic_decision(
             status=LearningObjectMatchSuggestion.Status.REJECTED,
         ).values_list("source_learning_object_id", "candidate_learning_object_id"):
             rejected_ids.add(right if left == source_object_id else left)
-    eligible_groups -= {group_id for group_id, rows in members.items() if any(row.id in rejected_ids for row in rows)}
+    refused = {group_id for group_id, rows in members.items() if any(row.id in rejected_ids for row in rows)}
+    eligible_groups -= refused
     eligible_groups.discard(current_group_id)
+    # A pair the teacher rejected, and the concept this object is already in,
+    # stay out of reach of the label path too.
+    label_reachable_groups -= refused
+    label_reachable_groups.discard(current_group_id)
     candidates = [row for row in all_objects if row.group_id in eligible_groups and row.id != source_object_id]
     ranked = rank_groups(content, candidates, members, thresholds=config)
     normal_decision = None
@@ -672,7 +699,7 @@ def semantic_decision(
         content=content,
         kind=kind,
         all_objects=all_objects,
-        eligible_groups=eligible_groups,
+        eligible_groups=eligible_groups | label_reachable_groups,
         members=members,
         config=config,
         started_at=start,
