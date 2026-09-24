@@ -273,8 +273,23 @@ def mirror_generated_questions(node, generated_questions):
     Question.objects.filter(pk__in=stale_ids).delete()
     for generated in generated_questions:
         choice_map = generated.choices or {}
-        choices = [choice_map[key] for key in sorted(choice_map)] if isinstance(choice_map, dict) else []
-        correct_answer = choice_map.get(generated.correct_answer, "") if isinstance(choice_map, dict) else generated.correct_answer
+        true_false = generated.question_format == "TF"
+        raw_answer = (generated.correct_answer or "").strip()
+        if true_false:
+            choices = ["True", "False"]
+            # A true/false answer is the answer, not a key into the choices --
+            # and the map is empty, so looking it up there found nothing and
+            # left the question with no answer key at all.
+            correct_answer = raw_answer.capitalize()
+        elif isinstance(choice_map, dict):
+            choices = [choice_map[key] for key in sorted(choice_map)]
+            # The key is what the generator returns, but an answer already
+            # written out in full is still an answer: a question must not reach
+            # a teacher with nothing marked correct.
+            correct_answer = choice_map.get(raw_answer) or (raw_answer if raw_answer in choices else "")
+        else:
+            choices = []
+            correct_answer = raw_answer
         fingerprint = question_fingerprint(generated.question_text)
         question = duplicate_in_topic(node.material, fingerprint)
         if question is None:
@@ -283,7 +298,7 @@ def mirror_generated_questions(node, generated_questions):
                 source_type=Question.SourceType.GENERATED,
                 prompt=generated.question_text,
                 question_type=(Question.Type.TRUE_FALSE if generated.question_format == "TF" else Question.Type.MULTIPLE_CHOICE),
-                choices=["True", "False"] if generated.question_format == "TF" else choices,
+                choices=choices,
                 correct_answer=correct_answer,
                 content_fingerprint=fingerprint,
                 bloom_level=generated.bloom_level,
