@@ -68,6 +68,13 @@ def normalize_learning_object_title(value: str) -> str:
         "",
         value,
     )
+    # A lettered list marker splits a concept one PDF enumerates as "A.
+    # Melting" from the "Melting" another simply names, the way a numbered one
+    # did before the rule above. The separator is what distinguishes a marker
+    # from the article opening "A Solid Keeps Its Shape", so it is required,
+    # and a heading has to follow it -- without that, a bare "A." would fold
+    # to nothing and match every other heading that did the same.
+    value = re.sub(r"^\s*[a-z]\s*[.)]\s+(?=\S)", "", value)
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
