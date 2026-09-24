@@ -1067,13 +1067,19 @@ def describe_pdf_images(
                     page_number=image.get("page_number"),
                     bbox=image.get("bbox"),
                     fallback=nearby_text,
+                    siblings=images,
                 )
+            # Text the figure was never printed beside cannot be what the
+            # lesson "already said", so it must not carry the instruction not
+            # to say it again: a figure alone on its page would be told to
+            # withhold an explanation of something this text never mentions.
             model_description = describe_image_for_lesson(
                 image.get("image_bytes"),
                 lesson_title=lesson_title,
                 nearby_text=figure_text,
                 caption=caption,
                 visible_text=visible_text,
+                nearby_is_fallback=not blocks or figure_text == nearby_text,
             )
 
         description = model_description or existing or caption

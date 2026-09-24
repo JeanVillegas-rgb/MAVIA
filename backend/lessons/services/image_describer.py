@@ -138,7 +138,9 @@ def reset_reachability_cache() -> None:
         return
 
 
-def nearby_lesson_text(blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, fallback=""):
+def nearby_lesson_text(
+    blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT, fallback="", siblings=None,
+):
     """The lesson text printed around this figure, nearest first.
 
     What used to fill this slot was the document's opening, whatever page the
@@ -158,6 +160,29 @@ def nearby_lesson_text(blocks, *, page_number, bbox=None, limit=_MAX_NEARBY_TEXT
     def top(item):
         box = item.get("bbox") or (0, 0, 0, 0)
         return float(box[1])
+
+    def middle(box):
+        return (float(box[1]) + float(box[3])) / 2
+
+    # A page carrying two figures gave each of them the whole page, so a food
+    # web was handed the water cycle's paragraph and the water cycle the food
+    # web's. Each block belongs to whichever figure on the page it sits
+    # nearest, and a page with one figure is unaffected.
+    others = [
+        item for item in (siblings or [])
+        if item.get("page_number") == page_number and item.get("bbox") and item.get("bbox") != bbox
+    ]
+    if others and bbox:
+        mine = middle(bbox)
+        on_page = [
+            item for item in on_page
+            if all(
+                abs(top(item) - mine) <= abs(top(item) - middle(other["bbox"]))
+                for other in others
+            )
+        ]
+        if not on_page:
+            return fallback
 
     if bbox:
         centre = (float(bbox[1]) + float(bbox[3])) / 2
@@ -186,6 +211,7 @@ def build_prompt(
     nearby_text: str = "",
     caption: str = "",
     visible_text: str = "",
+    nearby_is_fallback: bool = False,
 ) -> str:
     """Role, Task, Context, Format -- four labelled sections, not one paragraph.
 
@@ -238,7 +264,7 @@ def build_prompt(
             "been told. Use it to work out what the figure is for. Do NOT "
             "repeat, restate, summarise or paraphrase any of it back."
         )
-        if nearby_text:
+        if nearby_text and not nearby_is_fallback:
             # A small model obeys an instruction about what to write far more
             # reliably than one about what to leave out, so the ban is paired
             # with the job it leaves behind: the lesson has the idea in words
@@ -384,6 +410,7 @@ def describe_image_for_lesson(
     nearby_text: str = "",
     caption: str = "",
     visible_text: str = "",
+    nearby_is_fallback: bool = False,
 ) -> str:
     """A spoken explanation of what the figure teaches, or "" if unavailable."""
     if not image_bytes:
@@ -397,6 +424,7 @@ def describe_image_for_lesson(
         nearby_text=nearby_text,
         caption=caption,
         visible_text=visible_text,
+        nearby_is_fallback=nearby_is_fallback,
     )
     cache_key = _cache_key(image_bytes, prompt, model)
     cached = _cached_description(cache_key)

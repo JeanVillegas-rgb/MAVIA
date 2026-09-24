@@ -84,3 +84,68 @@ class PromptTests(SimpleTestCase):
         )
 
         self.assertIn("do not explain it again", prompt.casefold())
+
+
+class SharedPageTests(SimpleTestCase):
+    """Two figures on one page must not each be given the other's passage."""
+
+    blocks = [
+        block(1, "A food web shows who eats whom in a habitat.", 100),
+        block(1, "The water cycle moves water between sea, air and land.", 600),
+    ]
+
+    def test_each_figure_gets_the_passage_beside_it(self):
+        figures = [
+            {"page_number": 1, "bbox": (0.0, 150.0, 400.0, 300.0)},
+            {"page_number": 1, "bbox": (0.0, 650.0, 400.0, 800.0)},
+        ]
+
+        first = image_describer.nearby_lesson_text(
+            self.blocks, page_number=1, bbox=figures[0]["bbox"], siblings=figures,
+        )
+        second = image_describer.nearby_lesson_text(
+            self.blocks, page_number=1, bbox=figures[1]["bbox"], siblings=figures,
+        )
+
+        self.assertIn("food web", first)
+        self.assertNotIn("water cycle", first)
+        self.assertIn("water cycle", second)
+        self.assertNotIn("food web", second)
+
+    def test_a_lone_figure_still_gets_the_whole_page(self):
+        only = [{"page_number": 1, "bbox": (0.0, 150.0, 400.0, 300.0)}]
+
+        nearby = image_describer.nearby_lesson_text(
+            self.blocks, page_number=1, bbox=only[0]["bbox"], siblings=only,
+        )
+
+        self.assertIn("food web", nearby)
+        self.assertIn("water cycle", nearby)
+
+
+class FallbackContextTests(SimpleTestCase):
+    """Text that is not near the figure must not be treated as if it were.
+
+    A figure printed alone on its own page -- a food web with no explanation
+    beside it -- falls back to the lesson's opening. Telling the model not to
+    re-explain that text would mute a description of something the fallback
+    never mentioned.
+    """
+
+    def test_a_fallback_does_not_carry_the_do_not_explain_instruction(self):
+        prompt = image_describer.build_prompt(
+            lesson_title="Ecosystems",
+            nearby_text="Plants make their own food using sunlight.",
+            nearby_is_fallback=True,
+        )
+
+        self.assertIn("Plants make their own food", prompt)
+        self.assertNotIn("do not explain it again", prompt)
+
+    def test_genuinely_nearby_text_still_carries_it(self):
+        prompt = image_describer.build_prompt(
+            lesson_title="Ecosystems",
+            nearby_text="Plants make their own food using sunlight.",
+        )
+
+        self.assertIn("do not explain it again", prompt)
