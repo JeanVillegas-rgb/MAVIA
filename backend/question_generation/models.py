@@ -4,18 +4,13 @@ from lessons.models import LearningMaterial, LearningObject
 
 
 class GeneratedQuestion(models.Model):
-    DIFFICULTY_CHOICES = [
-        ("easy", "Easy"),
-        ("medium", "Medium"),
-        ("hard", "Hard"),
-    ]
-
-    # Derived from the classifier's Bloom level, same as `difficulty` below —
-    # but a different axis. NOT a difficulty rating: it records whether a
-    # question demands lower- or higher-order thinking, and is what the
-    # generation pipeline now targets/distributes on. `difficulty` is kept
-    # alongside it purely for the adaptive engine's remediation, which still
-    # needs an easy/medium/hard axis to step down to after a wrong answer.
+    # Derived from the classifier's Bloom level. Records whether a question
+    # demands lower- or higher-order thinking, and is what the generation
+    # pipeline targets/distributes on. A separate easy/medium/hard
+    # `difficulty` field derived straight from bloom_level used to sit
+    # alongside this one; it was removed because nothing read it (the
+    # adaptive engine's sequencing never used it) and difficulty is not
+    # soundly derivable from Bloom's level in the first place.
     THINKING_ORDER_CHOICES = [
         ("LOT", "Lower Order Thinking"),
         ("HOT", "Higher Order Thinking"),
@@ -79,8 +74,6 @@ class GeneratedQuestion(models.Model):
     # Blank on a draft row; populated by the post-generation finalize pass.
     bloom_level = models.CharField(
         max_length=20, choices=BLOOM_CHOICES, blank=True, default="", db_index=True)
-    difficulty = models.CharField(
-        max_length=10, choices=DIFFICULTY_CHOICES, blank=True, default="", db_index=True)
     thinking_order = models.CharField(
         max_length=3, choices=THINKING_ORDER_CHOICES, blank=True, default="", db_index=True)
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, blank=True, default="")
@@ -98,7 +91,6 @@ class GeneratedQuestion(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["node", "difficulty"]),
             models.Index(fields=["node", "thinking_order"]),
             models.Index(fields=["node", "status"]),
         ]

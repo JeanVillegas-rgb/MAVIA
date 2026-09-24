@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1090" width="1400" height="1090" font-family="Segoe UI, Calibri, Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#111111"/>
+    </marker>
+    <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#C0392B"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="1090" fill="#FFFFFF"/>
+
+  <text x="700" y="42" text-anchor="middle" font-size="26" font-weight="700" fill="#111111">MAVIA Conceptual Framework</text>
+  <text x="700" y="68" text-anchor="middle" font-size="15" fill="#555555">Input - Process - Output, with a continuous feedback loop</text>
+
+  <rect x="40" y="92" width="300" height="34" rx="6" fill="#111111"/>
+  <text x="190" y="115" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">INPUT</text>
+  <rect x="376" y="92" width="644" height="34" rx="6" fill="#111111"/>
+  <text x="698" y="115" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">PROCESS</text>
+  <rect x="1056" y="92" width="304" height="34" rx="6" fill="#111111"/>
+  <text x="1208" y="115" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF" letter-spacing="1.5">OUTPUT</text>
+
+  <rect x="40" y="146" width="300" height="212" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+  <text x="62" y="176" font-size="15" font-weight="700" fill="#111111">TEACHER</text>
+  <text x="62" y="204" font-size="12.5" fill="#222222">&#8226; Science course outline</text>
+  <text x="62" y="228" font-size="12.5" fill="#222222">&#8226; Two or more PDF lesson</text>
+  <text x="74" y="248" font-size="12.5" fill="#222222">materials per topic</text>
+  <text x="62" y="272" font-size="12.5" fill="#222222">&#8226; Review decisions: concept</text>
+  <text x="74" y="292" font-size="12.5" fill="#222222">grouping, version roles,</text>
+  <text x="74" y="312" font-size="12.5" fill="#222222">question edits</text>
+  <text x="62" y="336" font-size="12.5" fill="#222222">&#8226; Class roster (enrollment)</text>
+
+  <rect x="40" y="378" width="300" height="164" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+  <text x="62" y="408" font-size="15" font-weight="700" fill="#111111">LEARNER</text>
+  <text x="62" y="436" font-size="12.5" fill="#222222">&#8226; Answers entered on the</text>
+  <text x="74" y="456" font-size="12.5" fill="#222222">braille-keycapped keypad</text>
+  <text x="74" y="476" font-size="12.5" fill="#222222">paired to the mobile app</text>
+  <text x="62" y="500" font-size="12.5" fill="#222222">&#8226; Attempt history per concept</text>
+  <text x="62" y="524" font-size="12.5" fill="#222222">&#8226; Navigation input (audio)</text>
+
+  <g>
+    <rect x="376" y="146" width="644" height="92" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+    <circle cx="410" cy="176" r="15" fill="#111111"/><text x="410" y="181" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">1</text>
+    <text x="438" y="181" font-size="15" font-weight="700" fill="#111111">EXTRACTION AND CONCEPT FORMATION</text>
+    <text x="438" y="206" font-size="12.5" fill="#222222">Each PDF is segmented into ordered learning objects (passages and described figures);</text>
+    <text x="438" y="226" font-size="12.5" fill="#222222">objects teaching the same thing across PDFs are bundled into one concept.</text>
+  </g>
+  <g>
+    <rect x="376" y="254" width="644" height="92" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+    <circle cx="410" cy="284" r="15" fill="#111111"/><text x="410" y="289" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">2</text>
+    <text x="438" y="289" font-size="15" font-weight="700" fill="#111111">CONTENT VERSIONING</text>
+    <text x="438" y="314" font-size="12.5" fill="#222222">One PDF supplies the Normal text; other PDFs are classified Simplified or Elaborated,</text>
+    <text x="438" y="334" font-size="12.5" fill="#222222">and any missing version is generated. These versions are what adaptation escalates.</text>
+  </g>
+  <g>
+    <rect x="376" y="362" width="644" height="112" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+    <circle cx="410" cy="392" r="15" fill="#111111"/><text x="410" y="397" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">3</text>
+    <text x="438" y="397" font-size="15" font-weight="700" fill="#111111">QUESTION GENERATION AND COGNITIVE CLASSIFICATION</text>
+    <text x="438" y="422" font-size="12.5" fill="#222222">A question bank per concept, each item classified to a Bloom&#8217;s level by a fine-tuned</text>
+    <text x="438" y="442" font-size="12.5" fill="#222222">RoBERTa model (SVM fallback), yielding a four-tier category &#8212; Facts and Information,</text>
+    <text x="438" y="462" font-size="12.5" fill="#222222">Meaning, Skills, Outcome &#8212; and a lower- / higher-order thinking label.</text>
+  </g>
+  <g>
+    <rect x="376" y="490" width="644" height="92" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+    <circle cx="410" cy="520" r="15" fill="#111111"/><text x="410" y="525" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">4</text>
+    <text x="438" y="525" font-size="15" font-weight="700" fill="#111111">PREREQUISITE PATH DERIVATION</text>
+    <text x="438" y="550" font-size="12.5" fill="#222222">Three criteria &#8212; document order, semantic reference, foundationality &#8212; vote on every</text>
+    <text x="438" y="570" font-size="12.5" fill="#222222">concept pair; the resulting graph is ordered into a learning path (Kahn&#8217;s algorithm).</text>
+  </g>
+  <g>
+    <rect x="376" y="598" width="644" height="92" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+    <circle cx="410" cy="628" r="15" fill="#111111"/><text x="410" y="633" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">5</text>
+    <text x="438" y="633" font-size="15" font-weight="700" fill="#111111">TEACHER REVIEW, AUDIO CONVERSION AND PUBLISHING</text>
+    <text x="438" y="658" font-size="12.5" fill="#222222">The teacher reviews and reorganises the concepts; a completeness gate checks the course</text>
+    <text x="438" y="678" font-size="12.5" fill="#222222">before every object is converted to speech and the path is published.</text>
+  </g>
+  <g>
+    <rect x="376" y="706" width="644" height="112" rx="10" fill="#FFFFFF" stroke="#C0392B" stroke-width="3"/>
+    <circle cx="410" cy="736" r="15" fill="#C0392B"/><text x="410" y="741" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">6</text>
+    <text x="438" y="741" font-size="15" font-weight="700" fill="#C0392B">ADAPTIVE DELIVERY</text>
+    <text x="438" y="766" font-size="12.5" fill="#222222">Bayesian Knowledge Tracing maintains a mastery estimate per concept, updated from every</text>
+    <text x="438" y="786" font-size="12.5" fill="#222222">response. Mastery, position in the prerequisite path and the active content version</text>
+    <text x="438" y="806" font-size="12.5" fill="#222222">together determine the next instructional action.</text>
+  </g>
+
+  <rect x="376" y="836" width="644" height="118" rx="10" fill="#FBF6F5" stroke="#C0392B" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="698" y="864" text-anchor="middle" font-size="14" font-weight="700" fill="#C0392B" letter-spacing="0.6">RESPONSE TO A MISSED CONCEPT</text>
+  <text x="698" y="890" text-anchor="middle" font-size="12.5" fill="#222222">Re-present the concept in its Simplified version, then its Elaborated version,</text>
+  <text x="698" y="910" text-anchor="middle" font-size="12.5" fill="#222222">then detour through the nearest prerequisite concept, then switch to another PDF&#8217;s</text>
+  <text x="698" y="930" text-anchor="middle" font-size="12.5" fill="#222222">independent explanation of the same concept, then advance &#8212; no learner is stranded.</text>
+
+  <rect x="1056" y="146" width="304" height="140" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+  <text x="1078" y="176" font-size="15" font-weight="700" fill="#111111">PUBLISHED AUDIO COURSE</text>
+  <text x="1078" y="204" font-size="12.5" fill="#222222">Narrated concepts in prerequisite</text>
+  <text x="1078" y="224" font-size="12.5" fill="#222222">order, navigable end to end</text>
+  <text x="1078" y="244" font-size="12.5" fill="#222222">through the braille keypad on</text>
+  <text x="1078" y="264" font-size="12.5" fill="#222222">the learner&#8217;s mobile device.</text>
+
+  <rect x="1056" y="306" width="304" height="160" rx="10" fill="#FFFFFF" stroke="#111111" stroke-width="2.5"/>
+  <text x="1078" y="336" font-size="15" font-weight="700" fill="#111111">LEARNER RECORD</text>
+  <text x="1078" y="364" font-size="12.5" fill="#222222">&#8226; Per-concept mastery profile</text>
+  <text x="1078" y="388" font-size="12.5" fill="#222222">&#8226; Decision log of every</text>
+  <text x="1090" y="408" font-size="12.5" fill="#222222">adaptive action taken</text>
+  <text x="1078" y="432" font-size="12.5" fill="#222222">&#8226; Progress reports the teacher</text>
+  <text x="1090" y="452" font-size="12.5" fill="#222222">can review per student</text>
+
+  <rect x="1056" y="486" width="304" height="180" rx="10" fill="#FFFFFF" stroke="#C0392B" stroke-width="3"/>
+  <text x="1078" y="516" font-size="15" font-weight="700" fill="#C0392B">LEARNING OUTCOMES</text>
+  <text x="1078" y="544" font-size="12.5" fill="#222222">Stronger conceptual understanding,</text>
+  <text x="1078" y="564" font-size="12.5" fill="#222222">improved confidence and greater</text>
+  <text x="1078" y="584" font-size="12.5" fill="#222222">engagement in science among</text>
+  <text x="1078" y="604" font-size="12.5" fill="#222222">blind and visually impaired</text>
+  <text x="1078" y="624" font-size="12.5" fill="#222222">elementary learners, through</text>
+  <text x="1078" y="644" font-size="12.5" fill="#222222">personalised, accessible instruction.</text>
+
+  <line x1="698" y1="238" x2="698" y2="252" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <line x1="698" y1="346" x2="698" y2="360" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <line x1="698" y1="474" x2="698" y2="488" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <line x1="698" y1="582" x2="698" y2="596" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <line x1="698" y1="690" x2="698" y2="704" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <line x1="698" y1="818" x2="698" y2="834" stroke="#C0392B" stroke-width="2.5" marker-end="url(#ahr)"/>
+
+  <line x1="340" y1="252" x2="374" y2="252" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <path d="M340,460 H358 V762 H374" fill="none" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+
+  <path d="M1020,644 H1038 V216 H1054" fill="none" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <path d="M1020,780 H1042 V386 H1054" fill="none" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+  <path d="M1208,466 V484" fill="none" stroke="#111111" stroke-width="3" marker-end="url(#ah)"/>
+
+  <path d="M1208,666 V1064 H190 V546" fill="none" stroke="#C0392B" stroke-width="3" stroke-dasharray="9 6" marker-end="url(#ahr)"/>
+  <rect x="452" y="1000" width="492" height="46" rx="8" fill="#FFFFFF" stroke="#C0392B" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="698" y="1021" text-anchor="middle" font-size="13" font-weight="700" fill="#C0392B" letter-spacing="0.8">FEEDBACK &#8212; CONTINUOUS LEARNING CYCLE</text>
+  <text x="698" y="1039" text-anchor="middle" font-size="11.5" fill="#222222">Every answer updates mastery and selects the next instructional action, question by question</text>
+</svg>

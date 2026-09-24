@@ -5422,7 +5422,8 @@ button {
 }
 
 .question-origin-pill,
-.question-thinking-pill {
+.question-thinking-pill,
+.question-category-pill {
   border-radius: 999px;
   padding: 0.24rem 0.55rem;
   font-size: 0.72rem;
@@ -5434,6 +5435,15 @@ button {
 .question-origin-pill.is-manual { background: #f0e9ff; color: #6545a2; }
 .question-origin-pill.is-generated { background: #e3f8ef; color: #176b52; }
 .question-thinking-pill { background: #fff0c7; color: #835d08; }
+
+/* Four-tier Bloom category — distinct from thinking_order (LOT/HOT): this one
+   classifies what kind of content the question assesses, for teacher review,
+   not what order the adaptive engine serves it in. */
+.question-category-pill { background: #eef1f5; color: #444d5c; }
+.question-category-pill.is-facts-and-information { background: #e7f4ff; color: #245d91; }
+.question-category-pill.is-meaning { background: #f0e9ff; color: #6545a2; }
+.question-category-pill.is-skills { background: #e3f8ef; color: #176b52; }
+.question-category-pill.is-outcome { background: #ffe9e0; color: #a1441d; }
 
 .question-validation-warning {
   margin: 0.75rem 0;

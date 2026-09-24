@@ -4,19 +4,11 @@ import os
 import re
 from pathlib import Path
 
-BLOOM_TO_DIFFICULTY = {
-    "remember":    "easy",
-    "understand":  "easy",
-    "apply":       "medium",
-    "analyze":     "medium",
-    "evaluate":    "hard",
-    "create":      "hard",
-}
-
 # Bloom's taxonomy describes the KIND of thinking a question demands, not how
-# hard it is — a different axis from BLOOM_TO_DIFFICULTY above. The question
-# generation pipeline targets this one directly; BLOOM_TO_DIFFICULTY stays in
-# use for the adaptive engine's difficulty-based remediation.
+# hard it is. A `difficulty` (easy/medium/hard) axis derived from bloom_level
+# used to be stored alongside this one, but the adaptive engine never reads
+# it and difficulty is not soundly derivable from Bloom's level in the first
+# place, so it was removed rather than kept as unused, misleading metadata.
 #
 #   remember / understand / apply  -> LOT (lower order thinking)
 #   analyze / evaluate             -> HOT (higher order thinking)
@@ -81,14 +73,8 @@ class BloomClassifier:
                 print(f"[BloomClassifier] RoBERTa unavailable ({e}), falling back to SVM")
 
         if self.backend is None:
-            try:
-                self._load_svm()
-                self.backend = "svm"
-            except Exception as e:
-                if backend == "svm":
-                    raise
-                print(f"[BloomClassifier] SVM unavailable ({e}), using rule fallback")
-                self.backend = "rules"
+            self._load_svm()
+            self.backend = "svm"
 
         print(f"[BloomClassifier] Using backend: {self.backend}")
 
@@ -136,53 +122,12 @@ class BloomClassifier:
 
     def _classify_svm(self, question_text: str) -> str:
         cleaned = self._preprocess_for_svm(question_text)
-        try:
-            return self.svm_pipeline.predict([cleaned])[0]
-        except Exception as e:
-            print(f"[BloomClassifier] SVM prediction failed ({e}), using rule fallback")
-            self.backend = "rules"
-            return self._classify_rules(question_text)
-
-    def _classify_rules(self, question_text: str) -> str:
-        text = question_text.lower().strip()
-        cue_groups = (
-            ("create", (
-                "create", "design", "construct", "develop", "compose",
-                "formulate", "make", "plan", "propose", "invent",
-            )),
-            ("evaluate", (
-                "evaluate", "judge", "justify", "defend", "critique",
-                "recommend", "which is best", "which is better",
-                "do you agree", "why or why not",
-            )),
-            ("analyze", (
-                "analyze", "compare", "contrast", "differentiate",
-                "distinguish", "classify", "categorize", "examine",
-                "relationship", "cause",
-            )),
-            ("apply", (
-                "apply", "use", "solve", "demonstrate", "show how",
-                "calculate", "choose", "select", "what should",
-                "in this situation",
-            )),
-            ("understand", (
-                "explain", "describe", "summarize", "interpret",
-                "give an example", "why", "how does", "what happens",
-            )),
-            ("remember", (
-                "define", "identify", "list", "name", "state", "what is",
-                "who is", "when", "where", "true or false",
-            )),
-        )
-        for level, cues in cue_groups:
-            if any(cue in text for cue in cues):
-                return level
-        return "understand"
+        return self.svm_pipeline.predict([cleaned])[0]
 
     def _normalize_level(self, raw_level: str) -> str:
         level = str(raw_level or "").strip().lower()
         level = BT_LABELS.get(level, level)
-        if level not in BLOOM_TO_DIFFICULTY:
+        if level not in BLOOM_TO_CATEGORY:
             return "understand"
         return level
 
@@ -190,10 +135,8 @@ class BloomClassifier:
     def classify(self, question_text: str) -> dict:
         if self.backend == "roberta":
             bloom_level = self._classify_roberta(question_text)
-        elif self.backend == "svm":
-            bloom_level = self._classify_svm(question_text)
         else:
-            bloom_level = self._classify_rules(question_text)
+            bloom_level = self._classify_svm(question_text)
 
         bloom_level = self._normalize_level(bloom_level)
 
@@ -201,7 +144,6 @@ class BloomClassifier:
         # "exclude this question", not as a missing value to backfill.
         return {
             "bloom_level": bloom_level,
-            "difficulty": BLOOM_TO_DIFFICULTY[bloom_level],
             "thinking_order": BLOOM_TO_THINKING_ORDER[bloom_level],
             "category": BLOOM_TO_CATEGORY[bloom_level],
         }

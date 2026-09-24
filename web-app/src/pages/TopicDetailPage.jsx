@@ -72,6 +72,13 @@ function isQuestionMaterial(material) {
     || (!(material?.learning_objects?.length) && Boolean(material?.questions?.length));
 }
 
+// "Facts and Information" -> "is-facts-and-information", matching the
+// modifier classes in pipeline.css for the four-tier Bloom category pill.
+function categoryPillClass(category) {
+  const slug = String(category || "").trim().toLowerCase().replace(/\s+/g, "-");
+  return slug ? `is-${slug}` : "";
+}
+
 function renderInlineFormatting(text) {
   return String(text || "").split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => (
     part.startsWith("**") && part.endsWith("**")
@@ -521,7 +528,7 @@ function ReviewQueuePanel({
           disabled={Boolean(busyAction)}
           onClick={() => onReviewStepChange("publish")}
         >
-          Next step: Publish
+          Next: Final Review
         </button>
       </div>
     </section>
@@ -1254,6 +1261,11 @@ function QuestionGenerationTool({
                             {question.thinking_order && (
                               <span className="question-thinking-pill">{question.thinking_order}</span>
                             )}
+                            {question.category && (
+                              <span className={`question-category-pill ${categoryPillClass(question.category)}`}>
+                                {question.category}
+                              </span>
+                            )}
                             <strong>{question.prompt}</strong>
                           </div>
                           {Boolean(question.choices?.length) && (
@@ -1400,6 +1412,11 @@ function ManualQuestionPanel({
                       {question.source_type === "manual" ? "Manual" : question.source_type === "generated" ? "Generated" : "PDF"}
                     </span>
                     {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
+                    {question.category && (
+                      <span className={`question-category-pill ${categoryPillClass(question.category)}`}>
+                        {question.category}
+                      </span>
+                    )}
                   </div>
                   <strong>{question.prompt}</strong>
                   <small>{concept}{material?.filename || material?.title ? ` · ${material?.filename || material?.title}` : ""}</small>

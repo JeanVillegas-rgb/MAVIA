@@ -210,7 +210,6 @@ def _questions(parts, include_answers):
             "choices": question.choices,
             "bloom_level": question.bloom_level,
             "thinking_order": question.thinking_order,
-            "difficulty": question.difficulty,
             "category": question.category,
         }
         if include_answers:

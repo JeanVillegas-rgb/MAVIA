@@ -334,7 +334,6 @@ class MaterialQuestionsView(APIView):
                         "correct_answer": q.correct_answer,
                         "explanation": q.explanation,
                         "thinking_order": q.thinking_order,
-                        "difficulty": q.difficulty,
                         "bloom_level": q.bloom_level,
                         "category": q.category,
                     }
@@ -408,7 +407,6 @@ class QuestionDetailView(APIView):
             "correct_answer": question.correct_answer,
             "explanation": question.explanation,
             "thinking_order": question.thinking_order,
-            "difficulty": question.difficulty,
             "bloom_level": question.bloom_level,
             "category": question.category,
         })

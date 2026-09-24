@@ -80,14 +80,13 @@ def _concept(topic, material, label, order, *, correct="True", audio=True, with_
     GeneratedQuestion.objects.create(
         node=obj, question_text=f"{label}: does this hold?", question_format="TF",
         correct_answer=correct, explanation="", bloom_level="remember",
-        thinking_order="LOT", difficulty="easy", status="final",
+        thinking_order="LOT", status="final",
     )
     if with_hot:
         GeneratedQuestion.objects.create(
             node=obj, question_text=f"{label}: why does it hold?", question_format="MCQ",
             choices={"A": "Because of structure", "B": "No reason"}, correct_answer="A",
-            explanation="", bloom_level="analyze", thinking_order="HOT",
-            difficulty="hard", status="final",
+            explanation="", bloom_level="analyze", thinking_order="HOT", status="final",
         )
     return group, obj
 
@@ -222,7 +221,7 @@ class MobileTraversalTranscripts(APITestCase):
         GeneratedQuestion.objects.create(
             node=alt, question_text="Other book: does this hold?", question_format="TF",
             correct_answer="True", explanation="", bloom_level="remember",
-            thinking_order="LOT", difficulty="easy", status="final",
+            thinking_order="LOT", status="final",
         )
         return course, topic
 
@@ -313,7 +312,7 @@ class MobileTraversalTranscripts(APITestCase):
             GeneratedQuestion.objects.create(
                 node=obj, question_text=f"{obj.title}?", question_format="TF",
                 correct_answer="True", explanation="", bloom_level="remember",
-                thinking_order="LOT", difficulty="easy", status="final",
+                thinking_order="LOT", status="final",
             )
         save_learning_path(topic)
         return course, topic

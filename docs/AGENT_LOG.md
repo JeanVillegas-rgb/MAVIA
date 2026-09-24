@@ -556,6 +556,70 @@ false, and each of which would have misled the next agent:
 
 ---
 
+### 2026-09-22 — Claude Code — removed BloomClassifier's rule fallback; rewrote thesis Theoretical Background to match implementation
+
+**Branch / commits:** `jean-jure-latest`, uncommitted (working tree changes, not committed).
+
+**Tests:** None run for the classifier change — no test file exercises `BloomClassifier` or `bloom_classifier.py` at all (confirmed by grep across `backend/`), so there was nothing to run and nothing to break. `PIPELINE.md` doc example updated to match.
+
+**Changed:**
+
+1. **`question_generation/services/bloom_classifier.py`**: deleted `_classify_rules` (the third-tier keyword-cue fallback) and the `"rules"` backend branch in `__init__`/`classify`. The user asked for the reasoning first, and I said the rule tier was already broken — its loop returns `"understand"` after checking only the first (`create`) cue group instead of falling through the other five, so in practice it never distinguished more than two of the six Bloom levels. The user agreed to drop it rather than fix it, on the grounds that a hand-picked keyword list can't cover the space of ways a question can ask for recall vs. analysis, whereas the SVM tier is at least data-driven. `BloomClassifier` is now a two-tier RoBERTa → SVM cascade; `_load_svm` now raises naturally if the SVM artifact is also missing, instead of silently degrading further.
+2. **This is a direct user override of a prior standing note in agent memory** ("classifier is authoritative for difficulty labels; do not modify bloom_classifier.py" — see `mavia-architecture-ownership` memory, dated 2026-07-19, tied to the RoBERTa weights being shared out-of-band with the groupmate). I surfaced the conflict before editing; the user confirmed it's theirs to change and did not flag a need to coordinate with the groupmate first. Memory updated to reflect the new state.
+3. **`MAVIA MANUSCRIPT.docx`** (thesis, not code — root of `C:\MAVIA`): rewrote the Chapter 1 "Theoretical Background" section (previously generic BKT/RL/Bloom/prerequisite theory not grounded in the actual backend) to describe what the codebase actually does: BKT's fixed global constants in `adaptive/services.py` (`P_GUESS=0.20`, `P_SLIP=0.10`, `P_LEARN=0.15`, `STARTING_MASTERY=0.30`) instead of the illustrative numbers the draft had invented; the RL/DQN section reframed around the MDP state/action space the deterministic threshold engine already implements today, with the DQN described as the trained component the design calls for (tied to the existing cold-start/simulated-pretraining language already in the manuscript's Limitations — deliberately *not* mentioning the project's development-completion percentage, per the user's explicit instruction); the Bloom section rewritten to match the two-tier cascade above; the Prerequisite section rewritten around the actual RefD/key-term/three-criterion-vote/Kahn's-algorithm implementation in `learning_path/services/criteria.py` and `publishing.py`, replacing a generic "directed graph" description. A backup of the pre-edit manuscript was left in this session's scratchpad only (not in the repo).
+
+**Live database:** untouched.
+
+**Decisions I made:**
+
+- Dropped the rule-fallback tier entirely rather than fixing its indentation bug, per the user's explicit direction after I explained the tradeoff. Cost if wrong: if the SVM artifact (`bloom_svm_pipeline.joblib`) is ever missing alongside the RoBERTa checkpoint, question classification now hard-fails instead of degrading to a keyword guess — which the user judged an acceptable (even preferable) failure mode over a silently near-broken fallback.
+- Did not touch `RoBERTa` weights, the SVM artifact, or any other part of the generation pipeline — scoped strictly to the fallback-cascade logic the user asked about.
+- Wrote the manuscript changes directly into the `.docx` via python-docx XML manipulation (clone-and-retext existing paragraphs) rather than handing back prose for the user to paste in themselves, since they'd asked for the section "output... below" in an earlier turn and then asked me to apply further edits directly. Validated the result against the pre-edit file with the docx skill's `validate.py` (paragraph-count delta and structural checks passed) before overwriting.
+
+**Not done / watch out:**
+
+- **The groupmate has not been notified** that `bloom_classifier.py` changed, despite the prior memory note tying that file to a shared-weights arrangement with her. The user said this was fine to proceed on, but did not say they'd already told her.
+- **No test coverage was added** for the two-tier cascade — there was none before either, but this is now a good time to add a test that `_classify_svm`'s exception (not `_classify_rules`, which no longer exists) actually propagates instead of being silently swallowed somewhere upstream in `pipeline.py`.
+- **The manuscript edit is uncommitted and untracked by git** (`MAVIA MANUSCRIPT.docx` shows as `??` in `git status`) — it was never under version control before this session either, so nothing changed about that, but there is no repo history to diff against if the user wants to see exactly what changed beyond the scratchpad backup.
+
+---
+
+### 2026-09-23 — Claude Code — dropped the unused GeneratedQuestion.difficulty field; corrected the thesis's RL/DQN and Bloom sections against the real path-mode engine
+
+**Branch / commits:** `jean-jure-latest`, uncommitted.
+
+**Tests:** `python manage.py test -v 1` from `backend/` → **892 tests, all passing** after the field removal and every call-site fix below (ran the full suite, not just the touched apps, since the field crossed four apps).
+
+**Changed:**
+
+1. **Removed `GeneratedQuestion.difficulty` and `BLOOM_TO_DIFFICULTY` entirely**, at the user's direction, prompted by two things surfacing together: (a) their thesis coordinator said difficulty is not soundly derivable from Bloom's level, and (b) I'd already confirmed in the prior session's entry that the adaptive engine never reads `difficulty` — so keeping a field that contradicts the coordinator's stated position, for no functional reason, was a liability rather than dead weight. New migration `question_generation/migrations/0007_remove_unused_difficulty_field.py`. Fixed every call site this broke, which turned out to span four apps, not just `question_generation`:
+   - `question_generation/services/bloom_classifier.py` — `classify()` no longer returns `"difficulty"`; `_normalize_level`'s membership check switched from `BLOOM_TO_DIFFICULTY` to `BLOOM_TO_CATEGORY` (same six keys).
+   - `question_generation/services/pipeline.py`, `serializers.py`, `views.py` — stopped setting/serializing/returning `difficulty`.
+   - `lessons/services/question_workflow.py` — two call sites (`enriched_question_values`, `sync_question_to_adaptive`, and the `mirror_generated_questions` `Question.objects.create(...)` call) were reading `classification["difficulty"]` / `generated.difficulty`, which would have raised `KeyError`/`AttributeError` the moment either path ran. **`lessons.Question.difficulty` itself was left in place** — it's a separately-migrated field (`lessons/migrations/0014`), out of the scope the user gave me, and it's still read by `learning_resource_linker.py` and serialized in `lessons/serializers.py`. It will now always be blank for new questions since nothing populates it anymore; I did not chase that further.
+   - `learning_path/services/published.py` — `_questions()` was putting `question.difficulty` into the payload the adaptive engine reads at runtime; this was the one that actually crashed tests (`AttributeError` in `resolve_learning_start`), not just a serialization nicety.
+   - Test fixtures across `lessons/test_generated_question_safety.py`, `adaptive/test_mobile_traversal.py`, `adaptive/test_path_mode.py`, `learning_path/tests.py` were constructing `GeneratedQuestion` rows with a `difficulty=` kwarg; stripped.
+   - `question_generation/PIPELINE.md` — fixed the two doc blocks that directly quoted the now-deleted table, and added a note flagging that the rest of that doc (Steps 10–12, describing `intended_difficulty`/`difficulty_match`/`_difficulty_shortfall`) was **already stale against `pipeline.py`'s actual current shape before this session** — it documents an older pipeline structure I did not attempt to reconcile; a real audit of that doc is a separate task.
+2. **Corrected a second, unrelated inaccuracy in the manuscript that surfaced from the user's own questions**, not from anything I'd have caught otherwise: the RL/DQN section (written last session) described the adaptive engine's state as including "position within the four-tier question sequence" and "the active difficulty level." Neither is true of the current engine. I had read `adaptive/services.py` earlier in the *same* conversation and gotten a `TIER_BUCKETS`/`_step_down_difficulty`-based legacy engine from it; by this session the file — 882 lines, unchanged in git history since 2026-09-17 — visibly contains a different, path-mode engine instead (`_ordered_step_questions`, `AdaptiveEngine.evaluate_path`, `VARIANT_ORDER = ["normal", "simplified", "elaborated"]`), and grep confirms `category` and `difficulty` are never read by it at all. I don't know whether I misread the file the first time or read a genuinely different version of it; either way, **I should have re-verified before writing more manuscript text off an earlier read**, and didn't, until the user asked. Rewrote the RL/DQN section's state/action description and worked example around the real mechanics (mastery + path position + content variant; escalate variant on a miss → reroute to nearest prerequisite → reroute to an alternate chunk, in that order, per `AdaptiveEngine._reroute`), and rewrote the Bloom section to stop implying the four-tier category feeds sequencing — it doesn't; LOT/HOT does, via `_ordered_step_questions`' sort. Both now state plainly that the four-tier scheme is a content-organization classification (satisfies the thesis's Objective 2, consumed by the Course Builder's item-bank view) while LOT/HOT is the sequencing axis (consumed by generation-time quota balancing and by the adaptive engine at runtime) — separate purposes, not two labels racing to do the same job.
+3. Confirmed via grep that **`TIER_BUCKETS` on `GeneratedQuestion` is now dead** — referenced nowhere except a comment in `adaptive/services.py` pointing at it as what the legacy engine used to use. Left it alone; out of scope for what was asked, flagged below.
+
+**Live database:** untouched (migration not yet run against it — `db.sqlite3` still has the old schema until `manage.py migrate` runs).
+
+**Decisions I made:**
+
+- Fixed every downstream break the field removal caused rather than stopping at `question_generation`, because leaving `lessons/services/question_workflow.py` or `learning_path/services/published.py` broken would have failed silently until someone hit the exact code path (confirmed by the fact that the full test suite, not just `question_generation`'s own tests, was what caught the `published.py` one).
+- Left `lessons.Question.difficulty` in the schema rather than also removing it, since the user scoped the request to `GeneratedQuestion`/the classifier specifically, and removing it would touch `learning_resource_linker.py`, `serializers.py`, and its own migration — a bigger, separate decision.
+- Did not run `python manage.py migrate` against the live `db.sqlite3` — same standing policy as the prior session's entry (it's the teacher's working copy; migrating is the user's call, not mine to make silently).
+
+**Not done / watch out:**
+
+- **`python manage.py migrate` still needs to run** before this branch's code and the live database schema agree — `GeneratedQuestion.difficulty` still exists in the database until then.
+- **`lessons.Question.difficulty` is now permanently blank for every new question** — it still exists in the schema and is still read in a couple of places, but nothing populates it anymore. Worth a follow-up decision on whether to remove it too, or repurpose it.
+- **`question_generation/PIPELINE.md` needs a real audit**, not the two spot-fixes made here — it describes `intended_difficulty`/`difficulty_match`/`_difficulty_shortfall` machinery that doesn't match `pipeline.py`'s current functions, and that mismatch predates this session.
+- **`GeneratedQuestion.TIER_BUCKETS` is dead code** (confirmed by grep, not removed — out of scope for what was asked).
+- **The manuscript's RL/DQN section is now grounded in `adaptive/services.py` as of this session's read.** Given that I've now been burned once by trusting an earlier read of this exact file without re-verifying, whoever touches this section next should re-grep it fresh rather than trusting this entry or the manuscript text as ground truth.
+
+---
+
 ## Open threads
 
 - **Regenerate figure descriptions** with the new RTCF prompt (needs Ollama's
