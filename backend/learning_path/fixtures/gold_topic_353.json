@@ -1,0 +1,269 @@
+{
+  "topic_id": 353,
+  "required": [
+    [
+      "organ_system",
+      "systems_table"
+    ],
+    [
+      "systems_table",
+      "heart_lungs_teamwork"
+    ],
+    [
+      "systems_table",
+      "food_energy_teamwork"
+    ],
+    [
+      "systems_table",
+      "brain_teamwork"
+    ],
+    [
+      "systems_table",
+      "bones_muscles_teamwork"
+    ],
+    [
+      "heart_lungs_teamwork",
+      "organ_problems"
+    ],
+    [
+      "food_energy_teamwork",
+      "organ_problems"
+    ],
+    [
+      "organ_problems",
+      "organ_care"
+    ]
+  ],
+  "parallel": [
+    [
+      "heart_lungs_teamwork",
+      "food_energy_teamwork",
+      "brain_teamwork"
+    ],
+    [
+      "food_energy_teamwork",
+      "bones_muscles_teamwork"
+    ]
+  ],
+  "structural": [],
+  "expected_order": [
+    "organ_system",
+    "systems_table",
+    "heart_lungs_teamwork",
+    "food_energy_teamwork",
+    "brain_teamwork",
+    "bones_muscles_teamwork",
+    "organ_problems",
+    "organ_care"
+  ],
+  "known_missing": [],
+  "forbidden": [],
+  "concepts": [
+    {
+      "key": null,
+      "concept_id": 1022,
+      "title": "What I Need to Know",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "What I Need to Know",
+          "section_title": "",
+          "content": "Think of a basketball team. Each player has a job, but they must work together to win. Your organs are like that too! In this module, you will learn how your organs work as a team.\nAfter going through this module, you are expected to:\n1. tell what an organ system is;\n2. name the organ systems and the organs in each one;",
+          "material_id": 73,
+          "order": 1
+        }
+      ]
+    },
+    {
+      "key": "organ_system",
+      "concept_id": 1029,
+      "title": "Remember",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Remember",
+          "section_title": "",
+          "content": "cells make tissues, and tissues make organs. When organs work together to do one big job, they form an organ system. Organ systems together make up the whole human body.\nNo organ system works alone. Let us look at four examples of organ teamwork.",
+          "material_id": 73,
+          "order": 8
+        }
+      ]
+    },
+    {
+      "key": "systems_table",
+      "concept_id": 1030,
+      "title": "Table on page 4",
+      "section_title": "What Is It",
+      "kind": "image",
+      "members": [
+        {
+          "title": "Table on page 4",
+          "section_title": "What Is It",
+          "content": "The figure shows a table outlining the human body’s major organ systems. It’s arranged in three columns, starting with the skeletal system at the top left, which lists bones as its main organs and describes their function as providing shape, support, and protection. Moving to the right, we find the muscular system, with muscles as its main organs, responsible for helping the body move. Below that is the digestive system, detailing the mouth, esophagus, stomach, small intestine, large intestine, and liver as its organs, and explaining that it breaks down food into nutrients. The respiratory system is listed next, featuring the nose, windpipe, and lungs, which take in oxygen and release carbon dioxide. The circulatory system is shown with the heart, blood vessels, and blood as its organs, and it carries oxygen and nutrients throughout the body.",
+          "material_id": 73,
+          "order": 9
+        }
+      ]
+    },
+    {
+      "key": "heart_lungs_teamwork",
+      "concept_id": 1031,
+      "title": "Teamwork 1",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Teamwork 1",
+          "section_title": "",
+          "content": "The Heart and Lungs\nEvery part of your body needs oxygen. The lungs get the oxygen, and the heart delivers it. Figure 1. How the heart and lungs work together",
+          "material_id": 73,
+          "order": 10
+        }
+      ]
+    },
+    {
+      "key": "heart_lungs_teamwork",
+      "concept_id": 1032,
+      "title": "Teamwork 1: The Heart and Lungs - figure",
+      "section_title": "Teamwork 1: The Heart and Lungs",
+      "kind": "image",
+      "members": [
+        {
+          "title": "Teamwork 1: The Heart and Lungs - figure",
+          "section_title": "Teamwork 1: The Heart and Lungs",
+          "content": "Picture description for Figure 1: The picture shows four boxes arranged in a circle. Arrows go from one box to the next, going around and around like a loop. Box 1, at the top: The lungs breathe in oxygen. The oxygen passes into the blood. Box 2, on the right: The heart pumps this oxygen-rich blood to all body parts. Box 3, at the bottom: The body parts use the oxygen and make a waste gas called carbon dioxide. Box 4, on the left: The blood carries the carbon dioxide back. The heart pumps it to the lungs, and the lungs breathe it out. Then the loop starts again at Box 1. This happens with every breath and every heartbeat. That is why, during exercise, both your heart and lungs work faster. Your muscles need more oxygen, so you breathe faster and your heart pumps faster.",
+          "material_id": 73,
+          "order": 11
+        }
+      ]
+    },
+    {
+      "key": "food_energy_teamwork",
+      "concept_id": 1033,
+      "title": "Teamwork 2",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Teamwork 2",
+          "section_title": "",
+          "content": "Getting Energy from Food\nYour body gets energy and nutrients from food. Many organs share this job.",
+          "material_id": 73,
+          "order": 12
+        }
+      ]
+    },
+    {
+      "key": "food_energy_teamwork",
+      "concept_id": 1034,
+      "title": "Teamwork 2: Getting Energy from Food - figure",
+      "section_title": "Teamwork 2: Getting Energy from Food",
+      "kind": "image",
+      "members": [
+        {
+          "title": "Teamwork 2: Getting Energy from Food - figure",
+          "section_title": "Teamwork 2: Getting Energy from Food",
+          "content": "Picture description for Figure 2: On the left side, six boxes are stacked from top to bottom with arrows pointing down. They show the path of food: Mouth: teeth chew food. Esophagus: the food pipe pushes food down. Stomach: mixes food with juices. Small intestine: nutrients pass into the blood. Large intestine: takes back water. Anus: solid waste leaves the body. On the right side, an arrow goes from the small intestine box to a box labeled Heart. The heart pumps the blood carrying nutrients to all body parts. Below the heart box, an arrow goes down to a box labeled Kidneys. The kidneys clean the blood and make urine. Tactile tip: Lay a long piece of yarn on a table to show the path of food. Tie a knot for each organ. Tie a second piece of yarn at the small intestine knot to show nutrients going to the heart. Here, the digestive system breaks down food. The circulatory system carries nutrients to the body. The urinary system removes waste from the blood. Three systems work as one team!",
+          "material_id": 73,
+          "order": 13
+        }
+      ]
+    },
+    {
+      "key": "brain_teamwork",
+      "concept_id": 1035,
+      "title": "Teamwork 3",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Teamwork 3",
+          "section_title": "",
+          "content": "The Brain, the Boss of the Body\nThe brain is the control center. Thin threads called nerves carry messages between the brain and every body part. The brain, spinal cord, and nerves make up the nervous system.",
+          "material_id": 73,
+          "order": 14
+        }
+      ]
+    },
+    {
+      "key": "brain_teamwork",
+      "concept_id": 1036,
+      "title": "Teamwork 3: The Brain, the Boss of the Body - figure",
+      "section_title": "Teamwork 3: The Brain, the Boss of the Body",
+      "kind": "image",
+      "members": [
+        {
+          "title": "Teamwork 3: The Brain, the Boss of the Body - figure",
+          "section_title": "Teamwork 3: The Brain, the Boss of the Body",
+          "content": "Picture description for Figure 3: In the center of the picture is a box labeled Brain, control center. Four boxes are around it, one in each corner. Top left: Eyes and ears. An arrow points from this box to the brain. They send messages to the brain. Top right: Muscles. An arrow points from the brain to the muscles. The brain tells them to move. Bottom right: Heart. The brain keeps it beating. Bottom left: Lungs. The brain keeps you breathing, even while you sleep. Below the picture are the words: Nerves carry messages to and from the brain. Example: You hear your friend call your name. Your ears send a message to your brain. Your brain understands the message and tells your neck muscles to turn your head and your mouth to answer. All this happens in less than a second!",
+          "material_id": 73,
+          "order": 15
+        }
+      ]
+    },
+    {
+      "key": "bones_muscles_teamwork",
+      "concept_id": 1037,
+      "title": "Teamwork 4 (Part 1 of 3)",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Teamwork 4 (Part 1 of 3)",
+          "section_title": "",
+          "content": "Bones and Muscles\nBones cannot move by themselves.\nMuscles are attached to bones.\nWhen a muscle pulls, the bone moves.\nThe skeletal system and the muscular system work together every time you walk, write, or play.",
+          "material_id": 73,
+          "order": 16
+        },
+        {
+          "title": "Teamwork 4 (Part 2 of 3)",
+          "section_title": "",
+          "content": "Think of Carlos Yulo, the Filipino gymnast who won gold medals in gymnastics.\nEvery flip and twist he makes needs his bones and muscles working together.\nHis brain controls each move, and his heart and lungs give his muscles oxygen.",
+          "material_id": 73,
+          "order": 17
+        },
+        {
+          "title": "Teamwork 4 (Part 3 of 3)",
+          "section_title": "",
+          "content": "Try it: Hold your right arm straight out.\nPut your left hand on the front of your upper right arm.\nNow bend your right elbow and bring your hand to your shoulder.\nFeel the muscle get hard and bunch up.\nIt is pulling your arm bone up!",
+          "material_id": 73,
+          "order": 18
+        }
+      ]
+    },
+    {
+      "key": "organ_problems",
+      "concept_id": 1040,
+      "title": "When One Organ Does Not Work Well",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "When One Organ Does Not Work Well",
+          "section_title": "",
+          "content": "Because organs work as a team, a problem in one organ affects the others.\nIf the lungs are harmed by smoke, less oxygen gets into the blood. The heart must work harder, and the body feels tired.\nIf the heart stops pumping, oxygen and nutrients cannot reach the brain and other organs.\nIf the kidneys do not work well, waste stays in the blood and can make a person very sick.",
+          "material_id": 73,
+          "order": 19
+        }
+      ]
+    },
+    {
+      "key": "organ_care",
+      "concept_id": 1041,
+      "title": "This is why we must take care of all our organs",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "This is why we must take care of all our organs",
+          "section_title": "",
+          "content": "This is why we must take care of all our organs: eat healthy food, drink clean water, exercise, sleep enough, and stay away from smoke.",
+          "material_id": 73,
+          "order": 20
+        }
+      ]
+    }
+  ]
+}

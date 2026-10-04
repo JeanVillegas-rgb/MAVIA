@@ -1,0 +1,35 @@
+{
+  "topic_id": 348,
+  "_note": "Test set. AI-drafted key (not teacher-verified), received 2026-09-30 for docs/learning-path-348-snapshot-2026-09-30.md, drafted before any design work. Encoded as stated: the techniques figure (step 1) needs nothing first; the two 'Choosing the Right Technique' concepts (text 952, table 953 -- one section split by grouping) keep separate keys because the key gives them different prerequisites (text: filtering, evaporation; table: picking through decantation); the activity (step 14) follows filtering and evaporation. The key names no parallel or forbidden sets; reverse links of every required link count as forbidden (gold_report). expected_order is the key's own step order, which satisfies every required link.",
+  "concept_keys": {
+    "942": "techniques_figure",
+    "943": "why_separable",
+    "944": "picking",
+    "945": "sieving",
+    "946": "winnowing",
+    "947": "scooping",
+    "948": "decantation",
+    "949": "filtering",
+    "950": "evaporation",
+    "951": "magnet",
+    "952": "choosing_text",
+    "953": "choosing_table",
+    "954": "benefits",
+    "956": "activity"
+  },
+  "required": [
+    ["why_separable", "picking"], ["why_separable", "sieving"], ["why_separable", "winnowing"],
+    ["why_separable", "scooping"], ["why_separable", "decantation"], ["why_separable", "evaporation"],
+    ["why_separable", "magnet"], ["why_separable", "benefits"],
+    ["decantation", "filtering"],
+    ["filtering", "choosing_text"], ["evaporation", "choosing_text"],
+    ["picking", "choosing_table"], ["sieving", "choosing_table"], ["winnowing", "choosing_table"],
+    ["scooping", "choosing_table"], ["decantation", "choosing_table"],
+    ["filtering", "activity"], ["evaporation", "activity"]
+  ],
+  "parallel": [],
+  "structural": [],
+  "forbidden": [],
+  "expected_order": ["techniques_figure", "why_separable", "picking", "sieving", "winnowing", "scooping", "decantation", "filtering", "evaporation", "magnet", "choosing_text", "choosing_table", "benefits", "activity"],
+  "known_missing": []
+}

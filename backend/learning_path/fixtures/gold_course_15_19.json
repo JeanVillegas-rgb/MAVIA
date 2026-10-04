@@ -1,0 +1,458 @@
+{
+  "topics": [
+    15,
+    19
+  ],
+  "required": [],
+  "unrelated": true,
+  "_note": "Drafted 2026-10-03 by a fresh AI agent from the lesson text, deciding by meaning; to be reviewed by the user.",
+  "concepts": {
+    "15": [
+      {
+        "key": null,
+        "concept_id": 169,
+        "title": "What I Need to Know",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "What I Need to Know",
+            "section_title": "",
+            "content": "Think of a basketball team. Each player has a job, but they must work together to win. Your organs are like that too! In this module, you will learn how your organs work as a team.\nAfter going through this module, you are expected to:\n1. tell what an organ system is;\n2. name the organ systems and the organs in each one;",
+            "material_id": 10,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c176",
+        "concept_id": 176,
+        "title": "Remember",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Remember",
+            "section_title": "",
+            "content": "cells make tissues, and tissues make organs. When organs work together to do one big job, they form an organ system. Organ systems together make up the whole human body.\nNo organ system works alone. Let us look at four examples of organ teamwork.",
+            "material_id": 10,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c177",
+        "concept_id": 177,
+        "title": "Table on page 4",
+        "section_title": "What Is It",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Table on page 4",
+            "section_title": "What Is It",
+            "content": "The layout is a grid with three vertical columns and seven horizontal rows beneath a header. The left column lists the names of seven distinct organ systems, the middle column lists the specific organs that make up each system, and the right column describes the primary function of that system. The rows are arranged sequentially from top to bottom, starting with the skeletal system and ending with the nervous system. The middle column varies in text length, with the digestive system row containing the longest list of organs, while the skeletal and muscular system rows contain only a single word.",
+            "material_id": 10,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c178",
+        "concept_id": 178,
+        "title": "Teamwork 1",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 1",
+            "section_title": "",
+            "content": "The Heart and Lungs\nEvery part of your body needs oxygen. The lungs get the oxygen, and the heart delivers it. Figure 1. How the heart and lungs work together",
+            "material_id": 10,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": "c179",
+        "concept_id": 179,
+        "title": "Teamwork 1: The Heart and Lungs - figure",
+        "section_title": "Teamwork 1: The Heart and Lungs",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Teamwork 1: The Heart and Lungs - figure",
+            "section_title": "Teamwork 1: The Heart and Lungs",
+            "content": "Picture description for Figure 1: The picture shows four boxes arranged in a circle. Arrows go from one box to the next, going around and around like a loop. Box 1, at the top: The lungs breathe in oxygen. The oxygen passes into the blood. Box 2, on the right: The heart pumps this oxygen-rich blood to all body parts. Box 3, at the bottom: The body parts use the oxygen and make a waste gas called carbon dioxide. Box 4, on the left: The blood carries the carbon dioxide back. The heart pumps it to the lungs, and the lungs breathe it out. Then the loop starts again at Box 1. This happens with every breath and every heartbeat. That is why, during exercise, both your heart and lungs work faster. Your muscles need more oxygen, so you breathe faster and your heart pumps faster.",
+            "material_id": 10,
+            "order": 11
+          }
+        ]
+      },
+      {
+        "key": "c180",
+        "concept_id": 180,
+        "title": "Teamwork 2",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 2",
+            "section_title": "",
+            "content": "Getting Energy from Food\nYour body gets energy and nutrients from food. Many organs share this job.\nPicture description for Figure 2: On the left side, six boxes are stacked from top to bottom with arrows pointing down.\nThey show the path of food:\nMouth: teeth chew food. Esophagus: the food pipe pushes food down.\nStomach:\nmixes food with juices. Small intestine: nutrients pass into the blood. Large intestine: takes back water. Anus: solid waste leaves the body. On the right side, an arrow goes from the small intestine box to a box labeled Heart. The heart pumps the blood carrying nutrients to all body parts. Below the heart box, an arrow goes down to a box labeled Kidneys. The kidneys clean the blood and make urine. Tactile tip: Lay a long piece of yarn on a table to show the path of food. Tie a knot for each organ. Tie a second piece of yarn at the small intestine knot to show nutrients going to the heart. Here, the digestive system breaks down food. The circulatory system carries nutrients to the body. The urinary system removes waste from the blood. Three systems work as one team!",
+            "material_id": 10,
+            "order": 12
+          }
+        ]
+      },
+      {
+        "key": "c181",
+        "concept_id": 181,
+        "title": "Teamwork 2: Getting Energy from Food - figure",
+        "section_title": "Teamwork 2: Getting Energy from Food",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Teamwork 2: Getting Energy from Food - figure",
+            "section_title": "Teamwork 2: Getting Energy from Food",
+            "content": "Six labeled boxes are stacked vertically on the left side, connected by downward-pointing arrows to show a sequential path from the mouth at the top to the anus at the bottom. A separate branch extends horizontally from the fourth box, the small intestine, to a box labeled Heart on the right, which then connects downward to a final box labeled Kidneys. The main vertical column uses a light tan background for the first five boxes and a light grey background for the bottom box, while the Heart box is pink and the Kidneys box is light purple.",
+            "material_id": 10,
+            "order": 13
+          }
+        ]
+      },
+      {
+        "key": "c182",
+        "concept_id": 182,
+        "title": "Teamwork 3",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 3",
+            "section_title": "",
+            "content": "The Brain, the Boss of the Body\nThe brain is the control center. Thin threads called nerves carry messages between the brain and every body part. The brain, spinal cord, and nerves make up the nervous system.",
+            "material_id": 10,
+            "order": 14
+          }
+        ]
+      },
+      {
+        "key": "c183",
+        "concept_id": 183,
+        "title": "Teamwork 3: The Brain, the Boss of the Body - figure",
+        "section_title": "Teamwork 3: The Brain, the Boss of the Body",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Teamwork 3: The Brain, the Boss of the Body - figure",
+            "section_title": "Teamwork 3: The Brain, the Boss of the Body",
+            "content": "Picture description for Figure 3: In the center of the picture is a box labeled Brain, control center. Four boxes are around it, one in each corner. Top left: Eyes and ears. An arrow points from this box to the brain. They send messages to the brain. Top right: Muscles. An arrow points from the brain to the muscles. The brain tells them to move. Bottom right: Heart. The brain keeps it beating. Bottom left: Lungs. The brain keeps you breathing, even while you sleep. Below the picture are the words: Nerves carry messages to and from the brain. Example: You hear your friend call your name. Your ears send a message to your brain. Your brain understands the message and tells your neck muscles to turn your head and your mouth to answer. All this happens in less than a second!",
+            "material_id": 10,
+            "order": 15
+          }
+        ]
+      },
+      {
+        "key": "c184",
+        "concept_id": 184,
+        "title": "Teamwork 4 (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 4 (Part 1 of 3)",
+            "section_title": "",
+            "content": "Bones and Muscles\nBones cannot move by themselves.\nMuscles are attached to bones.\nWhen a muscle pulls, the bone moves.\nThe skeletal system and the muscular system work together every time you walk, write, or play.",
+            "material_id": 10,
+            "order": 16
+          },
+          {
+            "title": "Teamwork 4 (Part 2 of 3)",
+            "section_title": "",
+            "content": "Think of Carlos Yulo, the Filipino gymnast who won gold medals in gymnastics.\nEvery flip and twist he makes needs his bones and muscles working together.\nHis brain controls each move, and his heart and lungs give his muscles oxygen.",
+            "material_id": 10,
+            "order": 17
+          },
+          {
+            "title": "Teamwork 4 (Part 3 of 3)",
+            "section_title": "",
+            "content": "Try it: Hold your right arm straight out.\nPut your left hand on the front of your upper right arm.\nNow bend your right elbow and bring your hand to your shoulder.\nFeel the muscle get hard and bunch up.\nIt is pulling your arm bone up!",
+            "material_id": 10,
+            "order": 18
+          }
+        ]
+      },
+      {
+        "key": "c187",
+        "concept_id": 187,
+        "title": "When One Organ Does Not Work Well",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "When One Organ Does Not Work Well",
+            "section_title": "",
+            "content": "Because organs work as a team, a problem in one organ affects the others.\nIf the lungs are harmed by smoke, less oxygen gets into the blood. The heart must work harder, and the body feels tired.\nIf the heart stops pumping, oxygen and nutrients cannot reach the brain and other organs.\nIf the kidneys do not work well, waste stays in the blood and can make a person very sick.",
+            "material_id": 10,
+            "order": 19
+          }
+        ]
+      },
+      {
+        "key": "c188",
+        "concept_id": 188,
+        "title": "This is why we must take care of all our organs",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "This is why we must take care of all our organs",
+            "section_title": "",
+            "content": "This is why we must take care of all our organs: eat healthy food, drink clean water, exercise, sleep enough, and stay away from smoke.",
+            "material_id": 10,
+            "order": 20
+          }
+        ]
+      }
+    ],
+    "19": [
+      {
+        "key": "c129",
+        "concept_id": 129,
+        "title": "The main parts of a flower involved in reproduction",
+        "section_title": "Flowering Plants",
+        "kind": "image",
+        "members": [
+          {
+            "title": "The main parts of a flower involved in reproduction",
+            "section_title": "Flowering Plants",
+            "content": "The flower is arranged in distinct layers, with a small, pointed sepal at the very base, followed by four large, rounded petals that form the outer ring. Inside the petals, two stamens stand on either side of the central structure, each consisting of a slender filament topped by a small, oval anther. In the very center is the pistil, which features a bulbous ovary at the bottom containing three small, round ovules, a long, narrow style rising from it, and a flat, disc-shaped stigma at the very top.",
+            "material_id": 8,
+            "order": 0
+          },
+          {
+            "title": "The main parts of a flower involved in reproduction",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The flower is arranged with five broad petals radiating evenly around a central core, while two smaller, pointed sepals sit at the base of the stem. In the very center, a vertical structure called the pistil rises from a bulbous ovary, which contains a small ovule, up to a rounded stigma at the top. To the right of the pistil, a separate male structure called the stamen stands slightly shorter, consisting of a thin filament supporting an oval anther.",
+            "material_id": 12,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": "c130",
+        "concept_id": 130,
+        "title": "Reproduction in Flowering Plants",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Reproduction in Flowering Plants",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell. Most of this activity happens inside the flower, which is the reproductive part of the plant. A single flower can contain both male and female parts, and these parts work together so that seeds can form. Seeds later grow into new plants, allowing the species to continue.",
+            "material_id": 8,
+            "order": 1
+          },
+          {
+            "title": "Reproduction in Flowering Plants (Part 1 of 2)",
+            "section_title": "",
+            "content": "Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell.\nMost of this activity happens inside the flower, which is the reproductive part of the plant.",
+            "material_id": 12,
+            "order": 0
+          },
+          {
+            "title": "Reproduction in Flowering Plants (Part 2 of 2)",
+            "section_title": "",
+            "content": "A single flower can contain both male and female parts, and these parts work together so that seeds can form.\nSeeds later grow into new plants, allowing the species to continue.\nMale parts (the stamen) produce pollen; female parts (the pistil) hold the egg cells.",
+            "material_id": 12,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c258",
+        "concept_id": 258,
+        "title": "Stamen (Male Part)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Stamen (Male Part)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+            "material_id": 8,
+            "order": 2
+          },
+          {
+            "title": "Stamen (Male Part)",
+            "section_title": "Stamen (Male Part)",
+            "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+            "material_id": 12,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c259",
+        "concept_id": 259,
+        "title": "Pistil (Female Part)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pistil (Female Part)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+            "material_id": 8,
+            "order": 3
+          },
+          {
+            "title": "Pistil (Female Part)",
+            "section_title": "Pistil (Female Part)",
+            "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+            "material_id": 12,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": "c260",
+        "concept_id": 260,
+        "title": "Petals and Sepals (Supporting Parts)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Petals and Sepals (Supporting Parts)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud.\nThese parts do not make sex cells, but they help reproduction succeed.",
+            "material_id": 8,
+            "order": 4
+          },
+          {
+            "title": "Petals and Sepals (Supporting Parts)",
+            "section_title": "Petals and Sepals (Supporting Parts)",
+            "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud. These parts do not make sex cells, but they help reproduction succeed.",
+            "material_id": 12,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": "c134",
+        "concept_id": 134,
+        "title": "Pollination",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pollination",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+            "material_id": 8,
+            "order": 5
+          },
+          {
+            "title": "Pollination",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+            "material_id": 12,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": "c261",
+        "concept_id": 261,
+        "title": "Fertilization",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Fertilization",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+            "material_id": 8,
+            "order": 6
+          },
+          {
+            "title": "Fertilization",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+            "material_id": 12,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c262",
+        "concept_id": 262,
+        "title": "Seed formation",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Seed formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+            "material_id": 8,
+            "order": 7
+          },
+          {
+            "title": "Seed formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+            "material_id": 12,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c263",
+        "concept_id": 263,
+        "title": "Fruit formation",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Fruit formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+            "material_id": 8,
+            "order": 8
+          },
+          {
+            "title": "Fruit formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+            "material_id": 12,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c138",
+        "concept_id": 138,
+        "title": "Everyday Examples",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+            "material_id": 8,
+            "order": 9
+          },
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+            "material_id": 12,
+            "order": 10
+          }
+        ]
+      }
+    ]
+  }
+}

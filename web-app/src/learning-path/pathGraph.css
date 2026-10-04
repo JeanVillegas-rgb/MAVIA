@@ -1,0 +1,251 @@
+/* Learning path graph screen. Colours reuse the concept map's highlight
+   palette (pipeline.css --cm-*) so selection reads the same as before. */
+.pg-graph-area { position: relative; }
+.pg-canvas {
+  height: 70vh;
+  min-height: 420px;
+  border: 1px solid var(--border, #dde5ee);
+  border-radius: 12px;
+  background: var(--bg, #f4f7fb);
+}
+
+.pg-node {
+  width: 210px;
+  min-height: 64px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border: 2px solid #1f2a37;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2a37;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.pg-node-position {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: #1f2a37;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.pg-node-title {
+  font-weight: 600;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pg-node-badge {
+  grid-column: 2;
+  justify-self: start;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--accent-soft, #dfecfa);
+  color: var(--accent, #1e5fa8);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+/* Handles exist only so React Flow can attach arrows; nothing connects by hand. */
+.pg-node .react-flow__handle { opacity: 0; }
+.pg-node.is-selected { box-shadow: 0 0 0 4px #1f2a37; }
+.pg-node.is-needed { box-shadow: 0 0 0 4px #1d6a86; }
+.pg-node.is-leads { box-shadow: 0 0 0 4px #2f7556; }
+.pg-node.is-dimmed { opacity: 0.35; }
+.pg-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #5c6b7c);
+}
+
+.pg-details {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  width: min(380px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 0.9rem;
+  border: 1px solid var(--border-strong, #c6d2e0);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--shadow-sm, 0 4px 14px rgba(11, 42, 74, 0.06));
+}
+.pg-details-head { display: flex; justify-content: space-between; gap: 0.5rem; align-items: start; }
+.pg-details-head h3 { margin: 0; font-size: 1rem; }
+.pg-details-text { white-space: pre-line; font-size: 0.88rem; }
+.pg-details-sources { font-size: 0.8rem; color: var(--muted, #5c6b7c); }
+.pg-details h4 { margin: 0.75rem 0 0.35rem; font-size: 0.85rem; }
+.pg-details-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.pg-details-list li { display: flex; justify-content: space-between; gap: 0.5rem; align-items: start; }
+.pg-details-list small { display: block; color: var(--muted, #5c6b7c); }
+
+
+.pg-flag {
+  justify-self: start;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: #fdf1dc;
+  color: var(--warning, #9a5b00);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.pg-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(18, 33, 47, 0.35);
+}
+.pg-dialog {
+  width: min(460px, calc(100vw - 32px));
+  padding: 1.1rem;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--shadow, 0 18px 45px rgba(11, 42, 74, 0.12));
+}
+.pg-dialog h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.pg-dialog-error { color: var(--danger, #c0392b); }
+.pg-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+
+.pg-undo {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 60;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: calc(100vw - 32px);
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  background: #12212f;
+  color: #fff;
+}
+.pg-undo-close { border: 0; background: transparent; color: #fff; font-size: 1.1rem; cursor: pointer; }
+
+/* Pending recommendations: yellow means "waiting for the teacher". */
+.pg-node { position: relative; }
+.pg-node.has-pending { border-color: #b7791f; background: #fffbea; }
+.pg-node-pending {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #f6c343;
+  color: #3d2c00;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.pg-node .pg-node-pending { position: absolute; top: -0.6rem; right: -0.6rem; box-shadow: 0 0 0 2px #fff; }
+.pg-review-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #f0d58a;
+  border-radius: 10px;
+  background: #fffbea;
+  color: #5c4400;
+  font-size: 0.88rem;
+}
+.pg-pending-list { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+.pg-pending {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.6rem 0.65rem;
+  border: 1px solid #f0d58a;
+  border-left: 4px solid #f6c343;
+  border-radius: 8px;
+  background: #fffbea;
+}
+.pg-pending-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.pg-pending-label {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: #f6c343;
+  color: #3d2c00;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pg-pending small { color: #5c4400; }
+.pg-pending-actions { display: flex; gap: 0.4rem; }
+
+/* "Topic published!" dialog. */
+.pub-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(80vh, 760px);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow, 0 18px 45px rgba(11, 42, 74, 0.12));
+}
+.pub-head {
+  display: flex;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 1.1rem 1.25rem 0.9rem;
+  border-bottom: 1px solid var(--border, #dde5ee);
+}
+.pub-check {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  background: #e3f4ea;
+  color: #2f7556;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+.pub-head h3 { margin: 0; font-size: 1.2rem; }
+.pub-topic { margin: 0.1rem 0 0; font-weight: 600; color: var(--ink, #12212f); }
+.pub-meta { margin: 0.15rem 0 0; font-size: 0.82rem; color: var(--muted, #5c6b7c); }
+.pub-body { flex: 1; min-height: 0; overflow: auto; padding: 0.75rem 1.25rem; }
+.pub-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.pub-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.7rem;
+  align-items: start;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border, #dde5ee);
+  border-radius: 10px;
+}
+.pub-position {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: #1f2a37;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.pub-row-main { display: grid; gap: 0.35rem; min-width: 0; }
+.pub-player { display: grid; gap: 0.2rem; }
+.pub-player audio { width: 100%; height: 36px; }
+.pub-player small, .pub-missing { margin: 0; font-size: 0.8rem; color: var(--muted, #5c6b7c); }
+.pub-foot { display: flex; justify-content: flex-end; padding: 0.8rem 1.25rem; border-top: 1px solid var(--border, #dde5ee); }

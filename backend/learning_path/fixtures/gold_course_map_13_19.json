@@ -1,0 +1,39 @@
+{
+  "topics": [
+    13,
+    19
+  ],
+  "_note": "Drafted 2026-10-03 by a fresh AI agent from the lesson text, deciding by meaning; to be reviewed by the user.",
+  "concept_keys": {
+    "219": "c219",
+    "221": "c221",
+    "222": "c222",
+    "223": "c223",
+    "224": "c224",
+    "225": "c225",
+    "226": "c226",
+    "227": "c227",
+    "228": "c228",
+    "230": "c230",
+    "232": "c232",
+    "129": "c129",
+    "130": "c130",
+    "258": "c258",
+    "259": "c259",
+    "260": "c260",
+    "134": "c134",
+    "261": "c261",
+    "262": "c262",
+    "263": "c263",
+    "138": "c138"
+  },
+  "required": [],
+  "reasons": {},
+  "unrelated": true,
+  "notes": [
+    "Left out 215 (What I Need to Know): front matter with learning objectives only.",
+    "Rejected 219 (What Is It: cells, tissues, organs) -> 130 (Reproduction in Flowering Plants) and 261 (Fertilization): topic 19 names sex cells and egg cells as things that join, which does not need the human body's cell-tissue-organ hierarchy.",
+    "Rejected the shared word 'organ' (human organs vs. the flower as the plant's reproductive part): same word, different meaning; no human organ concept is needed to understand flower parts.",
+    "Rejected 223 (The Lungs) / 222 (The Heart) and the other organ concepts -> any flower concept: topic 19 does not use human body functions."
+  ]
+}

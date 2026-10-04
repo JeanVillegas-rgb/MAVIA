@@ -1,0 +1,425 @@
+{
+  "topics": [
+    353,
+    365
+  ],
+  "required": [],
+  "unrelated": true,
+  "_note": "Drafted 2026-10-02 by a fresh AI agent from the database concepts (random order) and PDFs, deciding by meaning; to be reviewed by the user.",
+  "concepts": {
+    "353": [
+      {
+        "key": null,
+        "concept_id": 1022,
+        "title": "What I Need to Know",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "What I Need to Know",
+            "section_title": "",
+            "content": "Think of a basketball team. Each player has a job, but they must work together to win. Your organs are like that too! In this module, you will learn how your organs work as a team.\nAfter going through this module, you are expected to:\n1. tell what an organ system is;\n2. name the organ systems and the organs in each one;",
+            "material_id": 73,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c1029",
+        "concept_id": 1029,
+        "title": "Remember",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Remember",
+            "section_title": "",
+            "content": "cells make tissues, and tissues make organs. When organs work together to do one big job, they form an organ system. Organ systems together make up the whole human body.\nNo organ system works alone. Let us look at four examples of organ teamwork.",
+            "material_id": 73,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c1030",
+        "concept_id": 1030,
+        "title": "Table on page 4",
+        "section_title": "What Is It",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Table on page 4",
+            "section_title": "What Is It",
+            "content": "The figure shows a table outlining the human body’s major organ systems. It’s arranged in three columns, starting with the skeletal system at the top left, which lists bones as its main organs and describes their function as providing shape, support, and protection. Moving to the right, we find the muscular system, with muscles as its main organs, responsible for helping the body move. Below that is the digestive system, detailing the mouth, esophagus, stomach, small intestine, large intestine, and liver as its organs, and explaining that it breaks down food into nutrients. The respiratory system is listed next, featuring the nose, windpipe, and lungs, which take in oxygen and release carbon dioxide. The circulatory system is shown with the heart, blood vessels, and blood as its organs, and it carries oxygen and nutrients throughout the body.",
+            "material_id": 73,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c1031",
+        "concept_id": 1031,
+        "title": "Teamwork 1",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 1",
+            "section_title": "",
+            "content": "The Heart and Lungs\nEvery part of your body needs oxygen. The lungs get the oxygen, and the heart delivers it. Figure 1. How the heart and lungs work together",
+            "material_id": 73,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": "c1032",
+        "concept_id": 1032,
+        "title": "Teamwork 1: The Heart and Lungs - figure",
+        "section_title": "Teamwork 1: The Heart and Lungs",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Teamwork 1: The Heart and Lungs - figure",
+            "section_title": "Teamwork 1: The Heart and Lungs",
+            "content": "Picture description for Figure 1: The picture shows four boxes arranged in a circle. Arrows go from one box to the next, going around and around like a loop. Box 1, at the top: The lungs breathe in oxygen. The oxygen passes into the blood. Box 2, on the right: The heart pumps this oxygen-rich blood to all body parts. Box 3, at the bottom: The body parts use the oxygen and make a waste gas called carbon dioxide. Box 4, on the left: The blood carries the carbon dioxide back. The heart pumps it to the lungs, and the lungs breathe it out. Then the loop starts again at Box 1. This happens with every breath and every heartbeat. That is why, during exercise, both your heart and lungs work faster. Your muscles need more oxygen, so you breathe faster and your heart pumps faster.",
+            "material_id": 73,
+            "order": 11
+          }
+        ]
+      },
+      {
+        "key": "c1033",
+        "concept_id": 1033,
+        "title": "Teamwork 2",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 2",
+            "section_title": "",
+            "content": "Getting Energy from Food\nYour body gets energy and nutrients from food. Many organs share this job.",
+            "material_id": 73,
+            "order": 12
+          }
+        ]
+      },
+      {
+        "key": "c1034",
+        "concept_id": 1034,
+        "title": "Teamwork 2: Getting Energy from Food - figure",
+        "section_title": "Teamwork 2: Getting Energy from Food",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Teamwork 2: Getting Energy from Food - figure",
+            "section_title": "Teamwork 2: Getting Energy from Food",
+            "content": "Picture description for Figure 2: On the left side, six boxes are stacked from top to bottom with arrows pointing down. They show the path of food: Mouth: teeth chew food. Esophagus: the food pipe pushes food down. Stomach: mixes food with juices. Small intestine: nutrients pass into the blood. Large intestine: takes back water. Anus: solid waste leaves the body. On the right side, an arrow goes from the small intestine box to a box labeled Heart. The heart pumps the blood carrying nutrients to all body parts. Below the heart box, an arrow goes down to a box labeled Kidneys. The kidneys clean the blood and make urine. Tactile tip: Lay a long piece of yarn on a table to show the path of food. Tie a knot for each organ. Tie a second piece of yarn at the small intestine knot to show nutrients going to the heart. Here, the digestive system breaks down food. The circulatory system carries nutrients to the body. The urinary system removes waste from the blood. Three systems work as one team!",
+            "material_id": 73,
+            "order": 13
+          }
+        ]
+      },
+      {
+        "key": "c1035",
+        "concept_id": 1035,
+        "title": "Teamwork 3",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 3",
+            "section_title": "",
+            "content": "The Brain, the Boss of the Body\nThe brain is the control center. Thin threads called nerves carry messages between the brain and every body part. The brain, spinal cord, and nerves make up the nervous system.",
+            "material_id": 73,
+            "order": 14
+          }
+        ]
+      },
+      {
+        "key": "c1036",
+        "concept_id": 1036,
+        "title": "Teamwork 3: The Brain, the Boss of the Body - figure",
+        "section_title": "Teamwork 3: The Brain, the Boss of the Body",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Teamwork 3: The Brain, the Boss of the Body - figure",
+            "section_title": "Teamwork 3: The Brain, the Boss of the Body",
+            "content": "Picture description for Figure 3: In the center of the picture is a box labeled Brain, control center. Four boxes are around it, one in each corner. Top left: Eyes and ears. An arrow points from this box to the brain. They send messages to the brain. Top right: Muscles. An arrow points from the brain to the muscles. The brain tells them to move. Bottom right: Heart. The brain keeps it beating. Bottom left: Lungs. The brain keeps you breathing, even while you sleep. Below the picture are the words: Nerves carry messages to and from the brain. Example: You hear your friend call your name. Your ears send a message to your brain. Your brain understands the message and tells your neck muscles to turn your head and your mouth to answer. All this happens in less than a second!",
+            "material_id": 73,
+            "order": 15
+          }
+        ]
+      },
+      {
+        "key": "c1037",
+        "concept_id": 1037,
+        "title": "Teamwork 4 (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Teamwork 4 (Part 1 of 3)",
+            "section_title": "",
+            "content": "Bones and Muscles\nBones cannot move by themselves.\nMuscles are attached to bones.\nWhen a muscle pulls, the bone moves.\nThe skeletal system and the muscular system work together every time you walk, write, or play.",
+            "material_id": 73,
+            "order": 16
+          },
+          {
+            "title": "Teamwork 4 (Part 2 of 3)",
+            "section_title": "",
+            "content": "Think of Carlos Yulo, the Filipino gymnast who won gold medals in gymnastics.\nEvery flip and twist he makes needs his bones and muscles working together.\nHis brain controls each move, and his heart and lungs give his muscles oxygen.",
+            "material_id": 73,
+            "order": 17
+          },
+          {
+            "title": "Teamwork 4 (Part 3 of 3)",
+            "section_title": "",
+            "content": "Try it: Hold your right arm straight out.\nPut your left hand on the front of your upper right arm.\nNow bend your right elbow and bring your hand to your shoulder.\nFeel the muscle get hard and bunch up.\nIt is pulling your arm bone up!",
+            "material_id": 73,
+            "order": 18
+          }
+        ]
+      },
+      {
+        "key": "c1040",
+        "concept_id": 1040,
+        "title": "When One Organ Does Not Work Well",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "When One Organ Does Not Work Well",
+            "section_title": "",
+            "content": "Because organs work as a team, a problem in one organ affects the others.\nIf the lungs are harmed by smoke, less oxygen gets into the blood. The heart must work harder, and the body feels tired.\nIf the heart stops pumping, oxygen and nutrients cannot reach the brain and other organs.\nIf the kidneys do not work well, waste stays in the blood and can make a person very sick.",
+            "material_id": 73,
+            "order": 19
+          }
+        ]
+      },
+      {
+        "key": "c1041",
+        "concept_id": 1041,
+        "title": "This is why we must take care of all our organs",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "This is why we must take care of all our organs",
+            "section_title": "",
+            "content": "This is why we must take care of all our organs: eat healthy food, drink clean water, exercise, sleep enough, and stay away from smoke.",
+            "material_id": 73,
+            "order": 20
+          }
+        ]
+      }
+    ],
+    "365": [
+      {
+        "key": null,
+        "concept_id": 1062,
+        "title": "What I Need to Know",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "What I Need to Know",
+            "section_title": "",
+            "content": "People, plants, and animals are living things. They all need some things to stay alive. Where do they get these things? In this module, you will find out.\nAfter going through this module, you are expected to:\n1. name the basic needs of people, plants, and animals;\n2. tell where living things get their basic needs; and",
+            "material_id": 74,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c1066",
+        "concept_id": 1066,
+        "title": "What Is an Environment?",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "What Is an Environment?",
+            "section_title": "",
+            "content": "Your environment is everything around you. It has living things, like people, plants, and animals. It also has nonliving things, like air, water, soil, rocks, and sunlight. A rice field, a forest, a river, the sea, and even your own home and yard are environments.",
+            "material_id": 74,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": "c1067",
+        "concept_id": 1067,
+        "title": "The Basic Needs of Living Things",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "The Basic Needs of Living Things",
+            "section_title": "",
+            "content": "A basic need is something a living thing must have to stay alive. All living things need air, water, and food. Most also need shelter, a safe place to live. Plants need sunlight to make their own food. Figure 1. The basic needs of living things",
+            "material_id": 74,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": "c1069",
+        "concept_id": 1069,
+        "title": "The Basic Needs of Living Things",
+        "section_title": "The Basic Needs of Living Things",
+        "kind": "image",
+        "members": [
+          {
+            "title": "The Basic Needs of Living Things - figure",
+            "section_title": "The Basic Needs of Living Things",
+            "content": "Picture description for Figure 1: In the middle of the picture is a big circle with the words Living things. Five boxes are around the circle. An arrow goes from each box to the circle. This shows that living things need all of these. The five boxes say: Air, to breathe. Water, to drink. Food, for energy. Shelter, a safe home. Sunlight, so plants can make food. Tactile tip: Glue a paper circle in the middle of a page. Around it, glue five small objects: a feather for air, a sponge for water, a grain of rice for food, a twig for shelter, and a round button for the sun.",
+            "material_id": 74,
+            "order": 7
+          },
+          {
+            "title": "The Basic Needs of Living Things",
+            "section_title": "The Basic Needs of Living Things",
+            "content": "The figure shows five boxes arranged around a central circle labelled “Living things”. Each box lists a basic need for a living thing: air, water, food, shelter, and sunlight. The box for plants specifically includes soil with nutrients, while the boxes for people, animals, and the general category of living things only list the first four needs. This arrangement highlights the different requirements of each type of living thing, showing how air and water are essential for all, while plants additionally require sunlight and soil.",
+            "material_id": 74,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c1070",
+        "concept_id": 1070,
+        "title": "How People Depend on the Environment",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "How People Depend on the Environment",
+            "section_title": "",
+            "content": "People get almost everything they need from the environment.\nAir: We breathe the air around us. Plants and trees help keep the air fresh.\nWater: We get water from rain, rivers, springs, and wells.\nFood: Rice and vegetables grow in the soil. Fish come from rivers and the sea. Chickens and pigs give us eggs and meat.",
+            "material_id": 74,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c1071",
+        "concept_id": 1071,
+        "title": "Shelter",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Shelter",
+            "section_title": "",
+            "content": "Houses can be made from wood, bamboo, and nipa leaves, like the bahay kubo.",
+            "material_id": 74,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": "c1072",
+        "concept_id": 1072,
+        "title": "How Animals Depend on the Environment",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "How Animals Depend on the Environment",
+            "section_title": "",
+            "content": "A carabao eats grass and cools its body in mud and water.\nA bird eats seeds, fruits, or insects. It builds its nest in a tree using twigs and dry leaves.\nA fish lives in water. It gets the air it needs from the water through its gills.\nA frog lives near ponds and rice fields. It eats insects that live there.",
+            "material_id": 74,
+            "order": 11
+          }
+        ]
+      },
+      {
+        "key": "c1073",
+        "concept_id": 1073,
+        "title": "How Plants Depend on the Environment",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "How Plants Depend on the Environment",
+            "section_title": "",
+            "content": "Plants cannot walk to find food. They make their own food using sunlight, water, and air. Their roots hold on to the soil and take in water and nutrients from it. Rain gives plants the water they need.",
+            "material_id": 74,
+            "order": 12
+          }
+        ]
+      },
+      {
+        "key": "c1074",
+        "concept_id": 1074,
+        "title": "Activity Model: An Aquarium Is a Small Environment",
+        "section_title": "Activity Model: An Aquarium Is a Small Environment",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Activity Model: An Aquarium Is a Small Environment - figure",
+            "section_title": "Activity Model: An Aquarium Is a Small Environment",
+            "content": "Picture description for Figure 2: The picture shows a glass tank. Most of the tank is filled with water. A layer of soil is at the bottom. A kangkong plant floats on top of the water. Its leaves point up toward the light, and its roots hang down into the water. A fish swims in the middle of the water. Small bubbles rise above it. A snail crawls on the soil at the bottom of the tank. A sun is above the tank, giving light. What each living thing gets from this small environment:",
+            "material_id": 74,
+            "order": 13
+          },
+          {
+            "title": "Table on page 6",
+            "section_title": "Activity Model: An Aquarium Is a Small Environment",
+            "content": "The table shows three different living things kept in an aquarium, and what each one needs from that environment. The first entry lists a kangkong plant, which relies on water, light, and air to make its own food. The second entry describes a fish, which needs water to live in, air from the water, food, and plants to hide under. Finally, the third entry details a snail, which requires water, air, food from plant bits, and a place to live within the aquarium.",
+            "material_id": 74,
+            "order": 14
+          }
+        ]
+      },
+      {
+        "key": "c1076",
+        "concept_id": 1076,
+        "title": "Living Things Depend on Each Other",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Living Things Depend on Each Other",
+            "section_title": "",
+            "content": "Living things also need other living things. Animals eat plants or other animals. Plants give animals shelter. Bees help flowers make seeds. The way food passes from one living thing to another is called a food chain.",
+            "material_id": 74,
+            "order": 15
+          },
+          {
+            "title": "Living Things Depend on Each Other - figure",
+            "section_title": "Living Things Depend on Each Other",
+            "content": "Picture description for Figure 3: The picture has four boxes in a row from left to right, joined by arrows. Each arrow means gives energy to. Box 1 is the sun, which gives light. Box 2 is the rice plant, which uses sunlight to make its food. Box 3 is the rat, which eats rice. Box 4 is the snake, which eats rats. So the sun gives energy to the rice plant, the rice plant gives energy to the rat, and the rat gives energy to the snake. Tactile tip: Place four small objects in a line on a table and join them with pieces of string. Let the learner follow the string from one object to the next.",
+            "material_id": 74,
+            "order": 16
+          }
+        ]
+      },
+      {
+        "key": "c1078",
+        "concept_id": 1078,
+        "title": "When the Environment Changes (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "When the Environment Changes (Part 1 of 2)",
+            "section_title": "",
+            "content": "Living things need a clean and healthy environment.\nWhen the environment is harmed, living things suffer.\nWhen a river is full of garbage, fish and water plants may die.\nPeople lose a source of food.\nWhen trees are cut down, birds and other animals lose their homes.",
+            "material_id": 74,
+            "order": 17
+          },
+          {
+            "title": "When the Environment Changes (Part 2 of 2)",
+            "section_title": "",
+            "content": "The soil can also wash away when it rains.\nWhen the air is full of smoke, people and animals find it hard to breathe.\nThat is why we must take care of our environment.\nWe can throw garbage in the right place, plant trees, and save water.",
+            "material_id": 74,
+            "order": 18
+          }
+        ]
+      }
+    ]
+  }
+}

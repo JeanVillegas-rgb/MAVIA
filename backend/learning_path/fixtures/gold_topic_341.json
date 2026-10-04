@@ -1,0 +1,224 @@
+{
+  "topic_id": 341,
+  "required": [
+    [
+      "properties",
+      "grade4_properties"
+    ],
+    [
+      "properties",
+      "absorb"
+    ],
+    [
+      "properties",
+      "float_sink"
+    ],
+    [
+      "properties",
+      "decay"
+    ],
+    [
+      "absorb",
+      "grouping_ways"
+    ],
+    [
+      "float_sink",
+      "grouping_ways"
+    ],
+    [
+      "decay",
+      "grouping_ways"
+    ],
+    [
+      "absorb",
+      "why_grouping"
+    ],
+    [
+      "float_sink",
+      "why_grouping"
+    ],
+    [
+      "decay",
+      "why_grouping"
+    ]
+  ],
+  "parallel": [],
+  "structural": [],
+  "expected_order": [
+    "tests_figure",
+    "properties",
+    "grade4_properties",
+    "absorb",
+    "float_sink",
+    "decay",
+    "grouping_ways",
+    "why_grouping"
+  ],
+  "known_missing": [],
+  "forbidden": [],
+  "concepts": [
+    {
+      "key": "tests_figure",
+      "concept_id": 900,
+      "title": "The three classification tests specified in the Grade 4 competency",
+      "section_title": "Curriculum Alignment",
+      "kind": "image",
+      "members": [
+        {
+          "title": "The three classification tests specified in the Grade 4 competency",
+          "section_title": "Curriculum Alignment",
+          "content": "The figure shows three separate experiments designed to classify materials. The first experiment displays two materials: absorbent cloth, paper, and sponge on the left, and non-absorbent plastic, glass, and metal on the right. The second experiment shows a wooden and plastic float alongside a stone and metal sink, with the materials placed in water to observe whether they float or sink. Finally, the third experiment presents two groups of materials: decaying leaves, food scraps, paper, and wood on one side, and materials that do not decay – plastic, glass, metal, and rubber – on the other.",
+          "material_id": 67,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "key": "properties",
+      "concept_id": 901,
+      "title": "Properties of Materials (Part 1 of 3)",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Properties of Materials (Part 1 of 3)",
+          "section_title": "",
+          "content": "Every material can be described by the way it looks, feels, and behaves.\nThese descriptions are its properties.\nWhen learners in the elementary grades sort materials, they are not memorizing lists — they are using a property as a rule for putting things into groups.",
+          "material_id": 67,
+          "order": 1
+        },
+        {
+          "title": "Properties of Materials (Part 2 of 3)",
+          "section_title": "",
+          "content": "This skill is introduced in Grade 3 with the physical properties of solid materials, and is extended in Grade 4 into three specific classification tests that learners can actually perform in the classroom.\nPhysical properties can be observed without changing what the material is made of.",
+          "material_id": 67,
+          "order": 2
+        },
+        {
+          "title": "Properties of Materials (Part 3 of 3)",
+          "section_title": "",
+          "content": "The Grade 3 competency names three that learners can check by hand: whether a material is hard (a stone, a coin), shiny (a new spoon, aluminum foil, a tansan), or stretchable (a rubber band, a garter, a balloon).\nOther familiar physical properties are color, texture, size, weight, and flexibility.\nChemical properties describe how a material behaves when it reacts or changes into something new.",
+          "material_id": 67,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "key": "grade4_properties",
+      "concept_id": 904,
+      "title": "The Grade 4 competency names three",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "The Grade 4 competency names three",
+          "section_title": "",
+          "content": "The Grade 4 competency names three: whether a material can be burned, whether it reacts with other materials, and whether it is degradable or biodegradable. These properties cannot be seen at a glance; they show themselves only when the material is exposed to fire, air, moisture, or other substances.",
+          "material_id": 67,
+          "order": 4
+        }
+      ]
+    },
+    {
+      "key": "absorb",
+      "concept_id": 905,
+      "title": "Ability to absorb water. Place a drop of water on the material and watch what happens. If the",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Ability to absorb water. Place a drop of water on the material and watch what happens. If the",
+          "section_title": "",
+          "content": "water soaks in and the material becomes damp, the material is absorbent. If the water stays on the surface as a bead and can be wiped off, the material is non-absorbent. Cloth, paper, sponge, cotton, and wood absorb water; plastic, glass, metal, and rubber do not.",
+          "material_id": 67,
+          "order": 5
+        }
+      ]
+    },
+    {
+      "key": "float_sink",
+      "concept_id": 906,
+      "title": "Ability to float or sink. Place the material gently in a basin of water. Materials that stay on the",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Ability to float or sink. Place the material gently in a basin of water. Materials that stay on the",
+          "section_title": "",
+          "content": "surface float; materials that go down to the bottom sink. Dry wood, plastic bottle caps, styrofoam, and dry leaves float. Stone, coins, nails, and marbles sink. Learners often expect size to decide this, so it is worth showing them a large piece of wood that floats and a small nail that sinks.",
+          "material_id": 67,
+          "order": 6
+        }
+      ]
+    },
+    {
+      "key": "decay",
+      "concept_id": 907,
+      "title": "Ability to undergo decay. Materials that rot, break down, and return to the soil over time are said",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Ability to undergo decay. Materials that rot, break down, and return to the soil over time are said",
+          "section_title": "",
+          "content": "to undergo decay, or to be biodegradable. Food scraps, leaves, paper, and wood decay. Plastic, glass, metal, and rubber do not decay within a useful length of time, so they are called non- biodegradable. This test cannot be finished in one class period; it is usually set up as a week-long or month-long observation using two buried samples.",
+          "material_id": 67,
+          "order": 7
+        }
+      ]
+    },
+    {
+      "key": "grouping_ways",
+      "concept_id": 908,
+      "title": "Grouping the Same Materials in Different Ways",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Grouping the Same Materials in Different Ways",
+          "section_title": "",
+          "content": "There is no single correct way to group a set of materials. The grouping depends on which property is being used as the rule.\nConsider six items commonly available in a Filipino classroom:\nReading the table down each column gives a different pair of groups each time. The basahan joins the dried leaf and the wood under one rule, but joins the plastic bag under another. This is the central idea of the lesson: a material has several properties at once, and the group it belongs to changes with the question being asked.",
+          "material_id": 67,
+          "order": 8
+        },
+        {
+          "title": "being used as the rule. Consider six items commonly available in a Filipino classroom:",
+          "section_title": "Grouping the Same Materials in Different Ways",
+          "content": "The table shows six different materials arranged in three columns. The first column lists the materials: basahan, plastic sando bag, dried leaf, tansan, piece of wood, and marble. The second and third columns describe their properties in relation to water and decay. The basahan floats at first, then sinks, and if made of cotton, it undergoes decay. The plastic sando bag floats and does not undergo decay. The dried leaf floats and does undergo decay, and the tansan, which is a bottle cap, sinks and does not undergo decay.",
+          "material_id": 67,
+          "order": 9
+        }
+      ]
+    },
+    {
+      "key": "why_grouping",
+      "concept_id": 910,
+      "title": "Why Grouping Matters (Part 1 of 3)",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Why Grouping Matters (Part 1 of 3)",
+          "section_title": "",
+          "content": "Use, Handling, and Disposal\nPeople choose materials for a purpose because of their properties.\nA raincoat and a payong are made of plastic or coated cloth because those materials do not absorb water.\nA bimpo and a basahan are made of cotton because cotton does.",
+          "material_id": 67,
+          "order": 10
+        },
+        {
+          "title": "Why Grouping Matters (Part 2 of 3)",
+          "section_title": "",
+          "content": "A banca is made of wood because wood floats.\nKnowing the property explains the choice.\nGrouping also decides how waste should be handled, which is the point of the Grade 3 competency on proper disposal.\nBiodegradable waste such as vegetable peelings and fallen leaves can be composted and returned to the garden as fertilizer.",
+          "material_id": 67,
+          "order": 11
+        },
+        {
+          "title": "Why Grouping Matters (Part 3 of 3)",
+          "section_title": "",
+          "content": "Non-biodegradable waste such as plastic bottles, tin cans, and glass must be cleaned and set aside for recycling, because it will not break down on its own.\nThis is the science behind the familiar nabubulok and di-nabubulok labels on segregation bins in schools and barangays.",
+          "material_id": 67,
+          "order": 12
+        }
+      ]
+    }
+  ]
+}

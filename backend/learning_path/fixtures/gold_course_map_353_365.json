@@ -1,0 +1,41 @@
+{
+  "topics": [
+    353,
+    365
+  ],
+  "_note": "Drafted 2026-10-02 by a fresh AI agent from the database concepts (random order) and PDFs, deciding by meaning; to be reviewed by the user.",
+  "concept_keys": {
+    "1033": "c1033",
+    "1030": "c1030",
+    "1036": "c1036",
+    "1037": "c1037",
+    "1022": null,
+    "1032": "c1032",
+    "1031": "c1031",
+    "1035": "c1035",
+    "1040": "c1040",
+    "1034": "c1034",
+    "1041": "c1041",
+    "1029": "c1029",
+    "1062": null,
+    "1071": "c1071",
+    "1074": "c1074",
+    "1069": "c1069",
+    "1072": "c1072",
+    "1066": "c1066",
+    "1073": "c1073",
+    "1076": "c1076",
+    "1067": "c1067",
+    "1070": "c1070",
+    "1078": "c1078"
+  },
+  "required": [],
+  "reasons": {},
+  "unrelated": true,
+  "notes": [
+    "The organ-systems topic explains how organs inside the body work together; the basic-needs topic explains what living things get from their surroundings. Neither concept set needs the other.",
+    "Overlaps such as 'energy from food' (1033 vs 1067) and 'smoke harms breathing' (1040 vs 1078) are shared vocabulary, not prerequisites.",
+    "Concept 1022 set to null: objectives list ('What I Need to Know'), not lesson content.",
+    "Concept 1062 set to null: objectives list ('What I Need to Know'), not lesson content."
+  ]
+}

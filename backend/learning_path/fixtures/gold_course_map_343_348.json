@@ -1,0 +1,64 @@
+{
+  "topics": [
+    343,
+    348
+  ],
+  "_note": "AI-drafted recommendation (not teacher-verified), 2026-09-30: the same AI tool as topics 340/357, asked for each concept of the second topic which concepts of the first topic must be learned first, on docs/course-pair-343-348-2026-09-30.md. Concept numbers there map to the concept ids below.",
+  "concept_keys": {
+    "970": "c970",
+    "971": "c971",
+    "974": "c974",
+    "975": "c975",
+    "978": "c978",
+    "981": "c981",
+    "942": "c942",
+    "943": "c943",
+    "944": "c944",
+    "945": "c945",
+    "946": "c946",
+    "947": "c947",
+    "948": "c948",
+    "949": "c949",
+    "950": "c950",
+    "951": "c951",
+    "952": "c952",
+    "953": "c953",
+    "954": "c954",
+    "956": "c956"
+  },
+  "required": [
+    [
+      "c974",
+      "c948"
+    ],
+    [
+      "c975",
+      "c948"
+    ],
+    [
+      "c975",
+      "c949"
+    ],
+    [
+      "c974",
+      "c950"
+    ],
+    [
+      "c974",
+      "c952"
+    ],
+    [
+      "c975",
+      "c952"
+    ],
+    [
+      "c975",
+      "c953"
+    ],
+    [
+      "c974",
+      "c956"
+    ]
+  ],
+  "unrelated": false
+}

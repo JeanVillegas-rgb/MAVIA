@@ -1,0 +1,630 @@
+{
+  "topics": [
+    2,
+    10
+  ],
+  "required": [
+    [
+      "c26",
+      "c92"
+    ]
+  ],
+  "unrelated": false,
+  "_note": "Drafted 2026-10-03 by a fresh AI agent from the lesson text, deciding by meaning; to be reviewed by the user.",
+  "concepts": {
+    "2": [
+      {
+        "key": "c1",
+        "concept_id": 1,
+        "title": "Particle arrangement in solids, liquids, and gases",
+        "section_title": "",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Particle arrangement in solids, liquids, and gases",
+            "section_title": "",
+            "content": "The image shows the arrangement of particles in three different states of matter: a solid, a liquid, and a gas. In the solid, the particles are tightly packed together in fixed positions, like a tightly arranged grid. Next to it, the liquid shows particles that are close together but able to move around, and they are arranged in a less ordered way than the solid. Finally, the gas shows particles that are far apart and moving freely, with no particular arrangement or grouping.",
+            "material_id": 1,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": "c2",
+        "concept_id": 2,
+        "title": "Matter",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Matter",
+            "section_title": "Matter",
+            "content": "Matter is anything that has mass and occupies space. A book, water, air, a spoon, and a balloon all contain matter. Matter can be described using observable properties such as shape, volume, texture, color, and how it behaves inside a container.",
+            "material_id": 1,
+            "order": 1
+          },
+          {
+            "title": "What is Matter?",
+            "section_title": "What is Matter?",
+            "content": "Matter is anything that takes up space and has mass (weight caused by gravity). Your desk, the air you breathe, and the water in a glass are all matter. Matter is made of tiny particles -- so small that no one can see a single one without a very powerful microscope.",
+            "material_id": 2,
+            "order": 1
+          },
+          {
+            "title": "Matter usually exists in one of three everyday states",
+            "section_title": "What is Matter?",
+            "content": "Matter usually exists in one of three everyday states: solid, liquid, and gas. What state matter is in depends on two things: how closely packed its particles are, and how much energy (movement) those particles have.",
+            "material_id": 2,
+            "order": 2
+          },
+          {
+            "title": "As a general rule",
+            "section_title": "What is Matter?",
+            "content": "As a general rule: the more energy particles have, the faster they move and the further apart they spread. Solids have the least particle energy and movement; gases have the most.",
+            "material_id": 2,
+            "order": 3
+          },
+          {
+            "title": "What Is Matter? (Part 1 of 2)",
+            "section_title": "",
+            "content": "Matter is anything that has mass and takes up space.\nYour desk, the air you breathe, the water you drink, and even you are all made of matter.\nScientists sort matter into three common states based on how its particles are arranged and how they move: solid, liquid, and gas.",
+            "material_id": 3,
+            "order": 0
+          },
+          {
+            "title": "What Is Matter? (Part 2 of 2)",
+            "section_title": "",
+            "content": "Each state has its own shape, volume, and particle behavior, but all matter is made of the same kinds of tiny particles — what changes between the states is how closely packed those particles are and how much energy they have.",
+            "material_id": 3,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c39",
+        "concept_id": 39,
+        "title": "Solid",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Solid",
+            "section_title": "Matter",
+            "content": "A solid has a definite shape and a definite volume. Its particles are packed closely together and mainly vibrate in fixed positions. Examples include a stone, pencil, wooden block, and ice cube.",
+            "material_id": 1,
+            "order": 2
+          },
+          {
+            "title": "Solids",
+            "section_title": "Solids",
+            "content": "In a solid, particles are packed tightly together in a fixed, orderly pattern. They vibrate in place but do not move past one another.",
+            "material_id": 2,
+            "order": 4
+          },
+          {
+            "title": "Diagram description (Solids)",
+            "section_title": "Solids",
+            "content": "particles in a solid are drawn as evenly spaced dots arranged in tidy rows and columns, like a grid, showing a fixed, orderly pattern.",
+            "material_id": 2,
+            "order": 5
+          },
+          {
+            "title": "Key properties of solids",
+            "section_title": "Solids",
+            "content": "Has a fixed shape -- it does not change shape unless a force is applied.\nHas a fixed volume -- it takes up the same amount of space no matter what container it is in.\nParticles are tightly packed and only vibrate in place.\nGenerally difficult to compress (squeeze into a smaller space).\nEveryday examples:\nice cubes, a wooden chair, a rock, a coin, and a book.",
+            "material_id": 2,
+            "order": 6
+          },
+          {
+            "title": "Solids (Part 1 of 2)",
+            "section_title": "",
+            "content": "In a solid, particles are packed tightly together in a fixed pattern.\nThey vibrate in place but do not move past one another.\nBecause of this, a solid keeps a definite shape and a definite volume — it does not change shape to fit a container.",
+            "material_id": 3,
+            "order": 2
+          },
+          {
+            "title": "Solids (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday examples:\nAn ice cube keeps its shape whether it sits in a bowl or on a plate.\nA wooden block stays the same size and shape no matter where you put it.\nA rock does not flow or spread out like a liquid would.\nKey idea: solid particles are held in place by strong forces between them, so heating a solid makes the particles vibrate faster until, at the melting point, they break free of their fixed positions and the solid becomes a liquid.",
+            "material_id": 3,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c40",
+        "concept_id": 40,
+        "title": "Liquid",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Liquid",
+            "section_title": "Matter",
+            "content": "A liquid has a definite volume but no definite shape. It flows and takes the shape of its container. Its particles are close together but can slide past one another.\nExamples include water, milk, and cooking oil.",
+            "material_id": 1,
+            "order": 3
+          },
+          {
+            "title": "Liquids",
+            "section_title": "Liquids",
+            "content": "In a liquid, particles are still close together, but they have more energy than in a solid. They can slide past one another, which is why liquids can flow and change shape.",
+            "material_id": 2,
+            "order": 7
+          },
+          {
+            "title": "Diagram description (Liquids)",
+            "section_title": "Liquids",
+            "content": "particles in a liquid are drawn as dots that are close together but scattered in an irregular, flowing arrangement rather than a neat grid, showing that they can move around each other.",
+            "material_id": 2,
+            "order": 8
+          },
+          {
+            "title": "Key properties of liquids",
+            "section_title": "Liquids",
+            "content": "Has no fixed shape -- it takes the shape of its container.\nHas a fixed volume -- the amount of liquid stays the same even if the container changes.\nParticles can slide past each other, allowing the liquid to flow.\nGenerally difficult to compress, though slightly easier than a solid.\nEveryday examples:\nwater, milk, cooking oil, and juice.",
+            "material_id": 2,
+            "order": 9
+          },
+          {
+            "title": "Liquids (Part 1 of 2)",
+            "section_title": "",
+            "content": "In a liquid, particles are still close together, but they are free to slide past one another.\nThis gives a liquid a definite volume but no fixed shape — it takes the shape of whatever container holds it, while the amount of liquid stays the same.",
+            "material_id": 3,
+            "order": 4
+          },
+          {
+            "title": "Liquids (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday examples:\nWater poured from a bottle into a cup changes shape but not amount.\nJuice flows and settles at the bottom of any container you pour it into.\nCooking oil spreads out flat when poured onto a pan.\nKey idea: heating a liquid gives its particles enough energy to escape into the air entirely, a process called evaporation, which turns the liquid into a gas at its boiling point.",
+            "material_id": 3,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": "c41",
+        "concept_id": 41,
+        "title": "Gas",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Gas",
+            "section_title": "Matter",
+            "content": "A gas has no definite shape and no definite volume. It spreads out and fills the available space in its container. Its particles are far apart and move freely. Air and water vapor are examples of gases.",
+            "material_id": 1,
+            "order": 4
+          },
+          {
+            "title": "Gases",
+            "section_title": "Gases",
+            "content": "In a gas, particles have the most energy of the three states. They move quickly in every direction and spread far apart, filling all the space available to them.",
+            "material_id": 2,
+            "order": 10
+          },
+          {
+            "title": "Diagram description (Gases)",
+            "section_title": "Gases",
+            "content": "particles in a gas are drawn as widely spaced dots, each with a short line beside it representing fast, free movement in many directions.",
+            "material_id": 2,
+            "order": 11
+          },
+          {
+            "title": "Key properties of gases",
+            "section_title": "Gases",
+            "content": "Has no fixed shape and no fixed volume -- it spreads out to fill its container completely.\nParticles move quickly and freely, with large spaces between them.\nEasy to compress because there is so much empty space between particles.\nEveryday examples:\nthe air around you, helium in a balloon, and steam rising from a hot drink.",
+            "material_id": 2,
+            "order": 12
+          },
+          {
+            "title": "Gases (Part 1 of 2)",
+            "section_title": "",
+            "content": "In a gas, particles are spread far apart and move quickly in every direction.\nA gas has no definite shape and no definite volume — it expands to completely fill whatever container it is in.",
+            "material_id": 3,
+            "order": 6
+          },
+          {
+            "title": "Gases (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday examples:\nThe air inside a balloon spreads out evenly to fill the whole balloon.\nSteam rising from a hot cup of tea spreads out into the room.\nA helium tank fills every party balloon you attach to it, one at a time.\nKey idea: cooling a gas slows its particles down until they pack close enough together to form a liquid again, a process called condensation.",
+            "material_id": 3,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c6",
+        "concept_id": 6,
+        "title": "Comparing the Three States",
+        "section_title": "Comparing the Three States",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Shape",
+            "section_title": "Comparing the Three States",
+            "content": "Solids keep their shape; liquids and gases take the shape of their container.",
+            "material_id": 1,
+            "order": 5
+          },
+          {
+            "title": "Volume",
+            "section_title": "Comparing the Three States",
+            "content": "Solids and liquids have definite volume; gases expand to fill available space.",
+            "material_id": 1,
+            "order": 6
+          },
+          {
+            "title": "Particle arrangement",
+            "section_title": "Comparing the Three States",
+            "content": "Solid particles are tightly packed, liquid particles are close but mobile, and gas particles are widely spaced.",
+            "material_id": 1,
+            "order": 7
+          },
+          {
+            "title": "Flow",
+            "section_title": "Comparing the Three States",
+            "content": "Liquids and gases can flow, while solids normally do not.",
+            "material_id": 1,
+            "order": 8
+          },
+          {
+            "title": "Comparing the Three States",
+            "section_title": "Comparing the Three States",
+            "content": "The table below summarizes the key differences. Row and column headers are labeled with text so the comparison does not depend on color alone.",
+            "material_id": 2,
+            "order": 13
+          },
+          {
+            "title": "5. Comparing the Three States",
+            "section_title": "Comparing the Three States",
+            "content": "The table shows three columns, labeled ‘Property’, ‘Solid’, ‘Liquid’, and ‘Gas’. The first row lists the properties being compared: shape, volume, particle spacing, particle movement, and compressibility. The ‘Solid’ column indicates that solids have a fixed shape and a fixed volume, with their particles vibrating closely together. In contrast, the ‘Liquid’ column shows that liquids take the shape of their container, maintain a fixed volume, and have particles that slide past each other with a closer spacing than solids, and the ‘Gas’ column indicates that gases take the shape of their container, fill available space, have particles spaced far apart, and move quickly and freely.",
+            "material_id": 2,
+            "order": 14
+          }
+        ]
+      },
+      {
+        "key": "c24",
+        "concept_id": 24,
+        "title": "Comparing the Three States",
+        "section_title": "Comparing the Three States",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Comparing the Three States",
+            "section_title": "Comparing the Three States",
+            "content": "The image shows a table comparing the properties of solids, liquids, and gases. The first column describes solids, noting that their shape is fixed and their volume is also fixed, with particles packed very closely together and vibrating in place as examples. The second column details liquids, indicating that their shape takes the shape of the container they are in, their volume is fixed, and their particles are close together, sliding past each other. Finally, the third column describes gases, showing that they fill the entire container, their volume is not fixed, and their particles are far apart, moving freely and fast.",
+            "material_id": 3,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c26",
+        "concept_id": 26,
+        "title": "Changing From One State to Another",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Changing From One State to Another",
+            "section_title": "",
+            "content": "Adding or removing heat energy can change matter from one state to another. These changes are called changes of state. The names below describe the direction of each change.",
+            "material_id": 2,
+            "order": 15
+          },
+          {
+            "title": "How Matter Changes State",
+            "section_title": "",
+            "content": "Matter can change from one state to another when heat energy is added or removed. Adding heat makes particles move faster and spread apart (melting, then evaporation). Removing heat makes particles slow down and move closer together (condensation, then freezing). These changes are physical changes: the substance is still the same material, just arranged differently.\nMelting — solid to liquid, caused by adding heat.\nFreezing — liquid to solid, caused by removing heat.\nEvaporation — liquid to gas, caused by adding heat.\nCondensation — gas to liquid, caused by removing heat.",
+            "material_id": 3,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c27",
+        "concept_id": 27,
+        "title": "6. Changing From One State to Another",
+        "section_title": "Comparing the Three States",
+        "kind": "image",
+        "members": [
+          {
+            "title": "6. Changing From One State to Another",
+            "section_title": "Comparing the Three States",
+            "content": "The figure shows a table outlining changes between states of matter. It lists four different changes: melting, freezing, evaporating, and condensing. The first entry describes melting, showing a change from a solid to a liquid, and indicates that energy is added, causing the particles to move faster and spread out. The second entry details freezing, where a liquid transforms into a solid, and energy is removed, causing the particles to slow down and lock into place. The third entry explains evaporating or boiling, where a liquid becomes a gas, and energy is added, allowing the particles to move fast enough to escape and spread far apart. Finally, the table shows condensing, where a gas changes back into a liquid, and energy is removed, causing the particles to slow down and move closer together.",
+            "material_id": 2,
+            "order": 16
+          }
+        ]
+      },
+      {
+        "key": "c10",
+        "concept_id": 10,
+        "title": "Everyday Examples",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "An ice cube is a solid, melted ice is liquid water, and water vapor is a gas. These examples show that the same substance can exist in different states. Heating and cooling can cause changes of state, but understanding each state should come first.",
+            "material_id": 1,
+            "order": 9
+          },
+          {
+            "title": "Example (Part 1 of 2)",
+            "section_title": "",
+            "content": "Example: an ice cube (solid) left on a counter absorbs heat from the air.\nIt melts into water (liquid).\nIf that water is heated on a stove until it boils, some of it evaporates into water vapor (gas).",
+            "material_id": 2,
+            "order": 17
+          },
+          {
+            "title": "Example (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday Examples:\nWater is one of the few substances people commonly see in all three states.\nThe table below lists a few examples for each state.\nTry it yourself: look around the room you are in right now and name one solid, one liquid, and one gas you can find nearby.",
+            "material_id": 2,
+            "order": 18
+          }
+        ]
+      },
+      {
+        "key": "c30",
+        "concept_id": 30,
+        "title": "7. Everyday Examples",
+        "section_title": "Everyday Examples",
+        "kind": "image",
+        "members": [
+          {
+            "title": "7. Everyday Examples",
+            "section_title": "Everyday Examples",
+            "content": "The table is arranged into three columns, labelled ‘Solid’, ‘Liquid’, and ‘Gas’. The first column lists ice, wood, rock, and a metal spoon, while the second column lists water, cooking oil, milk, and juice. The third column lists water vapor or steam, helium, air, and carbon dioxide in soda. Each row shows a different example of a substance in one of the three states of matter, with ice and water being the first, wood and cooking oil the second, and rock and milk the third. The final row shows the metal spoon and juice, representing the last of the three states of matter.",
+            "material_id": 2,
+            "order": 19
+          }
+        ]
+      },
+      {
+        "key": "c31",
+        "concept_id": 31,
+        "title": "Summary: what to remember (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Summary: what to remember (Part 1 of 2)",
+            "section_title": "",
+            "content": "Matter is made of particles and commonly exists as a solid, liquid, or gas.\nSolids hold a fixed shape and volume because their particles are tightly packed.\nLiquids keep a fixed volume but flow to fit their container because their particles can slide past each other.",
+            "material_id": 2,
+            "order": 20
+          },
+          {
+            "title": "Summary: what to remember (Part 2 of 2)",
+            "section_title": "",
+            "content": "Gases have no fixed shape or volume because their particles move quickly and spread far apart.\nAdding or removing heat energy can change matter from one state to another through melting, freezing, evaporating, and condensing.",
+            "material_id": 2,
+            "order": 21
+          }
+        ]
+      }
+    ],
+    "10": [
+      {
+        "key": "c84",
+        "concept_id": 84,
+        "title": "Each technique takes advantage of a different property of the components",
+        "section_title": "WINNOWING",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Each technique takes advantage of a different property of the components",
+            "section_title": "WINNOWING",
+            "content": "The figure shows four different methods for separating mixtures. First, there’s decantation, which shows a liquid being poured off, with heavier solids sinking to the bottom. Second, filtering demonstrates a container with a filter that traps solids but allows the liquid to pass through. Third, evaporation is depicted with water leaving as vapor, and the dissolved solid is left behind. Finally, scooping illustrates a floating layer being lifted with a spoon.",
+            "material_id": 5,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": "c85",
+        "concept_id": 85,
+        "title": "Why Mixtures Can Be Separated",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Why Mixtures Can Be Separated",
+            "section_title": "",
+            "content": "Because the components of a mixture are only physically combined, each one keeps its own properties.",
+            "material_id": 5,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c86",
+        "concept_id": 86,
+        "title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+        "section_title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+            "section_title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+            "content": "handled one at a time. Removing small stones from rice before cooking, taking the bones out of fried fish, and sorting good mongo seeds from damaged ones are all examples of picking.",
+            "material_id": 5,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": "c87",
+        "concept_id": 87,
+        "title": "Sieving separates solids of different particle sizes using a sieve, strainer, or screen. The finer",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Sieving separates solids of different particle sizes using a sieve, strainer, or screen. The finer",
+            "section_title": "",
+            "content": "particles fall through the holes while the larger ones stay behind. Sifting flour to remove lumps, screening sand at a construction site, and straining brewed tea leaves from the liquid all use sieving.",
+            "material_id": 5,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c88",
+        "concept_id": 88,
+        "title": "Winnowing separates light components from heavy ones using moving air. Farmers toss threshed",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Winnowing separates light components from heavy ones using moving air. Farmers toss threshed",
+            "section_title": "",
+            "content": "rice into the air using a bilao; the wind carries away the light husks or ipa while the heavier grains fall back into the tray. The same principle is used when separating chaff from mongo or corn.",
+            "material_id": 5,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": "c89",
+        "concept_id": 89,
+        "title": "Scooping removes a component that has floated to the surface. Skimming the fat from a pot of",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Scooping removes a component that has floated to the surface. Skimming the fat from a pot of",
+            "section_title": "",
+            "content": "sabaw, lifting oil off the top of water, and gathering leaves from the surface of a pail all use scooping.",
+            "material_id": 5,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": "c90",
+        "concept_id": 90,
+        "title": "Decantation separates a liquid from a solid that has settled, or two liquids that do not mix. The",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Decantation separates a liquid from a solid that has settled, or two liquids that do not mix. The",
+            "section_title": "",
+            "content": "mixture is left to stand until the heavier component sinks, then the upper liquid is poured off carefully without disturbing the layer below. Rinsing rice, letting muddy water settle before pouring off the clear part, and separating oil from water all use decantation.",
+            "material_id": 5,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": "c91",
+        "concept_id": 91,
+        "title": "Filtering uses a filter paper, cloth, or fine mesh through which the liquid passes while the solid is",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Filtering uses a filter paper, cloth, or fine mesh through which the liquid passes while the solid is",
+            "section_title": "",
+            "content": "trapped. It catches particles too fine to remove by decantation. Brewing coffee through a cloth strainer, straining gata from grated coconut, and using a household water filter are all examples.",
+            "material_id": 5,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c92",
+        "concept_id": 92,
+        "title": "Evaporation recovers a dissolved solid from a solution by heating the liquid or leaving it under the",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Evaporation recovers a dissolved solid from a solution by heating the liquid or leaving it under the",
+            "section_title": "",
+            "content": "sun until the liquid escapes as vapor, leaving the solid behind. This is exactly how asin is produced in the salt beds of Pangasinan and other coastal provinces: seawater is led into shallow ponds, the sun evaporates the water, and salt crystals remain.",
+            "material_id": 5,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c93",
+        "concept_id": 93,
+        "title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+        "section_title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+            "section_title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+            "content": "attracted to magnets. A magnet passed over a mixture of iron filings and sand lifts out the iron and leaves the sand. Junk shops and recycling facilities use large magnets to pull steel out of mixed scrap.",
+            "material_id": 5,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c94",
+        "concept_id": 94,
+        "title": "Choosing the Right Technique",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Choosing the Right Technique",
+            "section_title": "",
+            "content": "Some mixtures need more than one technique used in order. To recover both the salt and the sand from a mixture of salt, sand, and water, a learner would first filter the mixture to trap the sand, then evaporate the filtered liquid to recover the salt. Planning the correct sequence is the most demanding part of this competency.",
+            "material_id": 5,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": "c95",
+        "concept_id": 95,
+        "title": "Choosing the Right Technique",
+        "section_title": "Choosing the Right Technique",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Choosing the Right Technique",
+            "section_title": "Choosing the Right Technique",
+            "content": "The figure shows a table detailing how to separate different mixtures. The first entry describes rice mixed with small stones, where the technique used is picking, indicating the stones are noticeably different in appearance and size compared to the rice. The second entry shows flour with lumps, and the best technique to use is sieving, which suggests the lumps are larger than the normal particle size of the flour. The third entry illustrates palay with ipa husks, and the appropriate method is winnowing, signifying that the weight of the husks is different from the palay. The fourth entry details sabaw with fat on top, where the fat floats, and scooping is the technique used to separate it. The fifth entry describes sand and water, where the sand settles, and decantation is the method employed.",
+            "material_id": 5,
+            "order": 11
+          }
+        ]
+      },
+      {
+        "key": "c96",
+        "concept_id": 96,
+        "title": "Benefits of Separating Mixtures (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Benefits of Separating Mixtures (Part 1 of 2)",
+            "section_title": "",
+            "content": "Separation is not a classroom exercise only; it is how many useful products are made.\nIt gives us clean drinking water from cloudy sources, salt from seawater, gata from grated coconut, cooking oil from crushed seeds, and clean rice ready for the pot.",
+            "material_id": 5,
+            "order": 12
+          },
+          {
+            "title": "Benefits of Separating Mixtures (Part 2 of 2)",
+            "section_title": "",
+            "content": "It allows recyclable metal to be recovered from mixed waste, and it is the reason a school can turn segregated waste into something valuable.\nIn every case, separating a mixture takes something useful out of something that was not yet usable.",
+            "material_id": 5,
+            "order": 13
+          }
+        ]
+      }
+    ]
+  }
+}

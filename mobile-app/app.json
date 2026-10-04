@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "MAVIA",
+    "slug": "mavia-mobile",
+    "scheme": "mavia",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mavia.app"
+    },
+    "android": {
+      "package": "com.mavia.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0b2a4a"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-asset",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "MAVIA listens for spoken commands like \"please repeat\" so you can hear a lesson again.",
+          "speechRecognitionPermission": "MAVIA listens for spoken commands like \"please repeat\" so you can hear a lesson again.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ]
+    ]
+  }
+}

@@ -1,0 +1,106 @@
+/* Course path page: topic boxes and the side panel. Arrow colours live in coursePathModel.js. */
+.cp-layout { display: grid; grid-template-columns: 1fr minmax(260px, 340px); gap: 1rem; margin-top: 1rem; }
+.cp-layout > .pg-canvas:only-child { grid-column: 1 / -1; }
+.cp-topic {
+  width: 220px; min-height: 60px; box-sizing: border-box; display: grid; grid-template-columns: auto 1fr;
+  gap: 0.5rem; align-items: center; padding: 0.5rem 0.65rem; border: 2px solid #1f2a37; border-radius: 10px;
+  background: #fff; color: #1f2a37; font-size: 0.85rem;
+}
+.cp-topic.empty { border-style: dashed; color: #8a96a3; border-color: #b8c2cc; background: #f7f9fb; }
+.cp-topic-position { font-weight: 700; }
+.cp-panel { align-self: start; }
+.cp-warning { color: #b3261e; }
+.cp-link { margin-bottom: 0.75rem; }
+.cp-link-status { margin-left: 0.5rem; font-size: 0.75rem; text-transform: uppercase; color: #5b6b7b; }
+@media (max-width: 900px) { .cp-layout { grid-template-columns: 1fr; } }
+.cp-order { margin-top: 1rem; }
+.cp-order-topics { padding-left: 1.25rem; }
+.cp-order-topics > li { margin-bottom: 1rem; }
+.cp-order-topics h4 { margin: 0.5rem 0; }
+.cp-unpublished { margin-left: 0.5rem; font-size: 0.75rem; font-weight: 400; color: #5b6b7b; }
+.cp-order-steps { padding-left: 1.25rem; }
+.cp-order-steps > li { margin-bottom: 0.4rem; }
+.cp-step-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.25rem 0 0 0.5rem; font-size: 0.85rem; }
+.cp-step-label { color: #5b6b7b; }
+.cp-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.4rem; border-radius: 6px; border: 1px solid #c9d2db; }
+.cp-chip.accepted, .cp-chip.approved { border-color: #2f6f4f; }
+.cp-chip.pending { border-color: #b8860b; border-style: dashed; }
+
+/* The shell is pinned to the window and never scrolls (refresh.css, "The window is
+   the window"); the graph and the learning-order list scroll together inside
+   .cp-page, and the canvas keeps a bounded height of its own -- the same pattern
+   as the topic-level learning path page. */
+.app-shell > .cp-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.cp-page > .cp-layout { margin-top: 0; }
+.cp-page > .cp-layout > .pg-canvas { height: min(62vh, 620px); min-height: 360px; }
+.cp-page > .cp-layout > .cp-panel { max-height: min(62vh, 620px); }
+.app-shell > .cp-page::-webkit-scrollbar { width: 10px; }
+.app-shell > .cp-page::-webkit-scrollbar-thumb {
+  background: rgba(20, 24, 31, 0.18); border-radius: 999px; border: 3px solid transparent; background-clip: content-box;
+}
+
+/* The arrow dialog (CourseArrowDialog.jsx): opened by clicking an arrow, sized
+   to most of the screen; each link is one full-width row, rows divided by a
+   rule. Sits under the confirm dialog, which shares the backdrop class and
+   comes later in the page. */
+.cad-backdrop { z-index: 45; padding: 24px; }
+.cad-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1240px, calc(100vw - 48px));
+  height: min(72vh, 720px);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 20px 50px rgba(11, 42, 74, 0.2);
+  overflow: hidden;
+}
+.cad-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid #e3e9f0;
+}
+.cad-head h3 { margin: 0; font-size: 1.2rem; line-height: 1.3; color: #12212f; }
+.cad-summary { margin: 0.3rem 0 0; font-size: 0.88rem; color: #5c6b7c; }
+.cad-warning { margin: 0.9rem 1.5rem 0; font-size: 0.88rem; color: #b3261e; }
+.cad-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.5rem 1.5rem 1.5rem;
+}
+.cad-group { margin-top: 1rem; }
+.cad-group h4 { margin: 0 0 0.25rem; font-size: 0.95rem; color: #12212f; }
+.cad-list { list-style: none; margin: 0; padding: 0; }
+.cad-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.1fr) minmax(260px, 2fr) auto;
+  gap: 1.25rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.9rem 0;
+  border-top: 1px solid #e3e9f0;
+}
+.cad-list > .cad-row:last-child { border-bottom: 1px solid #e3e9f0; }
+.cad-pair { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+.cad-pair-arrow { flex: none; color: #8a96a3; }
+.cad-concept { display: grid; gap: 0.1rem; min-width: 0; }
+.cad-concept-title { font-weight: 600; color: #12212f; overflow-wrap: anywhere; }
+.cad-concept-topic { font-size: 0.78rem; color: #5c6b7c; overflow-wrap: anywhere; }
+.cad-reason { margin: 0; font-size: 0.86rem; line-height: 1.45; color: #3a4a5a; }
+.cad-side { display: grid; justify-items: end; gap: 0.4rem; }
+.cad-status { font-size: 0.8rem; color: #5c6b7c; white-space: nowrap; }
+.cad-actions { display: flex; gap: 0.5rem; }
+@media (max-width: 860px) {
+  .cad-row { grid-template-columns: 1fr; gap: 0.5rem; }
+  .cad-side { justify-items: start; }
+  .cad-dialog { height: calc(100vh - 32px); }
+}

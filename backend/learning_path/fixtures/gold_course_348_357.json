@@ -1,0 +1,483 @@
+{
+  "topics": [
+    348,
+    357
+  ],
+  "required": [],
+  "unrelated": true,
+  "_note": "Unrelated control (different subjects: topic 348 is materials/matter, 357 is flowering-plant reproduction); no key needed, every accepted link is an error.",
+  "concepts": {
+    "348": [
+      {
+        "key": null,
+        "concept_id": 942,
+        "title": "Each technique takes advantage of a different property of the components",
+        "section_title": "WINNOWING",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Each technique takes advantage of a different property of the components",
+            "section_title": "WINNOWING",
+            "content": "The figure shows four different methods for separating mixtures. First, there’s decantation, which demonstrates pouring off the clear liquid, allowing heavier solids to settle at the bottom. Second, filtering shows a container with a filter that traps solids but allows the liquid to pass through. Third, evaporation is depicted with a container of water that is heating up, causing the water to leave as vapor and leaving the dissolved solid behind. Finally, scooping is shown with a container where one part of the mixture floats on top, and you lift that floating layer.",
+            "material_id": 70,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 943,
+        "title": "Why Mixtures Can Be Separated",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Why Mixtures Can Be Separated",
+            "section_title": "",
+            "content": "Because the components of a mixture are only physically combined, each one keeps its own properties.",
+            "material_id": 70,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 944,
+        "title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+        "section_title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+            "section_title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+            "content": "handled one at a time. Removing small stones from rice before cooking, taking the bones out of fried fish, and sorting good mongo seeds from damaged ones are all examples of picking.",
+            "material_id": 70,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 945,
+        "title": "Sieving separates solids of different particle sizes using a sieve, strainer, or screen. The finer",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Sieving separates solids of different particle sizes using a sieve, strainer, or screen. The finer",
+            "section_title": "",
+            "content": "particles fall through the holes while the larger ones stay behind. Sifting flour to remove lumps, screening sand at a construction site, and straining brewed tea leaves from the liquid all use sieving.",
+            "material_id": 70,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 946,
+        "title": "Winnowing separates light components from heavy ones using moving air. Farmers toss threshed",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Winnowing separates light components from heavy ones using moving air. Farmers toss threshed",
+            "section_title": "",
+            "content": "rice into the air using a bilao; the wind carries away the light husks or ipa while the heavier grains fall back into the tray. The same principle is used when separating chaff from mongo or corn.",
+            "material_id": 70,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 947,
+        "title": "Scooping removes a component that has floated to the surface. Skimming the fat from a pot of",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Scooping removes a component that has floated to the surface. Skimming the fat from a pot of",
+            "section_title": "",
+            "content": "sabaw, lifting oil off the top of water, and gathering leaves from the surface of a pail all use scooping.",
+            "material_id": 70,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 948,
+        "title": "Decantation separates a liquid from a solid that has settled, or two liquids that do not mix. The",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Decantation separates a liquid from a solid that has settled, or two liquids that do not mix. The",
+            "section_title": "",
+            "content": "mixture is left to stand until the heavier component sinks, then the upper liquid is poured off carefully without disturbing the layer below. Rinsing rice, letting muddy water settle before pouring off the clear part, and separating oil from water all use decantation.",
+            "material_id": 70,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 949,
+        "title": "Filtering uses a filter paper, cloth, or fine mesh through which the liquid passes while the solid is",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Filtering uses a filter paper, cloth, or fine mesh through which the liquid passes while the solid is",
+            "section_title": "",
+            "content": "trapped. It catches particles too fine to remove by decantation. Brewing coffee through a cloth strainer, straining gata from grated coconut, and using a household water filter are all examples.",
+            "material_id": 70,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 950,
+        "title": "Evaporation recovers a dissolved solid from a solution by heating the liquid or leaving it under the",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Evaporation recovers a dissolved solid from a solution by heating the liquid or leaving it under the",
+            "section_title": "",
+            "content": "sun until the liquid escapes as vapor, leaving the solid behind. This is exactly how asin is produced in the salt beds of Pangasinan and other coastal provinces: seawater is led into shallow ponds, the sun evaporates the water, and salt crystals remain.",
+            "material_id": 70,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 951,
+        "title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+        "section_title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+            "section_title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+            "content": "attracted to magnets. A magnet passed over a mixture of iron filings and sand lifts out the iron and leaves the sand. Junk shops and recycling facilities use large magnets to pull steel out of mixed scrap.",
+            "material_id": 70,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 952,
+        "title": "Choosing the Right Technique",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Choosing the Right Technique",
+            "section_title": "",
+            "content": "Some mixtures need more than one technique used in order. To recover both the salt and the sand from a mixture of salt, sand, and water, a learner would first filter the mixture to trap the sand, then evaporate the filtered liquid to recover the salt. Planning the correct sequence is the most demanding part of this competency.",
+            "material_id": 70,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 953,
+        "title": "Choosing the Right Technique",
+        "section_title": "Choosing the Right Technique",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Choosing the Right Technique",
+            "section_title": "Choosing the Right Technique",
+            "content": "The figure shows a table outlining techniques for separating mixtures. The first entry details rice mixed with small stones, where the differing property is appearance and size, and the best technique is picking up the stones. The second entry shows flour with lumps, where the differing property is particle size, and the best technique is sieving the flour to remove the lumps. The third entry describes palay mixed with husks, where the differing property is weight, and the best technique is winnowing, which involves tossing the mixture to allow the lighter husks to blow away. The fourth entry details sabaw with fat on top, where the differing property is the fat’s position, and the best technique is scooping the fat from the top. The fifth entry shows sand and water, where the sand settles, and the best technique is decantation, which involves carefully pouring off the water leaving the sand behind.",
+            "material_id": 70,
+            "order": 11
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 954,
+        "title": "Benefits of Separating Mixtures (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Benefits of Separating Mixtures (Part 1 of 2)",
+            "section_title": "",
+            "content": "Separation is not a classroom exercise only; it is how many useful products are made.\nIt gives us clean drinking water from cloudy sources, salt from seawater, gata from grated coconut, cooking oil from crushed seeds, and clean rice ready for the pot.",
+            "material_id": 70,
+            "order": 12
+          },
+          {
+            "title": "Benefits of Separating Mixtures (Part 2 of 2)",
+            "section_title": "",
+            "content": "It allows recyclable metal to be recovered from mixed waste, and it is the reason a school can turn segregated waste into something valuable.\nIn every case, separating a mixture takes something useful out of something that was not yet usable.",
+            "material_id": 70,
+            "order": 13
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 956,
+        "title": "Place the filtered liquid in the shallow pan and leave it under the sun, or heat it gently under your teacher's",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Place the filtered liquid in the shallow pan and leave it under the sun, or heat it gently under your teacher's",
+            "section_title": "",
+            "content": "supervision. Record what is left after the water is gone.",
+            "material_id": 70,
+            "order": 14
+          }
+        ]
+      }
+    ],
+    "357": [
+      {
+        "key": null,
+        "concept_id": 873,
+        "title": "The main parts of a flower involved in reproduction",
+        "section_title": "Flowering Plants",
+        "kind": "image",
+        "members": [
+          {
+            "title": "The main parts of a flower involved in reproduction",
+            "section_title": "Flowering Plants",
+            "content": "The image shows the key components of a flower involved in reproduction. At the top, the stamen is positioned first, consisting of a filament supporting an anther, which produces pollen. Below the stamen is the pistil, comprising the ovary and style, with the style leading to an ovule within the ovary, where egg cells are stored. The petals and sepals surround these central parts of the flower, providing protection and attracting pollinators.",
+            "material_id": 65,
+            "order": 0
+          },
+          {
+            "title": "The main parts of a flower involved in reproduction",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The image shows a flower with several distinct parts arranged around a central core. At the top, there are multiple, slender stalks, called filaments, supporting a cluster of small, rounded structures – these are the anthers, which produce pollen. Below the anthers, and extending downwards, is a central, elongated structure – the pistil – which is composed of a sticky, top part called the stigma, and a shorter, tube-like section known as the style. At the base of the pistil is a swollen, rounded structure called the ovary, which contains the egg cells.",
+            "material_id": 66,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 874,
+        "title": "Reproduction in Flowering Plants",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Reproduction in Flowering Plants",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell. Most of this activity happens inside the flower, which is the reproductive part of the plant. A single flower can contain both male and female parts, and these parts work together so that seeds can form. Seeds later grow into new plants, allowing the species to continue.",
+            "material_id": 65,
+            "order": 1
+          },
+          {
+            "title": "Reproduction in Flowering Plants (Part 1 of 2)",
+            "section_title": "",
+            "content": "Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell.\nMost of this activity happens inside the flower, which is the reproductive part of the plant.",
+            "material_id": 66,
+            "order": 0
+          },
+          {
+            "title": "Reproduction in Flowering Plants (Part 2 of 2)",
+            "section_title": "",
+            "content": "A single flower can contain both male and female parts, and these parts work together so that seeds can form.\nSeeds later grow into new plants, allowing the species to continue.\nMale parts (the stamen) produce pollen; female parts (the pistil) hold the egg cells.",
+            "material_id": 66,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 894,
+        "title": "Stamen (Male Part)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Stamen (Male Part)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+            "material_id": 65,
+            "order": 2
+          },
+          {
+            "title": "Stamen (Male Part)",
+            "section_title": "Stamen (Male Part)",
+            "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+            "material_id": 66,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 895,
+        "title": "Pistil (Female Part)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pistil (Female Part)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+            "material_id": 65,
+            "order": 3
+          },
+          {
+            "title": "Pistil (Female Part)",
+            "section_title": "Pistil (Female Part)",
+            "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+            "material_id": 66,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 896,
+        "title": "Petals and Sepals (Supporting Parts)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Petals and Sepals (Supporting Parts)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud.\nThese parts do not make sex cells, but they help reproduction succeed.",
+            "material_id": 65,
+            "order": 4
+          },
+          {
+            "title": "Petals and Sepals (Supporting Parts)",
+            "section_title": "Petals and Sepals (Supporting Parts)",
+            "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud. These parts do not make sex cells, but they help reproduction succeed.",
+            "material_id": 66,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 878,
+        "title": "Pollination",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pollination",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+            "material_id": 65,
+            "order": 5
+          },
+          {
+            "title": "Pollination",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+            "material_id": 66,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 897,
+        "title": "Fertilization",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Fertilization",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+            "material_id": 65,
+            "order": 6
+          },
+          {
+            "title": "Fertilization",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+            "material_id": 66,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 898,
+        "title": "Seed formation",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Seed formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+            "material_id": 65,
+            "order": 7
+          },
+          {
+            "title": "Seed formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+            "material_id": 66,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 899,
+        "title": "Fruit formation",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Fruit formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+            "material_id": 65,
+            "order": 8
+          },
+          {
+            "title": "Fruit formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+            "material_id": 66,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 882,
+        "title": "Everyday Examples",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+            "material_id": 65,
+            "order": 9
+          },
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+            "material_id": 66,
+            "order": 10
+          }
+        ]
+      }
+    ]
+  }
+}

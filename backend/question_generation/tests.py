@@ -1,0 +1,589 @@
+from unittest.mock import Mock, patch
+
+from django.test import TestCase
+from rest_framework import status
+from lessons.tests import authenticated_api_client
+
+from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
+from lessons.services.audio_generator import generate_material_audio_playlist
+
+from .models import GeneratedQuestion, GenerationRun
+from .services.pipeline import (
+    _draft_questions_for_node,
+    finalize_node_questions,
+    QUESTION_DISTRIBUTION,
+    generate_questions_for_material,
+)
+from .services.question_generator import question_bank_fingerprint
+
+
+class _StubClassifier:
+    """Returns a canned classification per question text."""
+
+    def __init__(self, by_text, default=("understand", "LOT", "Meaning")):
+        self.by_text = by_text
+        self.default = default
+
+    def classify(self, question_text):
+        bloom, order, category = self.by_text.get(question_text, self.default)
+        return {"bloom_level": bloom, "thinking_order": order, "category": category}
+
+
+def _draft(node, question_text, question_format="TF", correct_answer="True"):
+    return GeneratedQuestion.objects.create(
+        node=node,
+        question_text=question_text,
+        question_format=question_format,
+        correct_answer=correct_answer,
+        status="draft",
+    )
+
+
+class QuestionGenerationScopeTests(TestCase):
+    def setUp(self):
+        self.course = CourseGroup.objects.create(title="Science")
+        self.material = LearningMaterial.objects.create(
+            course=self.course,
+            title="Matter",
+            pdf_file="learning_materials/matter.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+            generated_json={
+                "audio_playlist_generated": True,
+                "lesson_playlist": [
+                    {
+                        "title": "First Node",
+                        "audio_url": "/media/audio_lessons/material_1/playlist_item_1.mp3",
+                    }
+                ],
+            },
+        )
+        self.first_node = LearningObject.objects.create(
+            material=self.material,
+            kind=LearningObject.Kind.TEXT,
+            title="First Node",
+            content="First content",
+            order=0,
+        )
+        self.second_node = LearningObject.objects.create(
+            material=self.material,
+            kind=LearningObject.Kind.TEXT,
+            title="Second Node",
+            content="Second content",
+            order=1,
+        )
+        self.existing_second_question = GeneratedQuestion.objects.create(
+            node=self.second_node,
+            question_text="Existing second question?",
+            question_format="TF",
+            correct_answer="True",
+            bloom_level="remember",
+            thinking_order="LOT",
+            category="Facts and Information",
+            status="final",
+        )
+
+    def test_node_scoped_generation_does_not_touch_other_nodes(self):
+        generated = [
+            GeneratedQuestion(
+                node=self.first_node,
+                question_text="Generated first question?",
+                question_format="TF",
+                correct_answer="True",
+                bloom_level="remember",
+                thinking_order="LOT",
+                category="Facts and Information",
+                status="final",
+            )
+        ]
+        generated[0].save()
+
+        with patch(
+            "question_generation.services.pipeline._get_classifier",
+            return_value=Mock(),
+        ), patch(
+            "question_generation.services.pipeline.generate_questions_for_node",
+            return_value=generated,
+        ) as generate_node:
+            result = generate_questions_for_material(
+                self.material,
+                node_ids=[self.first_node.id],
+            )
+
+        self.assertEqual(result, generated)
+        generate_node.assert_called_once()
+        self.assertEqual(
+            list(self.first_node.generated_questions.values_list("question_text", flat=True)),
+            ["Generated first question?"],
+        )
+        self.assertEqual(
+            list(self.second_node.generated_questions.values_list("id", flat=True)),
+            [self.existing_second_question.id],
+        )
+
+    def _complete_current_bank(self, node):
+        fingerprint = question_bank_fingerprint(node.content, QUESTION_DISTRIBUTION)
+        questions = []
+        for thinking_order in ("LOT", "HOT"):
+            for index in range(3):
+                questions.append(GeneratedQuestion.objects.create(
+                    node=node,
+                    question_text=f"{thinking_order} question {index}?",
+                    question_format="TF",
+                    correct_answer="True",
+                    bloom_level="remember" if thinking_order == "LOT" else "analyze",
+                    thinking_order=thinking_order,
+                    category="Facts and Information",
+                    status="final",
+                    generation_fingerprint=fingerprint,
+                ))
+        return questions
+
+    def test_generate_all_reuses_complete_unchanged_bank(self):
+        expected = self._complete_current_bank(self.first_node)
+        with patch(
+            "question_generation.services.pipeline.generate_questions_for_node"
+        ) as generate_node, patch(
+            "question_generation.services.pipeline._get_classifier"
+        ) as classifier:
+            result = generate_questions_for_material(
+                self.material,
+                node_ids=[self.first_node.id],
+                skip_complete=True,
+            )
+
+        self.assertEqual([q.id for q in result], [q.id for q in expected])
+        generate_node.assert_not_called()
+        classifier.assert_not_called()
+
+    def test_changed_content_invalidates_complete_bank(self):
+        self._complete_current_bank(self.first_node)
+        self.first_node.content += " Updated source content."
+        self.first_node.save(update_fields=["content"])
+
+        with patch(
+            "question_generation.services.pipeline.generate_questions_for_node",
+            return_value=[],
+        ) as generate_node, patch(
+            "question_generation.services.pipeline._get_classifier",
+            return_value=Mock(),
+        ):
+            generate_questions_for_material(
+                self.material,
+                node_ids=[self.first_node.id],
+                skip_complete=True,
+            )
+
+        generate_node.assert_called_once()
+
+    def test_explicit_generation_does_not_skip_complete_bank(self):
+        self._complete_current_bank(self.first_node)
+        with patch(
+            "question_generation.services.pipeline.generate_questions_for_node",
+            return_value=[],
+        ) as generate_node, patch(
+            "question_generation.services.pipeline._get_classifier",
+            return_value=Mock(),
+        ):
+            generate_questions_for_material(
+                self.material,
+                node_ids=[self.first_node.id],
+                skip_complete=False,
+            )
+
+        generate_node.assert_called_once()
+
+    def test_interrupted_generation_resumes_saved_drafts_and_only_calls_missing_order(self):
+        fingerprint = question_bank_fingerprint(
+            self.first_node.content,
+            QUESTION_DISTRIBUTION,
+        )
+        lot_questions = [
+            {
+                "question": f"LOT question {index}?",
+                "format": "MCQ" if index < 2 else "TF",
+                "choices": (
+                    {"A": "One", "B": "Two", "C": "Three", "D": "Four"}
+                    if index < 2 else None
+                ),
+                "correct_answer": "A" if index < 2 else "True",
+                "explanation": "Because the source says so.",
+            }
+            for index in range(3)
+        ]
+        hot_questions = [
+            {
+                "question": f"HOT question {index}?",
+                "format": "MCQ",
+                "choices": {"A": "One", "B": "Two", "C": "Three", "D": "Four"},
+                "correct_answer": "A",
+                "explanation": "Because the source says so.",
+            }
+            for index in range(3)
+        ]
+        classifier = _StubClassifier({})
+
+        with patch(
+            "question_generation.services.pipeline.generate_questions",
+            side_effect=[lot_questions, TimeoutError("interrupted")],
+        ):
+            with self.assertRaises(TimeoutError):
+                _draft_questions_for_node(
+                    self.first_node,
+                    classifier,
+                    generation_fingerprint=fingerprint,
+                )
+
+        saved_ids = list(self.first_node.generated_questions.values_list("id", flat=True))
+        self.assertEqual(len(saved_ids), 3)
+        self.assertEqual(
+            set(self.first_node.generated_questions.values_list("thinking_order", flat=True)),
+            {"LOT"},
+        )
+
+        with patch(
+            "question_generation.services.pipeline.generate_questions",
+            return_value=hot_questions,
+        ) as generate:
+            draft_count = _draft_questions_for_node(
+                self.first_node,
+                classifier,
+                generation_fingerprint=fingerprint,
+            )
+
+        self.assertEqual(generate.call_count, 1)
+        self.assertEqual(generate.call_args.kwargs["thinking_order"], "HOT")
+        self.assertEqual(draft_count, 6)
+        self.assertTrue(
+            set(saved_ids).issubset(
+                set(self.first_node.generated_questions.values_list("id", flat=True))
+            )
+        )
+
+    def test_finalize_labels_drafts_with_thinking_order_and_promotes_them(self):
+        _draft(self.first_node, "What is matter?")
+        _draft(self.first_node, "Why is ice less dense than water?")
+
+        classifier = _StubClassifier({
+            "What is matter?": ("remember", "LOT", "Facts and Information"),
+            "Why is ice less dense than water?": ("analyze", "HOT", "Skills"),
+        })
+        finalize_node_questions(self.first_node, classifier)
+
+        stored = {q.question_text: q for q in self.first_node.generated_questions.all()}
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(stored["What is matter?"].thinking_order, "LOT")
+        self.assertEqual(stored["What is matter?"].bloom_level, "remember")
+        self.assertEqual(stored["Why is ice less dense than water?"].thinking_order, "HOT")
+        self.assertEqual(stored["Why is ice less dense than water?"].bloom_level, "analyze")
+        self.assertTrue(all(q.status == "final" for q in stored.values()))
+
+    def test_finalize_excludes_create_level_drafts(self):
+        _draft(self.first_node, "Design an experiment about matter.")
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier({
+            "Design an experiment about matter.": ("create", None, "Outcome"),
+            "What is matter?": ("remember", "LOT", "Facts and Information"),
+        })
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertEqual(
+            list(self.first_node.generated_questions.values_list("question_text", flat=True)),
+            ["What is matter?"],
+        )
+
+    def test_finalize_removes_duplicate_drafts(self):
+        _draft(self.first_node, "What is matter?")
+        _draft(self.first_node, "what is  MATTER")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertEqual(self.first_node.generated_questions.count(), 1)
+
+    def test_finalize_trims_surplus_beyond_the_target_count(self):
+        for index in range(8):
+            _draft(self.first_node, f"Recall question number {index}?")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        # Read the cap from the configuration rather than restating it, so
+        # tuning the counts does not turn into a failing test.
+        self.assertEqual(
+            self.first_node.generated_questions.count(),
+            QUESTION_DISTRIBUTION["LOT"]["count"],
+        )
+
+    def test_finalize_replaces_the_previous_runs_questions(self):
+        old = GeneratedQuestion.objects.create(
+            node=self.first_node,
+            question_text="Question from an earlier run?",
+            question_format="TF",
+            correct_answer="True",
+            bloom_level="remember",
+            thinking_order="LOT",
+            category="Facts and Information",
+            status="final",
+        )
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertFalse(GeneratedQuestion.objects.filter(id=old.id).exists())
+
+    def test_normal_regeneration_removes_question_banks_from_other_group_variants(self):
+        outline_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Matter topic",
+            order=0,
+        )
+        self.material.outline_node = outline_node
+        self.material.save(update_fields=["outline_node"])
+        group = LearningObjectGroup.objects.create(outline_node=outline_node, label="Matter")
+        LearningObject.objects.filter(pk__in=[self.first_node.id, self.second_node.id]).update(
+            group=group,
+        )
+        self.first_node.refresh_from_db()
+        self.second_node.refresh_from_db()
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier(
+            {},
+            default=("remember", "LOT", "Facts and Information"),
+        )
+        finalize_node_questions(self.first_node, classifier)
+
+        self.assertFalse(
+            GeneratedQuestion.objects.filter(pk=self.existing_second_question.id).exists(),
+        )
+        self.assertEqual(
+            list(self.first_node.generated_questions.values_list("question_text", flat=True)),
+            ["What is matter?"],
+        )
+    def test_finalize_marks_existing_audio_stale(self):
+        _draft(self.first_node, "What is matter?")
+
+        classifier = _StubClassifier({}, default=("remember", "LOT", "Facts and Information"))
+        finalize_node_questions(self.first_node, classifier)
+
+        self.material.refresh_from_db()
+        self.assertFalse(self.material.generated_json["audio_playlist_generated"])
+
+    @patch("lessons.services.audio_generator.synthesize_text_to_audio")
+    def test_lesson_audio_scope_preserves_existing_question_tracks(self, mock_synthesize):
+        mock_synthesize.side_effect = lambda _text, path: path.with_suffix(".mp3")
+        self.material.generated_json = {
+            "narration_script": [
+                {"order": 1, "content": "First lesson narration."},
+            ],
+            "lesson_playlist": [
+                {"title": "First Node", "type": None, "narration_item_order": 1},
+                {
+                    "title": "Question 1",
+                    "type": "practice_question",
+                    "question_id": 10,
+                    "audio_url": "/media/audio_lessons/material_1/question_10.mp3",
+                    "audio_file": "audio_lessons/material_1/question_10.mp3",
+                },
+            ],
+            "question_audio_generated": True,
+        }
+        self.material.save(update_fields=["generated_json"])
+
+        result = generate_material_audio_playlist(self.material, scope="lessons")
+
+        self.assertEqual(result["generated_count"], 1)
+        self.material.refresh_from_db()
+        playlist = self.material.generated_json["lesson_playlist"]
+        self.assertTrue(
+            playlist[0]["audio_url"].startswith(
+                f"/media/audio_lessons/material_{self.material.id}/"
+            )
+        )
+        self.assertTrue(playlist[0]["audio_url"].endswith(".mp3"))
+        self.assertEqual(playlist[1]["audio_url"], "/media/audio_lessons/material_1/question_10.mp3")
+        self.assertTrue(self.material.generated_json["lesson_audio_generated"])
+        self.assertTrue(self.material.generated_json["question_audio_generated"])
+
+
+class StartGenerationViewScopeTests(TestCase):
+    def setUp(self):
+        self.client = authenticated_api_client()
+        self.course = CourseGroup.objects.create(title="Science")
+        self.material = LearningMaterial.objects.create(
+            course=self.course,
+            title="Matter",
+            pdf_file="learning_materials/matter.pdf",
+            status=LearningMaterial.Status.COMPLETED,
+        )
+        self.first_node = LearningObject.objects.create(
+            material=self.material,
+            kind=LearningObject.Kind.TEXT,
+            title="Gas",
+            content="A gas spreads out.",
+            order=0,
+        )
+        self.second_node = LearningObject.objects.create(
+            material=self.material,
+            kind=LearningObject.Kind.TEXT,
+            title="Liquid",
+            content="A liquid flows.",
+            order=1,
+        )
+
+    def test_editing_question_marks_existing_audio_stale(self):
+        self.material.generated_json = {
+            "audio_playlist_generated": True,
+            "lesson_playlist": [
+                {
+                    "title": "Question 1",
+                    "type": "practice_question",
+                    "audio_url": "/media/audio_lessons/material_1/question_1.mp3",
+                }
+            ],
+        }
+        self.material.save(update_fields=["generated_json"])
+        question = GeneratedQuestion.objects.create(
+            node=self.first_node,
+            question_text="Old question?",
+            question_format="TF",
+            correct_answer="True",
+            bloom_level="remember",
+            thinking_order="LOT",
+            category="Facts and Information",
+            status="final",
+        )
+
+        response = self.client.patch(
+            f"/api/generation/questions/{question.id}/",
+            {"question_text": "Updated question?"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.material.refresh_from_db()
+        self.assertFalse(self.material.generated_json["audio_playlist_generated"])
+
+    @patch("question_generation.views.threading.Thread")
+    def test_node_start_url_scopes_run_to_only_that_node(self, mock_thread):
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{self.first_node.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["node_id"], self.first_node.id)
+        run = GenerationRun.objects.get(id=response.data["run_id"])
+        self.assertEqual(run.node_id, self.first_node.id)
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"],
+            (run.id, self.material.id, [self.first_node.id], False),
+        )
+
+    @patch("question_generation.views.threading.Thread")
+    def test_generate_all_node_request_can_skip_complete_bank(self, mock_thread):
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{self.first_node.id}/start/",
+            {"skip_complete": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        run = GenerationRun.objects.get(id=response.data["run_id"])
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"],
+            (run.id, self.material.id, [self.first_node.id], True),
+        )
+
+    @patch("question_generation.views.assign_group_versions")
+    @patch("question_generation.views.threading.Thread")
+    def test_grouped_non_normal_source_cannot_generate_questions(self, mock_thread, assignment):
+        outline_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Matter topic",
+            order=0,
+        )
+        self.material.outline_node = outline_node
+        self.material.save(update_fields=["outline_node"])
+        group = LearningObjectGroup.objects.create(outline_node=outline_node, label="Matter")
+        self.first_node.group = group
+        self.first_node.save(update_fields=["group"])
+        self.second_node.group = group
+        self.second_node.save(update_fields=["group"])
+        assignment.return_value = {
+            "classification_complete": True,
+            "original_selected": True,
+            "representative_id": self.first_node.id,
+        }
+
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{self.second_node.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["normal_learning_object_id"], self.first_node.id)
+        self.assertIn("Normal version", response.data["error"])
+        mock_thread.assert_not_called()
+
+    @patch("question_generation.views.assign_group_versions")
+    @patch("question_generation.views.threading.Thread")
+    def test_material_generation_scopes_a_group_to_its_normal_source(self, mock_thread, assignment):
+        outline_node = OutlineNode.objects.create(
+            course=self.course,
+            title="Matter topic",
+            order=0,
+        )
+        self.material.outline_node = outline_node
+        self.material.save(update_fields=["outline_node"])
+        group = LearningObjectGroup.objects.create(outline_node=outline_node, label="Matter")
+        LearningObject.objects.filter(pk__in=[self.first_node.id, self.second_node.id]).update(
+            group=group,
+        )
+        assignment.return_value = {
+            "classification_complete": True,
+            "original_selected": True,
+            "representative_id": self.first_node.id,
+        }
+
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        run = GenerationRun.objects.get(id=response.data["run_id"])
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"],
+            (run.id, self.material.id, [self.first_node.id], True),
+        )
+
+    @patch("question_generation.views.threading.Thread")
+    def test_narrated_image_can_start_question_generation(self, mock_thread):
+        image_node = LearningObject.objects.create(
+            material=self.material,
+            kind=LearningObject.Kind.IMAGE,
+            title="Particle arrangement diagram",
+            content="The diagram shows tightly packed solid particles and widely spaced gas particles.",
+            order=2,
+        )
+
+        response = self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{image_node.id}/start/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["node_id"], image_node.id)
+        run = GenerationRun.objects.get(id=response.data["run_id"])
+        self.assertEqual(run.node_id, image_node.id)
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"],
+            (run.id, self.material.id, [image_node.id], False),
+        )

@@ -1,0 +1,390 @@
+{
+  "topics": [
+    343,
+    357
+  ],
+  "required": [],
+  "unrelated": true,
+  "_note": "Unrelated control (different subjects: topic 343 is materials/matter, 357 is flowering-plant reproduction); no key needed, every accepted link is an error.",
+  "concepts": {
+    "343": [
+      {
+        "key": null,
+        "concept_id": 970,
+        "title": "Solutions, colloids, and suspensions differ in appearance and in how they treat light",
+        "section_title": "Curriculum Alignment",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Solutions, colloids, and suspensions differ in appearance and in how they treat light",
+            "section_title": "Curriculum Alignment",
+            "content": "The illustration shows three distinct types of mixtures: a solution, a colloid, and a suspension. In the first image, a solution is depicted as a uniform and clear liquid, with light passing straight through it and the particles within it being too small to be seen or settle. The second image shows a colloid, where light is scattered inside the mixture, and the particles do not separate when the mixture is left undisturbed, like gatas, taho, or mayonesa. Finally, the third image represents a suspension, which is cloudy and the solid particles settle at the bottom when it is left undisturbed, such as muddy water or gawgaw in water, and light is blocked.",
+            "material_id": 71,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 971,
+        "title": "Uniform and Non-Uniform Mixtures (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Uniform and Non-Uniform Mixtures (Part 1 of 3)",
+            "section_title": "",
+            "content": "The Grade 6 competency asks learners to sort mixtures by appearance.\nThe question is simple: does A uniform mixture, also called a homogeneous mixture, looks the same in every part.\nThe components are so evenly spread that you cannot tell them apart by looking.",
+            "material_id": 71,
+            "order": 1
+          },
+          {
+            "title": "Uniform and Non-Uniform Mixtures (Part 2 of 3)",
+            "section_title": "",
+            "content": "A glass of sugar water, a cup of brewed coffee without grounds, and a sip of buko juice all look like a single liquid, even though each one contains several materials.\nUniform mixtures of this kind are called solutions.\nA non-uniform mixture, also called a heterogeneous mixture, shows its components.",
+            "material_id": 71,
+            "order": 2
+          },
+          {
+            "title": "Uniform and Non-Uniform Mixtures (Part 3 of 3)",
+            "section_title": "",
+            "content": "You can see the separate parts, and different spoonfuls may not look the same.\nA bowl of halo-halo, a plate of pancit, a handful of rice mixed with corn, and a glass of muddy water are all non-uniform.",
+            "material_id": 71,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 974,
+        "title": "Solutions: Solute and Solvent",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Solutions: Solute and Solvent",
+            "section_title": "",
+            "content": "In a solution, the material that dissolves is the solute, and the material that does the dissolving is the solvent. In sweetened coffee, the sugar is the solute and the hot water is the solvent. The solvent is usually the component present in the greater amount, and water is so common as a solvent that it is often called the universal solvent.\nThree conditions affect how quickly a solute dissolves, and learners can test each one:\nSize of the particles. Finely ground sugar dissolves faster than a large lump, because more of its surface touches the water.\nStirring. A stirred glass dissolves its sugar faster than one left standing, because stirring keeps bringing fresh water into contact with the solute.\nTemperature. Sugar dissolves faster in hot water than in cold water, which is why powdered drinks mix easily in warm water but leave grains at the bottom of a cold glass.\nNot every solute dissolves in every solvent. Salt and sugar dissolve in water, but cooking oil does not.\nOil and water separate into two layers no matter how long they are stirred, which is why a bottle of salad dressing must be shaken before use.",
+            "material_id": 71,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 975,
+        "title": "Suspensions and Colloids (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Suspensions and Colloids (Part 1 of 3)",
+            "section_title": "",
+            "content": "Between the clear solution and the obviously separated mixture are two kinds worth naming.\nA suspension is a non-uniform mixture in which solid particles are large enough to be seen and heavy enough to settle when the mixture is left alone.",
+            "material_id": 71,
+            "order": 5
+          },
+          {
+            "title": "Suspensions and Colloids (Part 2 of 3)",
+            "section_title": "",
+            "content": "Gawgaw stirred into water, muddy water from a flooded street, and a bottle of medicine labelled \"shake well before using\" are all suspensions.\nTheir particles can be trapped by filter paper.\nA colloid sits in between.",
+            "material_id": 71,
+            "order": 6
+          },
+          {
+            "title": "Suspensions and Colloids (Part 3 of 3)",
+            "section_title": "",
+            "content": "Its particles are too small to settle out, so the mixture stays evenly cloudy for a long time, but they are still large enough to scatter light.\nGatas, taho, mayonesa, gulaman, and the smoke from burning leaves are colloids.\nShining a flashlight through a glass of milk reveals the beam",
+            "material_id": 71,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 978,
+        "title": "Air as a Mixture",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Air as a Mixture (Part 1 of 2)",
+            "section_title": "",
+            "content": "Not all mixtures are liquids.\nAir is a mixture of gases, and the Grade 6 competency names its main components: nitrogen, which makes up the largest share; oxygen, which living things need for respiration; carbon dioxide, which plants use to make food; and water vapor, whose amount rises and falls with the weather.",
+            "material_id": 71,
+            "order": 8
+          },
+          {
+            "title": "Air as a Mixture (Part 2 of 2)",
+            "section_title": "",
+            "content": "Air is a uniform mixture: it looks the same throughout, and its gases do not settle into layers.\nBecause the components are only physically combined, each keeps its own properties — which is why oxygen can still support burning even while it is mixed with the other gases.",
+            "material_id": 71,
+            "order": 9
+          },
+          {
+            "title": "components: nitrogen, which makes up the largest share; oxygen, which living things need for",
+            "section_title": "Air as a Mixture",
+            "content": "The figure shows six different mixtures, each with its own components and appearance. The first mixture, kape with sugar, is shown as clear and uniform throughout, indicating it’s a solution. The halo-halo is presented with ice, milk, fruits, and beans clearly visible in separate parts, demonstrating it’s a non-uniform mixture. Next, the gatas mixture shows evenly cloudy fat droplets in water that do not settle, classifying it as a colloid. The gawgaw in water is cloudy and settles on standing, identifying it as a non-uniform suspension. The air mixture is shown as invisible and the same throughout, representing a uniform mixture, and finally, the suka at mantika mixture displays two separate layers of vinegar and cooking oil, classifying it as a non-uniform mixture.",
+            "material_id": 71,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 981,
+        "title": "Prepare each mixture in its own glass",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Prepare each mixture in its own glass",
+            "section_title": "",
+            "content": "sugar in water, salt in water, oil in water, gawgaw in water, soil in water, and milk in water. Stir each one twenty times.",
+            "material_id": 71,
+            "order": 11
+          }
+        ]
+      }
+    ],
+    "357": [
+      {
+        "key": null,
+        "concept_id": 873,
+        "title": "The main parts of a flower involved in reproduction",
+        "section_title": "Flowering Plants",
+        "kind": "image",
+        "members": [
+          {
+            "title": "The main parts of a flower involved in reproduction",
+            "section_title": "Flowering Plants",
+            "content": "The image shows the key components of a flower involved in reproduction. At the top, the stamen is positioned first, consisting of a filament supporting an anther, which produces pollen. Below the stamen is the pistil, comprising the ovary and style, with the style leading to an ovule within the ovary, where egg cells are stored. The petals and sepals surround these central parts of the flower, providing protection and attracting pollinators.",
+            "material_id": 65,
+            "order": 0
+          },
+          {
+            "title": "The main parts of a flower involved in reproduction",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The image shows a flower with several distinct parts arranged around a central core. At the top, there are multiple, slender stalks, called filaments, supporting a cluster of small, rounded structures – these are the anthers, which produce pollen. Below the anthers, and extending downwards, is a central, elongated structure – the pistil – which is composed of a sticky, top part called the stigma, and a shorter, tube-like section known as the style. At the base of the pistil is a swollen, rounded structure called the ovary, which contains the egg cells.",
+            "material_id": 66,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 874,
+        "title": "Reproduction in Flowering Plants",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Reproduction in Flowering Plants",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell. Most of this activity happens inside the flower, which is the reproductive part of the plant. A single flower can contain both male and female parts, and these parts work together so that seeds can form. Seeds later grow into new plants, allowing the species to continue.",
+            "material_id": 65,
+            "order": 1
+          },
+          {
+            "title": "Reproduction in Flowering Plants (Part 1 of 2)",
+            "section_title": "",
+            "content": "Flowering plants reproduce sexually, which means a new plant begins when a male sex cell joins a female sex cell.\nMost of this activity happens inside the flower, which is the reproductive part of the plant.",
+            "material_id": 66,
+            "order": 0
+          },
+          {
+            "title": "Reproduction in Flowering Plants (Part 2 of 2)",
+            "section_title": "",
+            "content": "A single flower can contain both male and female parts, and these parts work together so that seeds can form.\nSeeds later grow into new plants, allowing the species to continue.\nMale parts (the stamen) produce pollen; female parts (the pistil) hold the egg cells.",
+            "material_id": 66,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 894,
+        "title": "Stamen (Male Part)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Stamen (Male Part)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+            "material_id": 65,
+            "order": 2
+          },
+          {
+            "title": "Stamen (Male Part)",
+            "section_title": "Stamen (Male Part)",
+            "content": "The stamen is made up of the anther and the filament. The filament is the thin stalk that holds up the anther, while the anther produces tiny grains called pollen. Each pollen grain carries a male sex cell.",
+            "material_id": 66,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 895,
+        "title": "Pistil (Female Part)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pistil (Female Part)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+            "material_id": 65,
+            "order": 3
+          },
+          {
+            "title": "Pistil (Female Part)",
+            "section_title": "Pistil (Female Part)",
+            "content": "The pistil, also called the carpel, is made up of the stigma, style, and ovary. The sticky stigma catches pollen, the style connects the stigma to the ovary, and the ovary contains ovules. Each ovule holds a female sex cell, or egg.",
+            "material_id": 66,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 896,
+        "title": "Petals and Sepals (Supporting Parts)",
+        "section_title": "Reproduction in Flowering Plants",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Petals and Sepals (Supporting Parts)",
+            "section_title": "Reproduction in Flowering Plants",
+            "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud.\nThese parts do not make sex cells, but they help reproduction succeed.",
+            "material_id": 65,
+            "order": 4
+          },
+          {
+            "title": "Petals and Sepals (Supporting Parts)",
+            "section_title": "Petals and Sepals (Supporting Parts)",
+            "content": "The colorful petals attract pollinators such as bees, butterflies, and birds. The green sepals protect the flower while it is still a bud. These parts do not make sex cells, but they help reproduction succeed.",
+            "material_id": 66,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 878,
+        "title": "Pollination",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pollination",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+            "material_id": 65,
+            "order": 5
+          },
+          {
+            "title": "Pollination",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "Pollen is carried from the anther to the stigma. This can happen within the same flower or between different flowers, with the help of wind, water, insects, or other animals.",
+            "material_id": 66,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 897,
+        "title": "Fertilization",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Fertilization",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+            "material_id": 65,
+            "order": 6
+          },
+          {
+            "title": "Fertilization",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "After landing on the stigma, a pollen grain grows a tube down the style into the ovary. The male sex cell then joins the egg cell inside an ovule.",
+            "material_id": 66,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 898,
+        "title": "Seed formation",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Seed formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+            "material_id": 65,
+            "order": 7
+          },
+          {
+            "title": "Seed formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The fertilized ovule develops into a seed, which contains a tiny young plant and a store of food.",
+            "material_id": 66,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 899,
+        "title": "Fruit formation",
+        "section_title": "How Flowering Plants Reproduce",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Fruit formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+            "material_id": 65,
+            "order": 8
+          },
+          {
+            "title": "Fruit formation",
+            "section_title": "How Flowering Plants Reproduce",
+            "content": "The ovary grows into a fruit that surrounds and protects the seeds and helps them spread to new places.",
+            "material_id": 66,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": null,
+        "concept_id": 882,
+        "title": "Everyday Examples",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+            "material_id": 65,
+            "order": 9
+          },
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "A gumamela (hibiscus) shows all the flower parts clearly, which is why it is often used in class. A mango tree flowers, is pollinated, and then forms the mango fruit with a seed inside. Rice plants are pollinated mostly by wind, while many fruit trees depend on bees. These examples show that pollination and fertilization must happen first before a seed or fruit can form, and each seed carries the beginnings of a brand-new plant.",
+            "material_id": 66,
+            "order": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "topic_id": 347,
+  "_note": "Test set. AI-drafted key (not teacher-verified), received 2026-09-30 for docs/learning-path-347-snapshot-2026-09-30.md, drafted before any design work. Encoded as stated: the figure (step 1), the four force changes and the heat/oxygen changes need nothing first; the key does not link the figure to the changes it shows. The key names no parallel or forbidden sets; reverse links of every required link count as forbidden (gold_report). expected_order is the key's own step order, which satisfies every required link.",
+  "concept_keys": {
+    "925": "force_figure",
+    "926": "bending",
+    "927": "pressing",
+    "928": "hammering",
+    "929": "cutting",
+    "930": "heat_oxygen",
+    "933": "reversible",
+    "939": "useful_harmful"
+  },
+  "required": [
+    ["bending", "reversible"], ["pressing", "reversible"], ["hammering", "reversible"],
+    ["cutting", "reversible"], ["heat_oxygen", "reversible"],
+    ["hammering", "useful_harmful"], ["cutting", "useful_harmful"], ["heat_oxygen", "useful_harmful"]
+  ],
+  "parallel": [],
+  "structural": [],
+  "forbidden": [],
+  "expected_order": ["force_figure", "bending", "pressing", "hammering", "cutting", "heat_oxygen", "reversible", "useful_harmful"],
+  "known_missing": []
+}

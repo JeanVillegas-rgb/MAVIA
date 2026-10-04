@@ -1,0 +1,450 @@
+{
+  "topics": [
+    347,
+    348
+  ],
+  "required": [
+    [
+      "c933",
+      "c943"
+    ],
+    [
+      "c933",
+      "c950"
+    ],
+    [
+      "c930",
+      "c950"
+    ]
+  ],
+  "unrelated": false,
+  "_note": "Drafted 2026-10-02 by a fresh AI agent from the database concepts (random order) and PDFs, deciding by meaning; to be reviewed by the user.",
+  "concepts": {
+    "347": [
+      {
+        "key": "c925",
+        "concept_id": 925,
+        "title": "Changes in solid materials when bent, pressed, hammered, and cut",
+        "section_title": "Curriculum Alignment",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Changes in solid materials when bent, pressed, hammered, and cut",
+            "section_title": "Curriculum Alignment",
+            "content": "The image shows four distinct ways a solid material can be altered. The first shows a shape change where a long piece is bent into a curve, but the overall size remains the same. Next, a flat piece is shown being pressed, resulting in a flattened shape and the original amount of material remaining unchanged. The third depicts a piece of metal being hammered, which causes it to become flattened and widened, and importantly, the metal itself remains solid. Finally, the image displays a piece being cut, resulting in two smaller pieces, each retaining the same material as the original.",
+            "material_id": 69,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": "c926",
+        "concept_id": 926,
+        "title": "Bending changes the shape of a material while its size stays the same. A wire, a plastic straw, a",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Bending changes the shape of a material while its size stays the same. A wire, a plastic straw, a",
+            "section_title": "",
+            "content": "paper clip, and a strip of cardboard can all be bent. Materials that bend without breaking are flexible;\nmaterials such as chalk, glass, and dry twigs are rigid and snap instead.",
+            "material_id": 69,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c927",
+        "concept_id": 927,
+        "title": "Pressing squeezes a material and flattens it. Dough pressed by the palm spreads out and becomes",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Pressing squeezes a material and flattens it. Dough pressed by the palm spreads out and becomes",
+            "section_title": "",
+            "content": "wider and thinner, though the amount of dough has not changed. A tin can stepped on during a game of tumbang preso becomes crumpled: its shape changes while the metal remains metal.",
+            "material_id": 69,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": "c928",
+        "concept_id": 928,
+        "title": "Hammering delivers a stronger, sharper force. A piece of soft metal that is hammered becomes",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Hammering delivers a stronger, sharper force. A piece of soft metal that is hammered becomes",
+            "section_title": "",
+            "content": "flatter and wider, which is how a panday shapes a bolo or a tansan is flattened into a washer. Brittle materials such as stone and glass do not flatten when hammered; they break into pieces.",
+            "material_id": 69,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c929",
+        "concept_id": 929,
+        "title": "Cutting divides a material into smaller parts, so the change is mainly in size. Paper cut with scissors",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Cutting divides a material into smaller parts, so the change is mainly in size. Paper cut with scissors",
+            "section_title": "",
+            "content": "becomes several smaller papers. Cloth cut by a mananahi becomes the pieces of a garment. Each piece is still made of exactly the same material as before.",
+            "material_id": 69,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": "c930",
+        "concept_id": 930,
+        "title": "Changes Caused by Heat and by Oxygen (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Changes Caused by Heat and by Oxygen (Part 1 of 3)",
+            "section_title": "",
+            "content": "The Grade 5 competency moves from force to two conditions that cause deeper changes: application of heat and the presence or lack of oxygen.\nHeat can cause a material to melt, evaporate, soften, harden, or burn.\nIce left on a saucer melts into water.",
+            "material_id": 69,
+            "order": 5
+          },
+          {
+            "title": "Changes Caused by Heat and by Oxygen (Part 2 of 3)",
+            "section_title": "",
+            "content": "Candle wax melts and then hardens again when it cools.\nSugar heated in a pan turns brown and gives off a sweet smell as it becomes caramel — and that change cannot be undone.\nOxygen is part of the air around us, and many changes depend on whether it is present.",
+            "material_id": 69,
+            "order": 6
+          },
+          {
+            "title": "Changes Caused by Heat and by Oxygen (Part 3 of 3)",
+            "section_title": "",
+            "content": "Iron exposed to air and moisture forms a reddish-brown coating called rust, which is why a bakal na pako left outdoors during the rainy season looks nothing like a new one.\nA candle covered by a glass jar goes out because the oxygen inside is used up.\nSliced saging or mansanas turns brown when left on the table because its exposed flesh reacts with the oxygen in the air.",
+            "material_id": 69,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c933",
+        "concept_id": 933,
+        "title": "Reversible and Irreversible Changes",
+        "section_title": "Reversible and Irreversible Changes",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Reversible and Irreversible Changes (Part 1 of 3)",
+            "section_title": "Reversible and Irreversible Changes",
+            "content": "By Grade 6, learners sort changes into two kinds.\nA physical change alters only the appearance of a material — its size, shape, or state — while the material itself stays the same.",
+            "material_id": 69,
+            "order": 8
+          },
+          {
+            "title": "Reversible and Irreversible Changes (Part 2 of 3)",
+            "section_title": "Reversible and Irreversible Changes",
+            "content": "Physical changes are usually reversible: melted ice can be frozen again, a crumpled paper can be flattened, and dissolved salt can be recovered by evaporating the water.\nA chemical change produces an entirely new material with new properties.",
+            "material_id": 69,
+            "order": 9
+          },
+          {
+            "title": "Reversible and Irreversible Changes (Part 3 of 3)",
+            "section_title": "Reversible and Irreversible Changes",
+            "content": "Chemical changes are irreversible: rust cannot be turned back into shiny iron, burnt wood cannot be turned back into wood, and a cooked egg cannot be uncooked.\nUseful clues that a chemical change has taken place are a new color, a new smell, bubbles of gas, heat given off, or a solid forming where there was none.",
+            "material_id": 69,
+            "order": 10
+          },
+          {
+            "title": "A chemical change produces an entirely new material with new properties. Chemical changes are",
+            "section_title": "Reversible and Irreversible Changes",
+            "content": "The figure shows a table with four rows and four columns. The first row lists four changes: bending a wire, cutting paper, melting ice, and burning wood into uling. The second row details the cause for each change: force for bending a wire and cutting paper, heat for melting ice, and heat and oxygen for burning wood into uling. The third row describes the kind of change for each: physical for the first three, and chemical for the last. Finally, the fourth row indicates whether each change is reversible, stating ‘yes’ for bending a wire and melting ice, and ‘no’ for cutting paper and burning wood into uling. The table highlights that physical changes, like bending a wire or melting ice, can be reversed, while chemical changes, such as burning wood, create entirely new materials and cannot be undone.",
+            "material_id": 69,
+            "order": 11
+          },
+          {
+            "title": "Rusting of a nail",
+            "section_title": "Reversible and Irreversible Changes",
+            "content": "Oxygen and moisture\nChemical\nNo",
+            "material_id": 69,
+            "order": 12
+          },
+          {
+            "title": "Cooking rice",
+            "section_title": "Reversible and Irreversible Changes",
+            "content": "Heat and water\nChemical\nNo",
+            "material_id": 69,
+            "order": 13
+          }
+        ]
+      },
+      {
+        "key": "c939",
+        "concept_id": 939,
+        "title": "Useful and Harmful Changes (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Useful and Harmful Changes (Part 1 of 3)",
+            "section_title": "",
+            "content": "The last Grade 4 competency asks learners to judge a change, not just describe it.\nMany changes are useful.\nCutting cloth produces clothing.\nHammering metal produces tools.\nCooking makes food safe and easier to digest.",
+            "material_id": 69,
+            "order": 14
+          },
+          {
+            "title": "Useful and Harmful Changes (Part 2 of 3)",
+            "section_title": "",
+            "content": "Decaying leaves in a compost pit become fertilizer for a school garden.\nOther changes are harmful, especially to the environment.\nRust weakens roofing sheets and bridges.\nSpoiled food causes illness.",
+            "material_id": 69,
+            "order": 15
+          },
+          {
+            "title": "Useful and Harmful Changes (Part 3 of 3)",
+            "section_title": "",
+            "content": "Burning plastic and other household waste releases smoke and toxic gases into the air, which is why the practice is discouraged and is covered by the Ecological Solid Waste Management Act.\nLearning to tell useful changes from harmful ones is what turns this lesson from a list of observations into a habit of responsible decision-making.",
+            "material_id": 69,
+            "order": 16
+          }
+        ]
+      }
+    ],
+    "348": [
+      {
+        "key": "c942",
+        "concept_id": 942,
+        "title": "Each technique takes advantage of a different property of the components",
+        "section_title": "WINNOWING",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Each technique takes advantage of a different property of the components",
+            "section_title": "WINNOWING",
+            "content": "The figure shows four different methods for separating mixtures. First, there’s decantation, which demonstrates pouring off the clear liquid, allowing heavier solids to settle at the bottom. Second, filtering shows a container with a filter that traps solids but allows the liquid to pass through. Third, evaporation is depicted with a container of water that is heating up, causing the water to leave as vapor and leaving the dissolved solid behind. Finally, scooping is shown with a container where one part of the mixture floats on top, and you lift that floating layer.",
+            "material_id": 70,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": "c943",
+        "concept_id": 943,
+        "title": "Why Mixtures Can Be Separated",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Why Mixtures Can Be Separated",
+            "section_title": "",
+            "content": "Because the components of a mixture are only physically combined, each one keeps its own properties.",
+            "material_id": 70,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c944",
+        "concept_id": 944,
+        "title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+        "section_title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+            "section_title": "Picking is the simplest method. The components differ in appearance and are large enough to be",
+            "content": "handled one at a time. Removing small stones from rice before cooking, taking the bones out of fried fish, and sorting good mongo seeds from damaged ones are all examples of picking.",
+            "material_id": 70,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": "c945",
+        "concept_id": 945,
+        "title": "Sieving separates solids of different particle sizes using a sieve, strainer, or screen. The finer",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Sieving separates solids of different particle sizes using a sieve, strainer, or screen. The finer",
+            "section_title": "",
+            "content": "particles fall through the holes while the larger ones stay behind. Sifting flour to remove lumps, screening sand at a construction site, and straining brewed tea leaves from the liquid all use sieving.",
+            "material_id": 70,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c946",
+        "concept_id": 946,
+        "title": "Winnowing separates light components from heavy ones using moving air. Farmers toss threshed",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Winnowing separates light components from heavy ones using moving air. Farmers toss threshed",
+            "section_title": "",
+            "content": "rice into the air using a bilao; the wind carries away the light husks or ipa while the heavier grains fall back into the tray. The same principle is used when separating chaff from mongo or corn.",
+            "material_id": 70,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": "c947",
+        "concept_id": 947,
+        "title": "Scooping removes a component that has floated to the surface. Skimming the fat from a pot of",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Scooping removes a component that has floated to the surface. Skimming the fat from a pot of",
+            "section_title": "",
+            "content": "sabaw, lifting oil off the top of water, and gathering leaves from the surface of a pail all use scooping.",
+            "material_id": 70,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": "c948",
+        "concept_id": 948,
+        "title": "Decantation separates a liquid from a solid that has settled, or two liquids that do not mix. The",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Decantation separates a liquid from a solid that has settled, or two liquids that do not mix. The",
+            "section_title": "",
+            "content": "mixture is left to stand until the heavier component sinks, then the upper liquid is poured off carefully without disturbing the layer below. Rinsing rice, letting muddy water settle before pouring off the clear part, and separating oil from water all use decantation.",
+            "material_id": 70,
+            "order": 6
+          }
+        ]
+      },
+      {
+        "key": "c949",
+        "concept_id": 949,
+        "title": "Filtering uses a filter paper, cloth, or fine mesh through which the liquid passes while the solid is",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Filtering uses a filter paper, cloth, or fine mesh through which the liquid passes while the solid is",
+            "section_title": "",
+            "content": "trapped. It catches particles too fine to remove by decantation. Brewing coffee through a cloth strainer, straining gata from grated coconut, and using a household water filter are all examples.",
+            "material_id": 70,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c950",
+        "concept_id": 950,
+        "title": "Evaporation recovers a dissolved solid from a solution by heating the liquid or leaving it under the",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Evaporation recovers a dissolved solid from a solution by heating the liquid or leaving it under the",
+            "section_title": "",
+            "content": "sun until the liquid escapes as vapor, leaving the solid behind. This is exactly how asin is produced in the salt beds of Pangasinan and other coastal provinces: seawater is led into shallow ponds, the sun evaporates the water, and salt crystals remain.",
+            "material_id": 70,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c951",
+        "concept_id": 951,
+        "title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+        "section_title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+            "section_title": "Using a magnet separates iron or steel from other materials, because only certain metals are",
+            "content": "attracted to magnets. A magnet passed over a mixture of iron filings and sand lifts out the iron and leaves the sand. Junk shops and recycling facilities use large magnets to pull steel out of mixed scrap.",
+            "material_id": 70,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c952",
+        "concept_id": 952,
+        "title": "Choosing the Right Technique",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Choosing the Right Technique",
+            "section_title": "",
+            "content": "Some mixtures need more than one technique used in order. To recover both the salt and the sand from a mixture of salt, sand, and water, a learner would first filter the mixture to trap the sand, then evaporate the filtered liquid to recover the salt. Planning the correct sequence is the most demanding part of this competency.",
+            "material_id": 70,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": "c953",
+        "concept_id": 953,
+        "title": "Choosing the Right Technique",
+        "section_title": "Choosing the Right Technique",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Choosing the Right Technique",
+            "section_title": "Choosing the Right Technique",
+            "content": "The figure shows a table outlining techniques for separating mixtures. The first entry details rice mixed with small stones, where the differing property is appearance and size, and the best technique is picking up the stones. The second entry shows flour with lumps, where the differing property is particle size, and the best technique is sieving the flour to remove the lumps. The third entry describes palay mixed with husks, where the differing property is weight, and the best technique is winnowing, which involves tossing the mixture to allow the lighter husks to blow away. The fourth entry details sabaw with fat on top, where the differing property is the fat’s position, and the best technique is scooping the fat from the top. The fifth entry shows sand and water, where the sand settles, and the best technique is decantation, which involves carefully pouring off the water leaving the sand behind.",
+            "material_id": 70,
+            "order": 11
+          }
+        ]
+      },
+      {
+        "key": "c954",
+        "concept_id": 954,
+        "title": "Benefits of Separating Mixtures (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Benefits of Separating Mixtures (Part 1 of 2)",
+            "section_title": "",
+            "content": "Separation is not a classroom exercise only; it is how many useful products are made.\nIt gives us clean drinking water from cloudy sources, salt from seawater, gata from grated coconut, cooking oil from crushed seeds, and clean rice ready for the pot.",
+            "material_id": 70,
+            "order": 12
+          },
+          {
+            "title": "Benefits of Separating Mixtures (Part 2 of 2)",
+            "section_title": "",
+            "content": "It allows recyclable metal to be recovered from mixed waste, and it is the reason a school can turn segregated waste into something valuable.\nIn every case, separating a mixture takes something useful out of something that was not yet usable.",
+            "material_id": 70,
+            "order": 13
+          }
+        ]
+      },
+      {
+        "key": "c956",
+        "concept_id": 956,
+        "title": "Place the filtered liquid in the shallow pan and leave it under the sun, or heat it gently under your teacher's",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Place the filtered liquid in the shallow pan and leave it under the sun, or heat it gently under your teacher's",
+            "section_title": "",
+            "content": "supervision. Record what is left after the water is gone.",
+            "material_id": 70,
+            "order": 14
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "topic_id": 347,
+  "required": [
+    [
+      "bending",
+      "reversible"
+    ],
+    [
+      "pressing",
+      "reversible"
+    ],
+    [
+      "hammering",
+      "reversible"
+    ],
+    [
+      "cutting",
+      "reversible"
+    ],
+    [
+      "heat_oxygen",
+      "reversible"
+    ],
+    [
+      "hammering",
+      "useful_harmful"
+    ],
+    [
+      "cutting",
+      "useful_harmful"
+    ],
+    [
+      "heat_oxygen",
+      "useful_harmful"
+    ]
+  ],
+  "parallel": [],
+  "structural": [],
+  "expected_order": [
+    "force_figure",
+    "bending",
+    "pressing",
+    "hammering",
+    "cutting",
+    "heat_oxygen",
+    "reversible",
+    "useful_harmful"
+  ],
+  "known_missing": [],
+  "forbidden": [],
+  "concepts": [
+    {
+      "key": "force_figure",
+      "concept_id": 925,
+      "title": "Changes in solid materials when bent, pressed, hammered, and cut",
+      "section_title": "Curriculum Alignment",
+      "kind": "image",
+      "members": [
+        {
+          "title": "Changes in solid materials when bent, pressed, hammered, and cut",
+          "section_title": "Curriculum Alignment",
+          "content": "The image shows four distinct ways a solid material can be altered. The first shows a shape change where a long piece is bent into a curve, but the overall size remains the same. Next, a flat piece is shown being pressed, resulting in a flattened shape and the original amount of material remaining unchanged. The third depicts a piece of metal being hammered, which causes it to become flattened and widened, and importantly, the metal itself remains solid. Finally, the image displays a piece being cut, resulting in two smaller pieces, each retaining the same material as the original.",
+          "material_id": 69,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "key": "bending",
+      "concept_id": 926,
+      "title": "Bending changes the shape of a material while its size stays the same. A wire, a plastic straw, a",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Bending changes the shape of a material while its size stays the same. A wire, a plastic straw, a",
+          "section_title": "",
+          "content": "paper clip, and a strip of cardboard can all be bent. Materials that bend without breaking are flexible;\nmaterials such as chalk, glass, and dry twigs are rigid and snap instead.",
+          "material_id": 69,
+          "order": 1
+        }
+      ]
+    },
+    {
+      "key": "pressing",
+      "concept_id": 927,
+      "title": "Pressing squeezes a material and flattens it. Dough pressed by the palm spreads out and becomes",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Pressing squeezes a material and flattens it. Dough pressed by the palm spreads out and becomes",
+          "section_title": "",
+          "content": "wider and thinner, though the amount of dough has not changed. A tin can stepped on during a game of tumbang preso becomes crumpled: its shape changes while the metal remains metal.",
+          "material_id": 69,
+          "order": 2
+        }
+      ]
+    },
+    {
+      "key": "hammering",
+      "concept_id": 928,
+      "title": "Hammering delivers a stronger, sharper force. A piece of soft metal that is hammered becomes",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Hammering delivers a stronger, sharper force. A piece of soft metal that is hammered becomes",
+          "section_title": "",
+          "content": "flatter and wider, which is how a panday shapes a bolo or a tansan is flattened into a washer. Brittle materials such as stone and glass do not flatten when hammered; they break into pieces.",
+          "material_id": 69,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "key": "cutting",
+      "concept_id": 929,
+      "title": "Cutting divides a material into smaller parts, so the change is mainly in size. Paper cut with scissors",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Cutting divides a material into smaller parts, so the change is mainly in size. Paper cut with scissors",
+          "section_title": "",
+          "content": "becomes several smaller papers. Cloth cut by a mananahi becomes the pieces of a garment. Each piece is still made of exactly the same material as before.",
+          "material_id": 69,
+          "order": 4
+        }
+      ]
+    },
+    {
+      "key": "heat_oxygen",
+      "concept_id": 930,
+      "title": "Changes Caused by Heat and by Oxygen (Part 1 of 3)",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Changes Caused by Heat and by Oxygen (Part 1 of 3)",
+          "section_title": "",
+          "content": "The Grade 5 competency moves from force to two conditions that cause deeper changes: application of heat and the presence or lack of oxygen.\nHeat can cause a material to melt, evaporate, soften, harden, or burn.\nIce left on a saucer melts into water.",
+          "material_id": 69,
+          "order": 5
+        },
+        {
+          "title": "Changes Caused by Heat and by Oxygen (Part 2 of 3)",
+          "section_title": "",
+          "content": "Candle wax melts and then hardens again when it cools.\nSugar heated in a pan turns brown and gives off a sweet smell as it becomes caramel — and that change cannot be undone.\nOxygen is part of the air around us, and many changes depend on whether it is present.",
+          "material_id": 69,
+          "order": 6
+        },
+        {
+          "title": "Changes Caused by Heat and by Oxygen (Part 3 of 3)",
+          "section_title": "",
+          "content": "Iron exposed to air and moisture forms a reddish-brown coating called rust, which is why a bakal na pako left outdoors during the rainy season looks nothing like a new one.\nA candle covered by a glass jar goes out because the oxygen inside is used up.\nSliced saging or mansanas turns brown when left on the table because its exposed flesh reacts with the oxygen in the air.",
+          "material_id": 69,
+          "order": 7
+        }
+      ]
+    },
+    {
+      "key": "reversible",
+      "concept_id": 933,
+      "title": "Reversible and Irreversible Changes",
+      "section_title": "Reversible and Irreversible Changes",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Reversible and Irreversible Changes (Part 1 of 3)",
+          "section_title": "Reversible and Irreversible Changes",
+          "content": "By Grade 6, learners sort changes into two kinds.\nA physical change alters only the appearance of a material — its size, shape, or state — while the material itself stays the same.",
+          "material_id": 69,
+          "order": 8
+        },
+        {
+          "title": "Reversible and Irreversible Changes (Part 2 of 3)",
+          "section_title": "Reversible and Irreversible Changes",
+          "content": "Physical changes are usually reversible: melted ice can be frozen again, a crumpled paper can be flattened, and dissolved salt can be recovered by evaporating the water.\nA chemical change produces an entirely new material with new properties.",
+          "material_id": 69,
+          "order": 9
+        },
+        {
+          "title": "Reversible and Irreversible Changes (Part 3 of 3)",
+          "section_title": "Reversible and Irreversible Changes",
+          "content": "Chemical changes are irreversible: rust cannot be turned back into shiny iron, burnt wood cannot be turned back into wood, and a cooked egg cannot be uncooked.\nUseful clues that a chemical change has taken place are a new color, a new smell, bubbles of gas, heat given off, or a solid forming where there was none.",
+          "material_id": 69,
+          "order": 10
+        },
+        {
+          "title": "A chemical change produces an entirely new material with new properties. Chemical changes are",
+          "section_title": "Reversible and Irreversible Changes",
+          "content": "The figure shows a table with four rows and four columns. The first row lists four changes: bending a wire, cutting paper, melting ice, and burning wood into uling. The second row details the cause for each change: force for bending a wire and cutting paper, heat for melting ice, and heat and oxygen for burning wood into uling. The third row describes the kind of change for each: physical for the first three, and chemical for the last. Finally, the fourth row indicates whether each change is reversible, stating ‘yes’ for bending a wire and melting ice, and ‘no’ for cutting paper and burning wood into uling. The table highlights that physical changes, like bending a wire or melting ice, can be reversed, while chemical changes, such as burning wood, create entirely new materials and cannot be undone.",
+          "material_id": 69,
+          "order": 11
+        },
+        {
+          "title": "Rusting of a nail",
+          "section_title": "Reversible and Irreversible Changes",
+          "content": "Oxygen and moisture\nChemical\nNo",
+          "material_id": 69,
+          "order": 12
+        },
+        {
+          "title": "Cooking rice",
+          "section_title": "Reversible and Irreversible Changes",
+          "content": "Heat and water\nChemical\nNo",
+          "material_id": 69,
+          "order": 13
+        }
+      ]
+    },
+    {
+      "key": "useful_harmful",
+      "concept_id": 939,
+      "title": "Useful and Harmful Changes (Part 1 of 3)",
+      "section_title": "",
+      "kind": "text",
+      "members": [
+        {
+          "title": "Useful and Harmful Changes (Part 1 of 3)",
+          "section_title": "",
+          "content": "The last Grade 4 competency asks learners to judge a change, not just describe it.\nMany changes are useful.\nCutting cloth produces clothing.\nHammering metal produces tools.\nCooking makes food safe and easier to digest.",
+          "material_id": 69,
+          "order": 14
+        },
+        {
+          "title": "Useful and Harmful Changes (Part 2 of 3)",
+          "section_title": "",
+          "content": "Decaying leaves in a compost pit become fertilizer for a school garden.\nOther changes are harmful, especially to the environment.\nRust weakens roofing sheets and bridges.\nSpoiled food causes illness.",
+          "material_id": 69,
+          "order": 15
+        },
+        {
+          "title": "Useful and Harmful Changes (Part 3 of 3)",
+          "section_title": "",
+          "content": "Burning plastic and other household waste releases smoke and toxic gases into the air, which is why the practice is discouraged and is covered by the Ecological Solid Waste Management Act.\nLearning to tell useful changes from harmful ones is what turns this lesson from a list of observations into a habit of responsible decision-making.",
+          "material_id": 69,
+          "order": 16
+        }
+      ]
+    }
+  ]
+}

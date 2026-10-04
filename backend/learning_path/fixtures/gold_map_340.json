@@ -1,0 +1,44 @@
+{
+  "topic_id": 340,
+  "_note": "AI-drafted recommendation (not teacher-verified), 2026-09-30, from docs/learning-path-340-snapshot-2026-09-30.md. Draft answer key for 'Solid, Liquid and Gas' (topic 340) from the user's recommended arrangement (2026-09-30), an outside recommendation the user asked to be used as a draft key, not yet confirmed by a teacher. Everyday Examples are placed BEFORE Changing State by the user's decision, so examples are not structural here. Item 9 (comparison details) is a continuation of item 8. Concept 837/818 = the two everyday-example items; 835 = the ice-cube example.",
+  "concept_keys": {
+    "810": "matter",
+    "820": "states",
+    "846": "solid",
+    "847": "liquid",
+    "848": "gas",
+    "821": "energy_rule",
+    "809": "figure",
+    "831": "comparing",
+    "832": "comparing_detail",
+    "837": "examples_table",
+    "818": "same_substance",
+    "833": "changing",
+    "834": "changing_diagram",
+    "835": "ice_example",
+    "838": "summary"
+  },
+  "required": [
+    ["matter", "states"],
+    ["states", "solid"], ["states", "liquid"], ["states", "gas"],
+    ["solid", "energy_rule"], ["liquid", "energy_rule"], ["gas", "energy_rule"],
+    ["energy_rule", "figure"],
+    ["solid", "comparing"], ["liquid", "comparing"], ["gas", "comparing"],
+    ["comparing", "comparing_detail"],
+    ["energy_rule", "changing"],
+    ["changing", "changing_diagram"],
+    ["solid", "examples_table"], ["liquid", "examples_table"], ["gas", "examples_table"],
+    ["solid", "same_substance"], ["liquid", "same_substance"], ["gas", "same_substance"],
+    ["changing_diagram", "ice_example"],
+    ["comparing_detail", "summary"], ["changing_diagram", "summary"]
+  ],
+  "parallel": [["solid", "liquid", "gas"]],
+  "structural": [],
+  "forbidden": [
+    ["figure", "matter"], ["comparing", "matter"], ["changing", "matter"],
+    ["summary", "solid"], ["summary", "changing"],
+    ["ice_example", "changing"]
+  ],
+  "expected_order": ["matter", "states", "solid", "liquid", "gas", "energy_rule", "figure", "comparing", "comparing_detail", "examples_table", "same_substance", "changing", "changing_diagram", "ice_example", "summary"],
+  "known_missing": []
+}

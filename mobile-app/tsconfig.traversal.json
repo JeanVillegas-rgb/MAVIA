@@ -1,0 +1,17 @@
+{
+  // Emits src/player/traversal.ts on its own so scripts/check-traversal.mjs can
+  // run the player's real traversal logic under plain node. It works because
+  // that module imports nothing but types -- no React, no Expo, no network --
+  // and TypeScript elides type-only imports, so the emitted JS stands alone.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "module": "esnext",
+    "target": "es2022",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true
+  },
+  "include": [],
+  "files": ["src/player/traversal.ts"]
+}

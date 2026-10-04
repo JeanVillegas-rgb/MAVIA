@@ -1,0 +1,946 @@
+"""Content-only semantic grouping. Scores are similarities, not probabilities.
+
+Models are pinned and CPU-backed. After their public weights are downloaded,
+all learning-object inference is local.
+The STS cross-encoder is a baseline to evaluate, not proof of interchangeability.
+"""
+from collections import defaultdict
+from contextlib import closing
+from functools import lru_cache
+import hashlib
+import json
+import logging
+import math
+import os
+from pathlib import Path
+import re
+import sqlite3
+from threading import RLock
+from time import perf_counter
+
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
+ENCODER = "sentence-transformers/all-MiniLM-L6-v2"
+ENCODER_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+RERANKER = "cross-encoder/stsb-roberta-base"
+RERANKER_REVISION = "d576534b67143e2c70ee9966d7fdbf5835728d13"
+# A figure's kind, spelled out here so this module does not import the
+# lessons models at import time (it is loaded during model startup).
+IMAGE_KIND = "image"
+FINGERPRINT = f"content-sts-v1:{ENCODER}@{ENCODER_REVISION}:{RERANKER}@{RERANKER_REVISION}"
+
+_GENERIC_INSTRUCTIONAL_LABELS = {
+    "activity",
+    "additional information",
+    "conclusion",
+    "definition",
+    "diagram",
+    "everyday examples",
+    "example",
+    "examples",
+    "exercise",
+    "glossary",
+    "introduction",
+    "key facts",
+    "key facts to remember",
+    "key points",
+    "key points for students",
+    "note",
+    "notes",
+    "objectives",
+    "overview",
+    "practice questions",
+    "questions",
+    "recap",
+    "remember",
+    "review",
+    "summary",
+    "vocabulary",
+    "worksheet",
+}
+_GENERIC_NUMBERED_LABEL = re.compile(
+    r"(?:figure|table|diagram|worksheet)(?:\s+\d+)?$",
+    re.IGNORECASE,
+)
+
+
+def _singular_label(label: str) -> str:
+    """Fold a trailing plural so "Solids" and "Solid" read as one label.
+
+    Source PDFs title the same concept both ways -- one numbers its sections
+    "2. Solids" while another defines "solid" -- and exact-string corroboration
+    cannot see through that. Only the final word is folded: the label arrives
+    lowercased and punctuation-stripped, so the head noun is what distinguishes
+    one concept from another. The length guard keeps short nouns intact, without
+    which "gas" would erode to "ga".
+    """
+    if not label:
+        return label
+    words = label.split()
+    word = words[-1]
+    if len(word) > 3 and word.endswith("ies"):
+        word = word[:-3] + "y"
+    elif len(word) > 3 and re.search(r"(?:ss|sh|ch|x|z|s)es$", word):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        word = word[:-1]
+    return " ".join(words[:-1] + [word])
+
+
+# Folded through the same rule as the labels they are compared against.
+# Otherwise "everyday examples" singularizes to "everyday example", falls out of
+# the generic set, and a generic heading becomes eligible for corroboration.
+_GENERIC_SINGULAR_LABELS = {
+    _singular_label(label) for label in _GENERIC_INSTRUCTIONAL_LABELS
+}
+
+
+class SemanticUnavailable(RuntimeError):
+    pass
+
+
+def normalized(text):
+    # Preserve punctuation, negation, numbers and case for the language models.
+    return " ".join((text or "").split())
+
+
+def content_hash(text):
+    return hashlib.sha256(normalized(text).encode("utf-8")).hexdigest()
+
+
+def mode():
+    value = os.getenv("SEMANTIC_GROUPING_MODE", "auto").lower()
+    if value not in {"legacy", "review", "auto"}:
+        raise SemanticUnavailable("SEMANTIC_GROUPING_MODE must be legacy, review, or auto.")
+    return value
+
+
+def policy():
+    # These rollout defaults implement the teacher workflow requested for MAVIA:
+    # high -> automatic, medium -> confirmation, low -> ignored. They are
+    # configured operating thresholds, not calibrated probabilities.
+    result = {
+        "review_threshold": 0.3,
+        "auto_threshold": 0.6,
+        "minimum_sbert_cosine": 0.6,
+        "minimum_margin": 0.05,
+        "top_k": 10,
+        "auto_threshold_source": "configured_default",
+    }
+    explicit_review = os.getenv("SEMANTIC_GROUPING_REVIEW_THRESHOLD", "").strip()
+    if explicit_review:
+        try:
+            review = float(explicit_review)
+            if not 0 <= review <= 1:
+                raise ValueError("must be between 0 and 1")
+            result["review_threshold"] = review
+        except ValueError as exc:
+            raise SemanticUnavailable(f"Invalid SEMANTIC_GROUPING_REVIEW_THRESHOLD: {exc}") from exc
+    explicit_auto = os.getenv("SEMANTIC_GROUPING_AUTO_THRESHOLD", "").strip()
+    if explicit_auto:
+        try:
+            high = float(explicit_auto)
+            if not result["review_threshold"] <= high <= 1:
+                raise ValueError("must be between the review threshold and 1")
+            result.update(auto_threshold=high, auto_threshold_source="environment_unvalidated")
+        except ValueError as exc:
+            raise SemanticUnavailable(f"Invalid SEMANTIC_GROUPING_AUTO_THRESHOLD: {exc}") from exc
+    explicit_sbert = os.getenv("SEMANTIC_GROUPING_MINIMUM_SBERT_COSINE", "").strip()
+    if explicit_sbert:
+        try:
+            minimum_sbert = float(explicit_sbert)
+            if not 0 <= minimum_sbert <= 1:
+                raise ValueError("must be between 0 and 1")
+            result["minimum_sbert_cosine"] = minimum_sbert
+        except ValueError as exc:
+            raise SemanticUnavailable(f"Invalid SEMANTIC_GROUPING_MINIMUM_SBERT_COSINE: {exc}") from exc
+    explicit_margin = os.getenv("SEMANTIC_GROUPING_MINIMUM_MARGIN", "").strip()
+    if explicit_margin:
+        try:
+            minimum_margin = float(explicit_margin)
+            if not 0 <= minimum_margin <= 1:
+                raise ValueError("must be between 0 and 1")
+            result["minimum_margin"] = minimum_margin
+        except ValueError as exc:
+            raise SemanticUnavailable(f"Invalid SEMANTIC_GROUPING_MINIMUM_MARGIN: {exc}") from exc
+    path = os.getenv("SEMANTIC_GROUPING_CALIBRATION")
+    if path:
+        try:
+            document = json.loads(Path(path).read_text(encoding="utf-8"))
+            if document.get("model_fingerprint") != FINGERPRINT:
+                raise ValueError("calibration model/version mismatch")
+            thresholds = document["thresholds"]
+            review = float(thresholds["review_threshold"])
+            high = thresholds.get("auto_threshold")
+            margin = float(thresholds["minimum_margin"])
+            if not (0 <= review <= 1 and 0 <= margin <= 1):
+                raise ValueError("invalid thresholds")
+            if high is not None and not review <= float(high) <= 1:
+                raise ValueError("auto threshold must be above review threshold")
+            result.update(review_threshold=review, minimum_margin=margin)
+            # Pair-level validation is a prerequisite; group-level rollout still
+            # requires review. An unvalidated artifact can never enable auto.
+            validation = document.get("validation", {})
+            if (document.get("approved_for_auto") is True
+                    and validation.get("auto_predictions", 0) >= 40
+                    and validation.get("false_auto", 1) == 0
+                    and validation.get("negative_pairs", 0) >= 20
+                    and document.get("dataset_sha256")):
+                result["auto_threshold"] = float(high) if high is not None else None
+                result["auto_threshold_source"] = "validated_calibration"
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise SemanticUnavailable(f"Invalid semantic calibration: {exc}") from exc
+    return result
+
+
+class ScoreCache:
+    """Derived values only: content hashes and vectors/scores, never raw text."""
+    def __init__(self, path):
+        self.path = Path(path)
+        self.memory = {}
+        self.lock = RLock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(self.path, timeout=10)) as connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            connection.commit()
+
+    def get(self, key):
+        return self.get_many([key]).get(key)
+
+    def get_many(self, keys):
+        keys = list(dict.fromkeys(keys))
+        if not keys:
+            return {}
+        with self.lock:
+            found = {key: self.memory[key] for key in keys if key in self.memory}
+            missing = [key for key in keys if key not in found]
+            if missing:
+                placeholders = ",".join("?" for _ in missing)
+                with closing(sqlite3.connect(self.path, timeout=10)) as connection:
+                    rows = connection.execute(
+                        f"SELECT key, value FROM cache WHERE key IN ({placeholders})",
+                        missing,
+                    ).fetchall()
+                loaded = {key: json.loads(value) for key, value in rows}
+                self.memory.update(loaded)
+                found.update(loaded)
+            return found
+
+    def put(self, key, value):
+        self.put_many({key: value})
+
+    def put_many(self, values):
+        if not values:
+            return
+        with self.lock:
+            serialized = [
+                (key, json.dumps(value, allow_nan=False))
+                for key, value in values.items()
+            ]
+            with closing(sqlite3.connect(self.path, timeout=10)) as connection:
+                connection.executemany("INSERT OR REPLACE INTO cache VALUES (?, ?)", serialized)
+                connection.commit()
+            self.memory.update(values)
+
+
+class SemanticRuntime:
+    def __init__(self, *, download=False):
+        try:
+            from sentence_transformers import CrossEncoder, SentenceTransformer
+            import torch
+            torch.set_num_threads(max(1, int(os.getenv("SEMANTIC_GROUPING_THREADS", "2"))))
+            shared = {"device": "cpu", "local_files_only": not download,
+                      "trust_remote_code": False, "token": False,
+                      "model_kwargs": {"use_safetensors": True}}
+            self.encoder = SentenceTransformer(ENCODER, revision=ENCODER_REVISION, **shared)
+            self.reranker = CrossEncoder(RERANKER, revision=RERANKER_REVISION, max_length=512, **shared)
+        except Exception as exc:
+            raise SemanticUnavailable("Semantic models unavailable. Run prepare_semantic_grouping --download first.") from exc
+        self.cache = ScoreCache(Path(settings.BASE_DIR) / "semantic_cache" / "scores.sqlite3")
+        self.lock = RLock()
+
+    def supports(self, text):
+        text = normalized(text)
+        return bool(text) and len(self.encoder.tokenizer.encode(text, add_special_tokens=True)) <= self.encoder.max_seq_length
+
+    def embeddings(self, texts):
+        with self.lock:
+            texts = [normalized(text) for text in texts]
+            if not all(self.supports(text) for text in texts):
+                raise SemanticUnavailable("Empty or over-length content must be reviewed; no silent truncation.")
+            keys = [f"{FINGERPRINT}:embedding:{content_hash(text)}" for text in texts]
+            found = self.cache.get_many(keys)
+            missing = list(dict.fromkeys(text for text, key in zip(texts, keys) if key not in found))
+            if missing:
+                vectors = self.encoder.encode(missing, batch_size=32, normalize_embeddings=True, show_progress_bar=False)
+                updates = {}
+                for text, vector in zip(missing, vectors):
+                    key = f"{FINGERPRINT}:embedding:{content_hash(text)}"
+                    updates[key] = vector.tolist()
+                self.cache.put_many(updates)
+                found.update(updates)
+            return [found[key] for key in keys]
+
+    def supports_pair(self, a, b):
+        return self.supports(a) and self.supports(b) and all(
+            len(self.reranker.tokenizer(left, right, truncation=False)["input_ids"]) <= 512
+            for left, right in ((normalized(a), normalized(b)), (normalized(b), normalized(a)))
+        )
+
+    def pair_scores(self, pairs):
+        """Conservative symmetry: lower of STS(A,B) and STS(B,A)."""
+        with self.lock:
+            pairs = [(normalized(a), normalized(b)) for a, b in pairs]
+            result, missing = {}, {}
+            for a, b in pairs:
+                if not self.supports(a) or not self.supports(b):
+                    raise SemanticUnavailable("Unsupported content length")
+                for left, right in ((a, b), (b, a)):
+                    tokens = self.reranker.tokenizer(left, right, truncation=False)["input_ids"]
+                    if len(tokens) > 512:
+                        raise SemanticUnavailable("Pair exceeds cross-encoder context; no silent truncation.")
+                key = f"{FINGERPRINT}:pair:{':'.join(sorted((content_hash(a), content_hash(b))))}"
+                result[(a, b)] = key
+                if key not in missing:
+                    missing[key] = [a, b, None]
+            for key, score in self.cache.get_many(missing).items():
+                missing[key][2] = score
+            uncached = [(key, a, b) for key, (a, b, score) in missing.items() if score is None]
+            if uncached:
+                inputs = [pair for _, a, b in uncached for pair in ((a, b), (b, a))]
+                scores = self.reranker.predict(inputs, batch_size=16, show_progress_bar=False).tolist()
+                updates = {}
+                for index, (key, a, b) in enumerate(uncached):
+                    score = float(min(scores[2 * index:2 * index + 2]))
+                    if not math.isfinite(score) or not 0 <= score <= 1:
+                        raise SemanticUnavailable("Cross-encoder returned an invalid STS score")
+                    missing[key][2] = score
+                    updates[key] = score
+                self.cache.put_many(updates)
+            return [missing[result[pair]][2] for pair in pairs]
+
+
+@lru_cache(maxsize=1)
+def runtime():
+    allow_download = os.getenv(
+        "SEMANTIC_GROUPING_ALLOW_MODEL_DOWNLOAD", "True"
+    ).lower() in {"1", "true", "yes"}
+    try:
+        # Cached installations must remain fully offline and must not perform a
+        # Hugging Face metadata request merely to discover that weights exist.
+        return SemanticRuntime(download=False)
+    except SemanticUnavailable:
+        if not allow_download:
+            raise
+        return SemanticRuntime(download=True)
+
+
+def rank_groups(content, candidates, members_by_group, *, runtime_instance=None, thresholds=None):
+    """Shortlist groups by content embeddings; score EVERY member of each.
+
+No category/title heuristics and no best-member/transitive chaining shortcut.
+"""
+    if not candidates:
+        return []
+    engine = runtime_instance or runtime()
+    config = thresholds or policy()
+    if not engine.supports(content):
+        raise SemanticUnavailable("This learning object is empty or exceeds the model's text limit. Review its connection manually; it has not been scored.")
+    candidates = [item for item in candidates if engine.supports(item.content)]
+    if not candidates:
+        return []
+    vectors = engine.embeddings([content] + [item.content for item in candidates])
+    best = {}
+    group_cosines = defaultdict(list)
+    for candidate, vector in zip(candidates, vectors[1:]):
+        cosine = sum(a * b for a, b in zip(vectors[0], vector))
+        group_cosines[candidate.group_id].append(cosine)
+        if candidate.group_id not in best or cosine > best[candidate.group_id][0]:
+            best[candidate.group_id] = (cosine, candidate)
+    shortlisted = sorted(best.values(), key=lambda row: (-row[0], row[1].id))[:config["top_k"]]
+    pair_inputs, layouts = [], []
+    for cosine, candidate in shortlisted:
+        members = members_by_group[candidate.group_id]
+        supported = [item for item in members if engine.supports_pair(content, item.content)]
+        start = len(pair_inputs)
+        pair_inputs.extend((content, item.content) for item in supported)
+        layouts.append((cosine, candidate, supported, start, len(supported) == len(members)))
+    scores = engine.pair_scores(pair_inputs) if pair_inputs else []
+    ranked = []
+    for cosine, candidate, supported, start, complete in layouts:
+        member_scores = scores[start:start + len(supported)]
+        if not member_scores:
+            continue
+        minimum = min(member_scores)
+        ranked.append({"candidate": candidate, "evidence": {
+            "score": round(minimum, 6), "content_support": round(minimum, 6),
+            "minimum_group_member_score": round(minimum, 6),
+            "minimum_group_content_support": round(minimum, 6),
+            "maximum_group_member_score": round(max(member_scores), 6),
+            "sbert_cosine": round(cosine, 6), "method": "sbert_cross_encoder_content_v1",
+            "minimum_group_sbert_cosine": round(min(group_cosines[candidate.group_id]), 6),
+            "model_fingerprint": FINGERPRINT, "all_members_checked": complete,
+            "members_checked": len(supported), "title_used": False,
+        }})
+    return sorted(ranked, key=lambda row: (-row["evidence"]["score"], row["candidate"].id))
+
+
+_PART_MARKER = re.compile(r"\bpart\s+(\d+)\s*(?:of|/)\s*(\d+)\b", re.I)
+
+
+def _split_series_representative(rows):
+    """Return the first piece when these rows are one heading split into parts.
+
+    A long section is chunked into "SOLID (Part 1 of 3)", "(Part 2 of 3)" and so
+    on, and the part suffix is stripped before labels are compared -- so one
+    concept arrives looking like three objects sharing a name. That is not the
+    ambiguity the duplicate-label guard defends against.
+
+    Every condition has to hold: each title carries a part marker, they agree on
+    the total, they sit under one section, they number 1..N with none missing,
+    and they are consecutive. Two headings that merely share a label -- m8's
+    "SOLID" section and its "Solid" particle-arrangement item -- satisfy none of
+    this and stay ambiguous.
+    """
+    if len(rows) < 2:
+        return None
+    markers = [_PART_MARKER.search(item.title or "") for item in rows]
+    if not all(markers):
+        return None
+    if len({marker.group(2) for marker in markers}) != 1:
+        return None
+    # Every declared piece has to be present. Two rows claiming "of 3" are a
+    # truncated heading, and the missing piece may be the one that differs.
+    total = int(markers[0].group(2))
+    if len(rows) != total:
+        return None
+    if len({(item.section_title or "").strip() for item in rows}) != 1:
+        return None
+    if {int(marker.group(1)) for marker in markers} != set(range(1, total + 1)):
+        return None
+    orders = sorted(item.order for item in rows)
+    if orders != list(range(orders[0], orders[0] + len(orders))):
+        return None
+    return min(rows, key=lambda item: int(_PART_MARKER.search(item.title).group(1)))
+
+
+def _collapsed_label_rows(rows):
+    """Reduce one split heading to its first piece; leave anything else alone."""
+    representative = _split_series_representative(rows)
+    if representative:
+        return [representative]
+    rows = list(rows)
+    if len(rows) == 1:
+        marker = _PART_MARKER.search(rows[0].title or "")
+        if marker and int(marker.group(2)) > 1 and int(marker.group(1)) != 1:
+            # A later piece of a split heading, reached without its siblings --
+            # they sit in groups this decision cannot see, so the series never
+            # forms and the piece would otherwise pass through untouched. A
+            # continuation speaks for its own passage, never for the concept.
+            return []
+    return rows
+
+
+def label_corroboration_enabled() -> bool:
+    return os.getenv("SEMANTIC_GROUPING_LABEL_CORROBORATION", "True").lower() in {
+        "1", "true", "yes",
+    }
+
+
+def _specific_normalized_label(title: str) -> str:
+    # Local imports avoid making the content extraction and linking modules part
+    # of semantic model startup. Both helpers are established lessons-app rules.
+    from .content_generator import is_section_named_figure_title, is_structural_metadata_label
+    from .learning_resource_linker import normalize_learning_object_title
+
+    label = _singular_label(normalize_learning_object_title(title))
+    if (
+        not label
+        or is_structural_metadata_label(title)
+        # Extraction wrote "Solids - figure", not the author: two figures that
+        # merely sit in same-named sections have no label to agree on.
+        or is_section_named_figure_title(title)
+        or label in _GENERIC_SINGULAR_LABELS
+        or _GENERIC_NUMBERED_LABEL.fullmatch(label)
+    ):
+        return ""
+    return label
+
+
+# A caption this short ("Diagram.", "A flower.") could sit under any figure.
+_MIN_CORROBORATING_CAPTION_WORDS = 4
+
+
+def figure_caption(content):
+    """The author's caption of a figure ("Figure 1. <caption>"), or ``""``.
+
+    Only the text after "Figure N." counts, and any AI description appended to
+    it ("This figure shows ...") is cut off by the extraction helper.
+    """
+    from .content_generator import _image_caption_title
+
+    return _image_caption_title(content or "") or ""
+
+
+def recorded_caption(item):
+    """The printed caption of a figure learning object, or ``""``.
+
+    Read from what extraction recorded for this image: once a figure is
+    narrated, its text is the model's description and no longer carries the
+    caption. Older uploads, never narrated, kept the caption as their text.
+    """
+    material = getattr(item, "material", None)
+    url = getattr(item, "image_url", "") or ""
+    if material is not None and url:
+        for record in (material.generated_json or {}).get("image_descriptions") or []:
+            if record.get("image_url") == url and (record.get("caption") or "").strip():
+                return record["caption"]
+    return getattr(item, "content", "") or ""
+
+
+def _normalized_caption(content):
+    caption = figure_caption(content)
+    words = re.sub(r"[^\w\s]", " ", caption.casefold()).split()
+    return " ".join(words) if len(words) >= _MIN_CORROBORATING_CAPTION_WORDS else ""
+
+
+# Text printed inside a figure (its labels) identifies the figure only when
+# there is enough of it: "Solid, Liquid, Gas" labels half the figures of a
+# states-of-matter topic, "Evaporation, Condensation, Precipitation, Runoff"
+# names one diagram.
+_MIN_CORROBORATING_FIGURE_TEXT_WORDS = 4
+# Extraction of the same labels can differ by a stray word or a split label.
+_MIN_FIGURE_TEXT_OVERLAP = 0.8
+
+
+def recorded_visible_text(item):
+    """The text printed inside a figure learning object, or ``""``."""
+    material = getattr(item, "material", None)
+    url = getattr(item, "image_url", "") or ""
+    if material is None or not url:
+        return ""
+    for record in (material.generated_json or {}).get("image_descriptions") or []:
+        if record.get("image_url") == url:
+            return record.get("visible_text") or ""
+    return ""
+
+
+def _figure_text_words(text):
+    words = set(re.sub(r"[^\w\s]", " ", (text or "").casefold()).split())
+    return words if len(words) >= _MIN_CORROBORATING_FIGURE_TEXT_WORDS else set()
+
+
+# Share of the smaller table's row names the other table must also have.
+_MIN_SHARED_TABLE_ROWS = 0.5
+
+
+def _table_shape(text):
+    """``(header, row names)`` of a table's printed text ("a | b | c" lines), or None."""
+    rows = [
+        [" ".join(re.sub(r"[^\w\s]", " ", cell.casefold()).split()) for cell in line.split("|")]
+        for line in (text or "").splitlines()
+        if "|" in line
+    ]
+    if len(rows) < 3 or len(rows[0]) < 3:
+        return None
+    return tuple(rows[0]), {row[0] for row in rows[1:] if row[0]}
+
+
+def _rows_match(name, other):
+    # Extraction can merge a cell into its row name ("particle movement vibrate").
+    return name == other or name.startswith(other + " ") or other.startswith(name + " ")
+
+
+def _tables_agree(source, figures):
+    """True when every figure of the destination is the same table as ``source``.
+
+    The same header row and most of the same row names: PDF 2's "6. SOLID VS.
+    LIQUID VS. GAS" and PDF 3's "Comparing the Three States" both read
+    Property | Solid | Liquid | Gas, with Shape, Volume, Particle movement
+    and Example among their rows, and their wording differs so much (0.52)
+    that nothing else connected them.
+    """
+    shape = _table_shape(recorded_visible_text(source)) if source is not None else None
+    if not shape or not figures:
+        return False
+    for item in figures:
+        other = _table_shape(recorded_visible_text(item))
+        if not other or other[0] != shape[0]:
+            return False
+        smaller, larger = sorted((shape[1], other[1]), key=len)
+        if not smaller:
+            return False
+        shared = sum(any(_rows_match(name, row) for row in larger) for name in smaller)
+        if shared / len(smaller) < _MIN_SHARED_TABLE_ROWS:
+            return False
+    return True
+
+
+def _table_corroborated_decision(*, source, content, kind, reachable_groups, members, config, started_at):
+    """A table joins the concept that already holds the same table.
+
+    Like an exact label, the same table structure is evidence of its own, so
+    the review threshold is the bar, and a concept holding text as well as
+    the table can be reached. The score is taken against that concept's
+    figures only: prose beside a table would otherwise set the score.
+    """
+    if kind != IMAGE_KIND or source is None or not _table_shape(recorded_visible_text(source)):
+        return None
+    for group_id in sorted(reachable_groups):
+        figures = [item for item in members[group_id] if item.kind == IMAGE_KIND]
+        if not figures or not _tables_agree(source, figures):
+            continue
+        ranked = rank_groups(content, figures, {group_id: figures}, thresholds={**config, "top_k": 1})
+        if not ranked:
+            continue
+        match = ranked[0]
+        evidence = dict(match["evidence"])
+        if not evidence["all_members_checked"] or evidence["score"] < config["review_threshold"]:
+            continue
+        evidence.update(
+            method="table_structure_sbert_cross_encoder",
+            table_structure_corroborated=True,
+            auto_eligible=True,
+            review_threshold=config["review_threshold"],
+            elapsed_ms=round((perf_counter() - started_at) * 1000, 1),
+        )
+        return {**match, "evidence": evidence, "confidence": "high"}
+    return None
+
+
+def _figure_texts_agree(source, figures):
+    """True when every figure of the destination carries the same printed labels."""
+    words = _figure_text_words(recorded_visible_text(source)) if source is not None else set()
+    if not words or not figures:
+        return False
+    for item in figures:
+        other = _figure_text_words(recorded_visible_text(item))
+        if not other or len(words & other) / len(words | other) < _MIN_FIGURE_TEXT_OVERLAP:
+            return False
+    return True
+
+
+def _captions_agree(caption_text, figures):
+    """True when every figure of the destination carries this exact caption."""
+    caption = _normalized_caption(caption_text)
+    return bool(caption) and bool(figures) and all(
+        _normalized_caption(recorded_caption(item)) == caption for item in figures
+    )
+
+
+def _label_corroborated_decision(
+    *,
+    source,
+    content,
+    kind,
+    all_objects,
+    eligible_groups,
+    members,
+    config,
+    started_at,
+):
+    """Promote an already-supported exact-label twin without adding review work."""
+    # Review mode is a deliberate no-auto-grouping safety setting used while
+    # collecting teacher labels. Corroboration must not bypass that contract.
+    if not label_corroboration_enabled() or mode() != "auto":
+        return None
+    if (
+        source is None
+        or source.kind != kind
+        or source.represented_by_id is not None
+        or not (source.material.generated_json or {}).get("learning_objects_confirmed")
+    ):
+        return None
+
+    label = _specific_normalized_label(source.title)
+    if not label:
+        return None
+
+    from .learning_resource_linker import normalize_learning_object_title
+
+    # Count all eligible, active objects rather than only the cosine shortlist.
+    # Duplicate same-label objects within either material make the label
+    # ambiguous and therefore disable this automatic path.
+    label_objects = [
+        item for item in all_objects
+        if item.kind == kind
+        and item.group_id is not None
+        and item.represented_by_id is None
+        and (item.material.generated_json or {}).get("learning_objects_confirmed")
+        and _singular_label(normalize_learning_object_title(item.title)) == label
+    ]
+    # Only the first piece may independently corroborate a cross-PDF label.
+    # Later pieces are continuations, not additional label matches; the
+    # explicit numbered-part pass joins their groups after matching.
+    source_matches = _collapsed_label_rows(
+        [item for item in label_objects if item.material_id == source.material_id]
+    )
+    if len(source_matches) != 1 or source_matches[0].id != source.id:
+        return None
+
+    twins = [
+        item for item in label_objects
+        if item.material_id != source.material_id and item.group_id in eligible_groups
+    ]
+    if not twins:
+        return None
+    by_material = defaultdict(list)
+    for twin in twins:
+        by_material[twin.material_id].append(twin)
+    collapsed = []
+    for rows in by_material.values():
+        reduced = _collapsed_label_rows(rows)
+        if len(reduced) != 1:
+            return None
+        collapsed.extend(reduced)
+    twins = collapsed
+
+    # With three or more PDFs, identical labels may already point at competing
+    # groups. Do not choose one arbitrarily; ordinary semantic behavior remains.
+    destination_group_ids = {twin.group_id for twin in twins}
+    if len(destination_group_ids) != 1:
+        return None
+    destination_group_id = next(iter(destination_group_ids))
+    destination_members = members[destination_group_id]
+    if any(item.represented_by_id is not None for item in destination_members):
+        return None
+
+    # Score against the members that teach the same way. A concept's score is
+    # its weakest member's, so the prose beside a figure would otherwise set
+    # the figure's score and sink a match that belongs: measured on topic 212,
+    # one diagram scored 0.62 against the concept's other diagrams and 0.37
+    # once its four text members were counted too.
+    comparable_members = [item for item in destination_members if item.kind == kind]
+    if not comparable_members:
+        return None
+
+    # Explicitly score the exact-label destination group. It may not have
+    # survived the ordinary cosine top-k shortlist.
+    ranked = rank_groups(
+        content,
+        twins,
+        {destination_group_id: comparable_members},
+        thresholds={**config, "top_k": 1},
+    )
+    if not ranked:
+        return None
+    match = ranked[0]
+    evidence = dict(match["evidence"])
+    if (
+        not evidence["all_members_checked"]
+        or evidence["score"] < config["review_threshold"]
+    ):
+        return None
+
+    evidence.update(
+        method="label_corroborated_sbert_cross_encoder",
+        title_used=True,
+        normalized_label=label,
+        label_corroborated=True,
+        auto_eligible=True,
+        review_threshold=config["review_threshold"],
+        auto_threshold=config["auto_threshold"],
+        auto_calibrated=config["auto_threshold_source"] == "validated_calibration",
+        minimum_sbert_cosine=config["minimum_sbert_cosine"],
+        auto_threshold_source=config["auto_threshold_source"],
+        elapsed_ms=round((perf_counter() - started_at) * 1000, 1),
+    )
+    return {**match, "evidence": evidence, "confidence": "high"}
+
+
+def semantic_decision(
+    material, title, content, kind, order, section_title="", source_object_id=None,
+    *, allow_grouped_source=False,
+):
+    """The best group for this content, with the confidence to act on it.
+
+    ``allow_grouped_source`` is used only for read-only decisions: the
+    teacher-triggered review of edited objects and the reciprocal check for a
+    medium-confidence candidate already in an established group. Background
+    matching must never take a member away from its companions, so by default a
+    grouped source is refused outright. In the explicit paths its *current*
+    group is left out of the candidates and this function only reports whether
+    it fits somewhere else; it never changes group membership itself.
+    """
+    from lessons.models import LearningObject, LearningObjectMatchSuggestion
+    from .content_generator import is_recap_section
+
+    # A summary restates several concepts, so it is never a version of one
+    # concept in another PDF (it scored close to *Solids* and *Gases* because
+    # it repeats them). It stays its own step.
+    if is_recap_section(title, section_title):
+        return None
+    current_group_id = None
+    if source_object_id:
+        source = LearningObject.objects.filter(pk=source_object_id).first()
+        if source and source.group_id and LearningObject.objects.filter(
+                group_id=source.group_id).exclude(pk=source_object_id).exists():
+            if not allow_grouped_source:
+                return None
+            current_group_id = source.group_id
+    start = perf_counter()
+    config = policy()
+    all_objects = list(LearningObject.objects.filter(
+        material__outline_node_id=material.outline_node_id, group__isnull=False,
+    ).select_related("material", "group", "represented_by"))
+    members = defaultdict(list)
+    for item in all_objects:
+        if item.id != source_object_id:
+            members[item.group_id].append(item)
+    # A concept may hold several objects from one PDF (a section, its diagram
+    # and its examples), so a group is no longer disqualified for already
+    # holding one of this material's objects. It must still teach the same
+    # kind of content and come from confirmed files.
+    usable_groups = {
+        group_id for group_id, rows in members.items()
+        if any(item.material_id != material.id for item in rows)
+        and all((item.material.generated_json or {}).get("learning_objects_confirmed")
+                for item in rows)
+        # Nothing is paired into a summary's concept either.
+        and not any(is_recap_section(item.title, item.section_title) for item in rows)
+    }
+    eligible_groups = {
+        group_id for group_id in usable_groups
+        if all(item.kind == kind for item in members[group_id])
+    }
+    # ``unit_matching`` places a section, its diagram and its examples into one
+    # concept, so a concept that holds both kinds is expected -- and it answers
+    # the rule above for no kind at all: text is refused for the figure inside
+    # it, a figure for the text. That sealed it against every later PDF. An
+    # exact label may reach in; ordinary scoring still may not, because two
+    # AI-written figure descriptions score high on shared stock phrasing alone.
+    label_reachable_groups = {
+        group_id for group_id in usable_groups - eligible_groups
+        if any(item.kind == kind for item in members[group_id])
+    }
+    rejected_ids = set()
+    if source_object_id:
+        from django.db.models import Q
+        for left, right in LearningObjectMatchSuggestion.objects.filter(
+            Q(source_learning_object_id=source_object_id) | Q(candidate_learning_object_id=source_object_id),
+            status=LearningObjectMatchSuggestion.Status.REJECTED,
+        ).values_list("source_learning_object_id", "candidate_learning_object_id"):
+            rejected_ids.add(right if left == source_object_id else left)
+    refused = {group_id for group_id, rows in members.items() if any(row.id in rejected_ids for row in rows)}
+    eligible_groups -= refused
+    eligible_groups.discard(current_group_id)
+    # A pair the teacher rejected, and the concept this object is already in,
+    # stay out of reach of the label path too.
+    label_reachable_groups -= refused
+    label_reachable_groups.discard(current_group_id)
+    candidates = [row for row in all_objects if row.group_id in eligible_groups and row.id != source_object_id]
+    ranked = rank_groups(content, candidates, members, thresholds=config)
+    normal_decision = None
+    if ranked:
+        best = ranked[0]
+        runner = ranked[1]["evidence"]["score"] if len(ranked) > 1 else 0.0
+        evidence = best["evidence"]
+        margin = evidence["score"] - runner
+        auto = config["auto_threshold"]
+        high = (mode() == "auto" and auto is not None and evidence["score"] >= auto
+                and evidence["minimum_group_sbert_cosine"] >= config["minimum_sbert_cosine"]
+                and evidence["all_members_checked"] and margin >= config["minimum_margin"])
+        # A near-tie is not a finding. The margin floor already gates automatic
+        # grouping; without it here, a 0.0015 win over the runner-up reaches the
+        # teacher looking exactly like a real match.
+        review = (
+            evidence["score"] >= config["review_threshold"]
+            and margin >= config["minimum_margin"]
+        )
+        evidence.update(runner_up_score=runner, winner_margin=margin,
+                        auto_eligible=high, review_threshold=config["review_threshold"],
+                        auto_threshold=auto,
+                        auto_calibrated=config["auto_threshold_source"] == "validated_calibration",
+                        minimum_sbert_cosine=config["minimum_sbert_cosine"],
+                        auto_threshold_source=config["auto_threshold_source"],
+                        elapsed_ms=round((perf_counter() - start) * 1000, 1))
+        normal_decision = {
+            **best,
+            "confidence": "high" if high else "medium" if review else None,
+        }
+        if high and kind != IMAGE_KIND:
+            logger.info(
+                "Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
+                material.id, source_object_id, best["candidate"].id,
+                evidence["score"], high, evidence["elapsed_ms"],
+            )
+            return normal_decision
+
+    corroborated = _label_corroborated_decision(
+        source=source if source_object_id else None,
+        content=content,
+        kind=kind,
+        all_objects=all_objects,
+        eligible_groups=eligible_groups | label_reachable_groups,
+        members=members,
+        config=config,
+        started_at=start,
+    ) or _table_corroborated_decision(
+        source=source if source_object_id else None,
+        content=content,
+        kind=kind,
+        reachable_groups=eligible_groups | label_reachable_groups,
+        members=members,
+        config=config,
+        started_at=start,
+    )
+    destination_figures = (
+        [
+            item for item in members[normal_decision["candidate"].group_id]
+            if item.kind == IMAGE_KIND
+        ]
+        if normal_decision
+        else []
+    )
+    image_can_corroborate = (
+        kind == IMAGE_KIND
+        and corroborated is None
+        and normal_decision
+        and normal_decision["confidence"] == "high"
+    )
+    caption_corroborated = image_can_corroborate and _captions_agree(
+        recorded_caption(source) if source_object_id and source else content,
+        destination_figures,
+    )
+    # The labels printed inside the picture are the author's too, so the same
+    # labels in both PDFs corroborate the match the way a caption does.
+    figure_text_corroborated = (
+        image_can_corroborate
+        and not caption_corroborated
+        and _figure_texts_agree(source if source_object_id else None, destination_figures)
+    )
+    if caption_corroborated:
+        # The author's own caption, word for word in both PDFs, is the label a
+        # generic "Figure 1" title cannot be. Stock phrasing is an AI-written
+        # description's problem; a caption is the author's, and specific.
+        normal_decision["evidence"].update(caption_corroborated=True)
+    elif figure_text_corroborated:
+        normal_decision["evidence"].update(figure_text_corroborated=True)
+    elif (
+        kind == IMAGE_KIND
+        and corroborated is None
+        and normal_decision
+        and normal_decision["confidence"] == "high"
+    ):
+        # Two AI-written figure descriptions share stock phrasing -- "This
+        # figure shows...", "...helps the student understand..." -- so they
+        # score high against each other whatever they depict. Measured live:
+        # one particle diagram was auto-grouped with two unrelated figures at
+        # 0.649 and 0.627. A figure is therefore placed automatically only
+        # when a label corroborates it; otherwise the teacher gets a card and
+        # may still accept it. Text objects are unaffected.
+        normal_decision["evidence"].update(
+            auto_eligible=False, image_needs_label_corroboration=True,
+        )
+        normal_decision = {**normal_decision, "confidence": "medium"}
+
+    decision = corroborated or normal_decision
+    if decision:
+        evidence = decision["evidence"]
+        logger.info(
+            "Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
+            material.id, source_object_id, decision["candidate"].id,
+            evidence["score"], decision["confidence"] == "high", evidence["elapsed_ms"],
+        )
+    return decision

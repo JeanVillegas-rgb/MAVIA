@@ -1,0 +1,30 @@
+Django>=5.1,<6.0
+djangorestframework>=3.15
+django-cors-headers>=4.3
+python-dotenv>=1.0
+
+# PostgreSQL. Only needed when DATABASE_URL points at Postgres;
+# without it settings.py falls back to SQLite.
+psycopg[binary]>=3.2
+dj-database-url>=2.2
+
+# lessons (content generation): PDF text/image extraction, TF-IDF outline
+# matching, and edge-tts audio. Deterministic except for the optional figure
+# describer, which calls a local Ollama vision model over HTTP (requests) and
+# degrades to captions when Ollama isn't running.
+PyMuPDF>=1.24
+# Pinned, not >=: bloom_svm_pipeline.joblib is a pickle trained on
+# 1.6.1, and a pickle carries no code. Loading it on 1.9 raised
+# AttributeError: 'SVC' object has no attribute '_effective_probability',
+# and the TfidfVectorizer in the same pipeline would have gone on to
+# produce different features silently -- wrong Bloom labels rather than a
+# crash. Re-pin only when the model is retrained and this file replaced.
+scikit-learn==1.6.1
+edge-tts>=7.0
+requests>=2.31
+-r requirements-semantic.txt
+# nltk ships code but not corpora. word_tokenize (bloom_classifier) and
+# the lemmatizer/stemmer (learning_path/services/concept_text.py) need
+# these downloaded once per machine:
+#   python -m nltk.downloader punkt_tab wordnet omw-1.4
+nltk>=3.8

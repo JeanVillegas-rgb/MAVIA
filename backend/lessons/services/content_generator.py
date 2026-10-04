@@ -1,0 +1,4587 @@
+from __future__ import annotations
+
+import re
+import os
+import json
+import logging
+import unicodedata
+import contextlib
+import io
+
+import fitz
+from django.db import DatabaseError
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
+
+from .image_describer import (
+    caption_without_links,
+    describe_image_for_lesson,
+    figure_pointer,
+    lesson_text_around,
+    redundant_printed_passages,
+    spoken_table,
+)
+from .page_roles import non_lesson_pages
+from .instructional_content_classifier import (
+    classify_instructional_blocks,
+    detect_instructional_document_role,
+    extract_pdf_text_blocks,
+    find_captioned_figure_regions,
+    split_classified_blocks,
+)
+from .outline_parser import is_course_outline_document
+logger = logging.getLogger(__name__)
+
+def _configured_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Deterministic retrieval settings remain configurable for different curricula.
+TFIDF_COSINE_THRESHOLD = _configured_float("MATERIAL_TOPIC_COSINE_THRESHOLD", 0.08)
+TFIDF_BROAD_MATCH_RATIO = _configured_float("MATERIAL_TOPIC_BROAD_MATCH_RATIO", 0.60)
+TFIDF_MAX_BROAD_MATCHES = int(_configured_float("MATERIAL_TOPIC_MAX_BROAD_MATCHES", 3))
+SELECTED_TOPIC_COSINE_THRESHOLD = _configured_float(
+    "MATERIAL_SELECTED_TOPIC_COSINE_THRESHOLD",
+    0.07,
+)
+SELECTED_TOPIC_BEST_SCORE_RATIO = _configured_float(
+    "MATERIAL_SELECTED_TOPIC_BEST_SCORE_RATIO",
+    0.40,
+)
+
+
+class MaterialDeletedDuringGeneration(RuntimeError):
+    pass
+
+
+class LearningMaterialValidationError(ValueError):
+    """The uploaded PDF is readable, but is not valid lesson material here.
+
+    This is deliberately separate from extraction, model, and database errors.
+    Upload workflows may safely discard a rejected source document while still
+    retaining genuine processing failures for diagnosis and retry.
+    """
+
+
+def _material_exists(material: LearningMaterial) -> bool:
+    return bool(material.pk) and LearningMaterial.objects.filter(pk=material.pk).exists()
+
+
+def _save_material_update(material: LearningMaterial, fields: list[str]):
+    if not _material_exists(material):
+        raise MaterialDeletedDuringGeneration(
+            f"Learning material {material.pk} was deleted before generation finished."
+        )
+    try:
+        material.save(update_fields=fields)
+    except DatabaseError as exc:
+        if not _material_exists(material):
+            raise MaterialDeletedDuringGeneration(
+                f"Learning material {material.pk} was deleted before generation finished."
+            ) from exc
+        raise
+
+
+def extract_pdf_text(file_path: str) -> str:
+    document = fitz.open(file_path)
+    try:
+        return "\n".join(page.get_text("text") for page in document)
+    finally:
+        document.close()
+
+
+def clean_pdf_text_for_extraction(text: str, limit: int | None = 12000) -> str:
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+
+    line_counts = {}
+    for line in lines:
+        key = line.casefold()
+        line_counts[key] = line_counts.get(key, 0) + 1
+
+    cleaned = []
+    total_lines = len(lines)
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if re.fullmatch(r"(?:page\s*)?\d+(?:\s*/\s*\d+)?", lowered):
+            continue
+        if len(line) <= 120 and line_counts.get(line.casefold(), 0) >= 3:
+            continue
+        if index > total_lines * 0.65 and lowered in {"references", "bibliography", "appendix", "appendices"}:
+            break
+        if lowered.startswith(("http://", "https://", "www.")):
+            continue
+        cleaned.append(line)
+
+    cleaned_text = "\n".join(cleaned)
+    return cleaned_text[:limit] if limit else cleaned_text
+
+
+def _has_enough_embedded_pdf_text(text: str) -> bool:
+    cleaned = clean_pdf_text_for_extraction(text, limit=None)
+    words = re.findall(r"[A-Za-z0-9]+", cleaned)
+    return len(cleaned) >= 120 and len(words) >= 25
+
+
+def transcribe_image_only_pdf_pages(file_path: str) -> str:
+    """Deterministic fallback for image-only PDFs: use PDF text extraction only."""
+    document = fitz.open(file_path)
+    try:
+        pages = []
+        for page_index, page in enumerate(document, start=1):
+            text = page.get_text("text").strip()
+            if text:
+                pages.append(f"Page {page_index}\n{text}")
+        return "\n\n".join(pages).strip()
+    finally:
+        document.close()
+
+
+def _text_blocks_from_transcription(text: str) -> list[dict]:
+    blocks = []
+    block_id = 1
+    page = None
+    for chunk in re.split(r"\n\s*\n", text or ""):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        page_match = re.match(r"^Page\s+(\d+)\s*(.*)$", chunk, flags=re.IGNORECASE | re.DOTALL)
+        if page_match:
+            page = int(page_match.group(1))
+            chunk = page_match.group(2).strip()
+            if not chunk:
+                continue
+        for line in chunk.splitlines():
+            clean_line = re.sub(r"\s+", " ", line).strip()
+            if not clean_line:
+                continue
+            blocks.append(
+                {
+                    "block_id": block_id,
+                    "page": page,
+                    "block_index": block_id - 1,
+                    "text": clean_line,
+                    "line_count": 1,
+                    "source": "deterministic_page_text_fallback",
+                }
+            )
+            block_id += 1
+    return blocks
+
+
+def _split_preserved_paragraphs(cleaned_text: str) -> list[str]:
+    paragraphs = []
+    current = []
+    for line in cleaned_text.splitlines():
+        line = line.strip()
+        if not line:
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            continue
+        current.append(line)
+        if re.search(r"[.!?)]$", line):
+            paragraphs.append(" ".join(current).strip())
+            current = []
+    if current:
+        paragraphs.append(" ".join(current).strip())
+    return [paragraph for paragraph in paragraphs if paragraph]
+
+
+def build_fallback_learning_objects_from_text(cleaned_text: str) -> list[dict]:
+    learning_objects = []
+    for paragraph in _split_preserved_paragraphs(cleaned_text):
+        if _is_admin_or_system_support_text(paragraph):
+            continue
+        learning_objects.append(
+            {
+                "order": len(learning_objects),
+                "title": "",
+                "type": "lesson_content",
+                "content": paragraph,
+                "source": "pdf_exact_text",
+                "source_page": None,
+                "source_block_id": None,
+                "source_excerpt": paragraph,
+            }
+        )
+    return learning_objects
+
+
+def _merge_adjacent_embedded_image_fragments(page, images: list[dict]) -> list[dict]:
+    """Join raster tiles that are really one image on a PDF page.
+
+    Some PDF writers store the upper/lower (or left/right) portions of one
+    visual as separate image blocks.  The alignment and tiny-gap requirements
+    are deliberately strict so nearby independent figures remain independent.
+    """
+    merged = [dict(image) for image in images]
+    changed = True
+    while changed:
+        changed = False
+        for left_index, left in enumerate(merged):
+            left_bbox = fitz.Rect(left.get("bbox") or (0, 0, 0, 0))
+            for right_index in range(left_index + 1, len(merged)):
+                right = merged[right_index]
+                right_bbox = fitz.Rect(right.get("bbox") or (0, 0, 0, 0))
+                vertical_gap = max(right_bbox.y0 - left_bbox.y1, left_bbox.y0 - right_bbox.y1)
+                horizontal_gap = max(right_bbox.x0 - left_bbox.x1, left_bbox.x0 - right_bbox.x1)
+                vertically_tiled = (
+                    -1.0 <= vertical_gap <= 3.0
+                    and abs(left_bbox.x0 - right_bbox.x0) <= 2.0
+                    and abs(left_bbox.x1 - right_bbox.x1) <= 2.0
+                )
+                horizontally_tiled = (
+                    -1.0 <= horizontal_gap <= 3.0
+                    and abs(left_bbox.y0 - right_bbox.y0) <= 2.0
+                    and abs(left_bbox.y1 - right_bbox.y1) <= 2.0
+                )
+                if not (vertically_tiled or horizontally_tiled):
+                    continue
+
+                bbox = left_bbox | right_bbox
+                try:
+                    image_bytes = page.get_pixmap(clip=bbox, dpi=150, alpha=False).tobytes("png")
+                except (RuntimeError, ValueError):
+                    continue
+                combined = {
+                    **left,
+                    "width": int(bbox.width),
+                    "height": int(bbox.height),
+                    "area": int(bbox.get_area()),
+                    "extension": "png",
+                    "image_bytes": image_bytes,
+                    "bbox": tuple(float(value) for value in bbox),
+                    "fragment_block_indexes": [
+                        *(left.get("fragment_block_indexes") or [left.get("block_index")]),
+                        *(right.get("fragment_block_indexes") or [right.get("block_index")]),
+                    ],
+                }
+                merged[left_index] = combined
+                del merged[right_index]
+                changed = True
+                break
+            if changed:
+                break
+    return merged
+
+
+def extract_meaningful_pdf_images(file_path: str, max_images: int | None = None) -> list[dict]:
+    images = []
+    # No limit by default. A cap of 4 kept the four largest pictures of a
+    # 50-page module and dropped the other ~55 figures, so a blind learner
+    # never heard of them. MAX_PDF_IMAGES_FOR_VISION can still set one.
+    max_images = max_images or int(os.getenv("MAX_PDF_IMAGES_FOR_VISION", "0") or 0)
+    minimum_uncaptioned_page_ratio = min(
+        1.0,
+        max(0.0, float(os.getenv("MIN_UNCAPTIONED_PDF_IMAGE_PAGE_RATIO", "0.04"))),
+    )
+    document = fitz.open(file_path)
+    try:
+        for page_index, page in enumerate(document, start=1):
+            page_rect = page.rect
+            page_area = max(page_rect.width * page_rect.height, 1)
+            page_dict = page.get_text("dict")
+            page_image_start = len(images)
+            for block_index, block in enumerate(page_dict.get("blocks", [])):
+                if block.get("type") != 1:
+                    continue
+
+                bbox = block.get("bbox") or [0, 0, 0, 0]
+                width = max(float(bbox[2]) - float(bbox[0]), 0)
+                height = max(float(bbox[3]) - float(bbox[1]), 0)
+                image_area = width * height
+                image_bytes = block.get("image")
+                if not image_bytes:
+                    continue
+                if width < 48 or height < 48:
+                    continue
+                if image_area < 3000:
+                    continue
+                if image_area / page_area > 0.95:
+                    continue
+                # Small uncaptioned raster blocks are commonly publisher logos,
+                # mascots, or page ornaments. Captioned visuals are discovered
+                # separately below and remain eligible regardless of this size
+                # guard, so a real figure with an authored caption is retained.
+                if image_area / page_area < minimum_uncaptioned_page_ratio:
+                    continue
+                if width / max(height, 1) > 12 or height / max(width, 1) > 12:
+                    continue
+
+                crop_bytes = None
+                if bbox and width > 0 and height > 0:
+                    try:
+                        crop_pixmap = page.get_pixmap(clip=fitz.Rect(bbox), dpi=150)
+                        crop_bytes = crop_pixmap.tobytes("png")
+                    except Exception:
+                        crop_bytes = None
+
+                images.append(
+                    {
+                        "page_number": page_index,
+                        "index": len(images),
+                        "block_index": block_index,
+                        "width": int(width),
+                        "height": int(height),
+                        "area": int(image_area),
+                        "extension": "png",
+                        "image_bytes": crop_bytes or image_bytes,
+                        "bbox": tuple(float(value) for value in bbox),
+                    }
+                )
+
+            images[page_image_start:] = _merge_adjacent_embedded_image_fragments(
+                page,
+                images[page_image_start:],
+            )
+
+            for region in find_captioned_figure_regions(page, page_dict):
+                bbox = fitz.Rect(region["bbox"])
+                try:
+                    crop_bytes = page.get_pixmap(clip=bbox, dpi=150, alpha=False).tobytes("png")
+                except (RuntimeError, ValueError):
+                    continue
+                deduplicated = []
+                for existing in images:
+                    existing_bbox = existing.get("bbox")
+                    if existing.get("page_number") != page_index or not existing_bbox:
+                        deduplicated.append(existing)
+                        continue
+                    existing_rect = fitz.Rect(existing_bbox)
+                    intersection = existing_rect & bbox
+                    intersection_area = max(intersection.width, 0) * max(intersection.height, 0)
+                    smaller_area = min(
+                        max(existing_rect.width * existing_rect.height, 1),
+                        max(bbox.width * bbox.height, 1),
+                    )
+                    if intersection_area / smaller_area < 0.5:
+                        deduplicated.append(existing)
+                images = deduplicated
+                images.append(
+                    {
+                        "page_number": page_index,
+                        "index": len(images),
+                        "block_index": None,
+                        "width": int(bbox.width),
+                        "height": int(bbox.height),
+                        "area": int(bbox.width * bbox.height),
+                        "extension": "png",
+                        "image_bytes": crop_bytes,
+                        "bbox": tuple(bbox),
+                        "visible_text": region.get("visible_text", ""),
+                        "caption": region.get("caption", ""),
+                    }
+                )
+    finally:
+        document.close()
+    if max_images > 0:
+        images = sorted(images, key=lambda item: item["area"], reverse=True)[:max_images]
+    # Reading order, so the figures narrated first are the ones a learner
+    # meets first.
+    selected = sorted(
+        images,
+        key=lambda item: (item["page_number"], (item.get("bbox") or (0.0, 0.0))[1]),
+    )
+    for index, image in enumerate(selected):
+        image["index"] = index
+    return selected
+
+
+def _instructional_table_rows(rows: list[list[str | None]]) -> bool:
+    """Reject sparse text alignments while accepting real multi-row tables."""
+    cleaned_rows = [
+        [re.sub(r"\s+", " ", str(cell or "")).strip() for cell in row]
+        for row in (rows or [])
+    ]
+    if len(cleaned_rows) < 3:
+        return False
+    if any(re.search(r"_{3,}", cell) for row in cleaned_rows for cell in row):
+        return False
+    column_count = max((len(row) for row in cleaned_rows), default=0)
+    if not 2 <= column_count <= 10:
+        return False
+
+    populated = sum(bool(cell) for row in cleaned_rows for cell in row)
+    occupancy = populated / max(len(cleaned_rows) * column_count, 1)
+    useful_rows = sum(sum(bool(cell) for cell in row) >= 2 for row in cleaned_rows)
+    header_cells = sum(bool(cell) for cell in cleaned_rows[0])
+    cell_word_counts = [len(cell.split()) for row in cleaned_rows for cell in row if cell]
+    # PyMuPDF's text-based table detector can turn fully justified prose into
+    # many artificial columns, even splitting individual words at column
+    # boundaries (for example, ``Spore d | ispersal``).  A real instructional
+    # table may contain lowercase cells, but it should not repeatedly split
+    # words across several long rows.  Reject that paragraph-shaped false
+    # positive before the region is rasterized and its source text is removed.
+    fragmented_prose_rows = 0
+    fragmented_boundaries = 0
+    comparable_boundaries = 0
+    for row in cleaned_rows:
+        row_fragmented_boundaries = 0
+        for left, right in zip(row, row[1:]):
+            if not left or not right:
+                continue
+            left_fragment = re.search(r"([A-Za-z]+)\s*$", left)
+            right_fragment = re.match(r"^\s*([a-z]+)", right)
+            if not left_fragment or not right_fragment:
+                continue
+            comparable_boundaries += 1
+            left_word = left_fragment.group(1)
+            right_word = right_fragment.group(1)
+            if (
+                not re.search(r"[.!?;:)]\s*$", left)
+                and (len(left_word) <= 4 or len(right_word) <= 3)
+            ):
+                row_fragmented_boundaries += 1
+                fragmented_boundaries += 1
+        if row_fragmented_boundaries >= 2 and sum(len(cell.split()) for cell in row) >= 8:
+            fragmented_prose_rows += 1
+
+    looks_like_fragmented_prose = bool(
+        fragmented_prose_rows >= 2
+        and fragmented_boundaries >= 5
+        and fragmented_boundaries / max(comparable_boundaries, 1) >= 0.25
+    )
+    return bool(
+        header_cells >= 2
+        and useful_rows >= max(3, int(len(cleaned_rows) * 0.60))
+        and occupancy >= 0.45
+        and cell_word_counts
+        and max(cell_word_counts) <= 40
+        and not looks_like_fragmented_prose
+    )
+
+
+def _borderless_table_regions(page_dict: dict, page_rect: fitz.Rect) -> list[dict]:
+    """Find table-like runs whose cells share baselines but have no drawn grid.
+
+    PyMuPDF groups side-by-side cells on one visual row as separate ``lines``
+    inside a single text block. Normal wrapped prose has different line y
+    coordinates, so baseline and repeated-column geometry distinguish the two
+    without depending on any subject-specific words.
+    """
+    row_candidates = []
+    for block in page_dict.get("blocks", []):
+        if block.get("type") != 0 or not block.get("bbox"):
+            continue
+        cells = []
+        for line in block.get("lines", []):
+            bbox = line.get("bbox")
+            if not bbox:
+                continue
+            text = re.sub(
+                r"\s+",
+                " ",
+                "".join(str(span.get("text") or "") for span in line.get("spans", [])),
+            ).strip()
+            if text:
+                cells.append({"text": text, "rect": fitz.Rect(bbox)})
+        if not 2 <= len(cells) <= 10:
+            continue
+
+        line_heights = [max(cell["rect"].height, 1.0) for cell in cells]
+        typical_height = sorted(line_heights)[len(line_heights) // 2]
+        baseline_spread = max(cell["rect"].y0 for cell in cells) - min(cell["rect"].y0 for cell in cells)
+        block_rect = fitz.Rect(block["bbox"])
+        x_starts = sorted(cell["rect"].x0 for cell in cells)
+        if baseline_spread > max(2.5, typical_height * 0.35):
+            continue
+        if block_rect.height > typical_height * 1.8:
+            continue
+        if x_starts[-1] - x_starts[0] < page_rect.width * 0.18:
+            continue
+        row_candidates.append(
+            {
+                "bbox": block_rect,
+                "cells": [cell["text"] for cell in sorted(cells, key=lambda cell: cell["rect"].x0)],
+                "x_starts": x_starts,
+                "line_height": typical_height,
+            }
+        )
+
+    groups = []
+    current = []
+    for row in row_candidates:
+        if not current:
+            current = [row]
+            continue
+        previous = current[-1]
+        vertical_gap = row["bbox"].y0 - previous["bbox"].y1
+        matching_columns = sum(
+            any(abs(x_start - prior_x) <= 12.0 for prior_x in previous["x_starts"])
+            for x_start in row["x_starts"]
+        )
+        same_table = (
+            0 <= vertical_gap <= max(page_rect.height * 0.06, previous["line_height"] * 4)
+            and abs(row["bbox"].x0 - previous["bbox"].x0) <= 12.0
+            and matching_columns >= 2
+        )
+        if same_table:
+            current.append(row)
+        else:
+            if len(current) >= 3:
+                groups.append(current)
+            current = [row]
+    if len(current) >= 3:
+        groups.append(current)
+
+    regions = []
+    for group in groups:
+        rows = [row["cells"] for row in group]
+        if not _instructional_table_rows(rows):
+            continue
+        bbox = fitz.Rect(group[0]["bbox"])
+        for row in group[1:]:
+            bbox |= row["bbox"]
+        regions.append({"rows": rows, "bbox": bbox})
+    return _merge_adjacent_table_fragments(regions, page_rect)
+
+
+def _merge_adjacent_table_fragments(regions: list[dict], page_rect: fitz.Rect) -> list[dict]:
+    """Reassemble one table that the borderless detector split vertically.
+
+    A larger row gap inside a table can make it appear to be two regions.  We
+    join only same-width, nearly touching regions on the same page. Distinct
+    stacked tables normally have a heading or a materially larger gap and are
+    therefore left alone.
+    """
+    ordered = sorted(regions, key=lambda region: (fitz.Rect(region["bbox"]).y0, fitz.Rect(region["bbox"]).x0))
+    merged: list[dict] = []
+    maximum_gap = max(18.0, page_rect.height * 0.03)
+    for region in ordered:
+        current = {**region, "bbox": fitz.Rect(region["bbox"]), "rows": list(region["rows"])}
+        if not merged:
+            merged.append(current)
+            continue
+        previous = merged[-1]
+        previous_bbox = fitz.Rect(previous["bbox"])
+        current_bbox = fitz.Rect(current["bbox"])
+        gap = current_bbox.y0 - previous_bbox.y1
+        width_ratio = min(previous_bbox.width, current_bbox.width) / max(
+            previous_bbox.width,
+            current_bbox.width,
+            1,
+        )
+        same_columns = (
+            abs(previous_bbox.x0 - current_bbox.x0) <= 8.0
+            and abs(previous_bbox.x1 - current_bbox.x1) <= 8.0
+            and width_ratio >= 0.95
+        )
+        if 0 <= gap <= maximum_gap and same_columns:
+            previous["rows"].extend(current["rows"])
+            previous["bbox"] = previous_bbox | current_bbox
+        else:
+            merged.append(current)
+    return merged
+
+
+def _nearest_table_title(page, table_bbox: fitz.Rect, page_height: float) -> str:
+    candidates = []
+    for raw_block in page.get_text("blocks"):
+        if len(raw_block) < 5:
+            continue
+        rect = fitz.Rect(raw_block[:4])
+        text = re.sub(r"\s+", " ", str(raw_block[4] or "")).strip()
+        if not text or len(text.split()) > 14 or re.search(r"[.!?]$", text):
+            continue
+        gap = table_bbox.y0 - rect.y1
+        horizontal_overlap = max(0.0, min(rect.x1, table_bbox.x1) - max(rect.x0, table_bbox.x0))
+        if 0 <= gap <= page_height * 0.10 and horizontal_overlap > 0:
+            candidates.append((gap, text))
+    if candidates:
+        return min(candidates, key=lambda item: item[0])[1][:255]
+    return ""
+
+
+def _last_heading_on_page(page) -> str:
+    """Return the final authored heading, useful when a table starts next page."""
+    candidates = []
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type") != 0 or not block.get("bbox"):
+            continue
+        text = re.sub(
+            r"\s+",
+            " ",
+            "".join(
+                str(span.get("text") or "")
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+            ),
+        ).strip()
+        if not text or len(text.split()) > 14 or re.search(r"[.!?]$", text):
+            continue
+        spans = [span for line in block.get("lines", []) for span in line.get("spans", [])]
+        is_bold = any(
+            "bold" in str(span.get("font") or "").casefold() or int(span.get("flags") or 0) & 16
+            for span in spans
+        )
+        is_numbered = bool(re.match(r"^\d+(?:\.\d+)*\.?\s+\S", text))
+        if is_bold or is_numbered:
+            candidates.append((float(block["bbox"][1]), text))
+    if not candidates:
+        return ""
+    text = max(candidates, key=lambda item: item[0])[1]
+    return re.sub(r"^\d+(?:\.\d+)*\.?\s+", "", text).strip()[:255]
+
+
+def _plausible_table_bbox(bbox: fitz.Rect, page_rect: fitz.Rect, detection_source: str) -> bool:
+    """Reject column-flow regions that a text-only detector mistakes for tables."""
+    if bbox.width < page_rect.width * 0.30 or bbox.height < 36:
+        return False
+    # Drawn grids are strong evidence and may legitimately fill a page. Text and
+    # borderless strategies need a stricter cap because multi-column prose often
+    # appears as one nearly full-page pseudo-table.
+    if detection_source != "lines" and bbox.height > page_rect.height * 0.55:
+        return False
+    return True
+
+
+def extract_instructional_pdf_tables(file_path: str, max_tables: int | None = None) -> list[dict]:
+    """Render detected tables as images so teachers can describe them accessibly."""
+    maximum = max_tables or int(os.getenv("MAX_PDF_TABLE_IMAGES", "6"))
+    table_images = []
+    document = fitz.open(file_path)
+    try:
+        for page_index, page in enumerate(document, start=1):
+            page_rect = fitz.Rect(page.rect)
+            detected = []
+            table_candidates = []
+            for strategy in ("lines", "text"):
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        candidates = page.find_tables(strategy=strategy).tables
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    candidates = []
+                for table in candidates:
+                    table_candidates.append(
+                        {"rows": table.extract(), "bbox": fitz.Rect(table.bbox), "source": strategy}
+                    )
+            table_candidates.extend(
+                {**candidate, "source": "borderless"}
+                for candidate in _borderless_table_regions(page.get_text("dict"), page_rect)
+            )
+
+            for candidate in table_candidates:
+                rows = candidate["rows"]
+                bbox = fitz.Rect(candidate["bbox"])
+                if not _instructional_table_rows(rows):
+                    continue
+                if not _plausible_table_bbox(bbox, page_rect, candidate.get("source") or "text"):
+                    continue
+                if any(
+                    (bbox & existing).get_area()
+                    / max(min(bbox.get_area(), existing.get_area()), 1)
+                    >= 0.80
+                    for existing in detected
+                ):
+                    continue
+                detected.append(bbox)
+                padding = 5.0
+                crop_bbox = fitz.Rect(
+                    max(page_rect.x0, bbox.x0 - padding),
+                    max(page_rect.y0, bbox.y0 - padding),
+                    min(page_rect.x1, bbox.x1 + padding),
+                    min(page_rect.y1, bbox.y1 + padding),
+                )
+                try:
+                    image_bytes = page.get_pixmap(clip=crop_bbox, dpi=180, alpha=False).tobytes("png")
+                except (RuntimeError, ValueError):
+                    continue
+                visible_text = "\n".join(
+                    " | ".join(re.sub(r"\s+", " ", str(cell or "")).strip() for cell in row)
+                    for row in rows
+                ).strip()
+                title = _nearest_table_title(page, bbox, page_rect.height)
+                if not title and page_index > 1 and bbox.y0 <= page_rect.height * 0.20:
+                    title = _last_heading_on_page(document[page_index - 2])
+                table_images.append(
+                    {
+                        "page_number": page_index,
+                        "index": len(table_images),
+                        "block_index": None,
+                        "width": int(crop_bbox.width),
+                        "height": int(crop_bbox.height),
+                        "area": int(crop_bbox.get_area()),
+                        "extension": "png",
+                        "image_bytes": image_bytes,
+                        "bbox": tuple(float(value) for value in bbox),
+                        "title": title or f"Table on page {page_index}",
+                        "visible_text": visible_text,
+                        "caption": "",
+                        "is_table": True,
+                    }
+                )
+                if len(table_images) >= maximum:
+                    return table_images
+    finally:
+        document.close()
+    return table_images
+
+
+def exclude_text_blocks_inside_tables(blocks: list[dict], tables: list[dict]) -> list[dict]:
+    """Prevent table cells from also becoming flattened text learning objects."""
+    regions_by_page: dict[int, list[fitz.Rect]] = {}
+    for table in tables:
+        bbox = table.get("bbox")
+        page_number = table.get("page_number")
+        if bbox and page_number:
+            regions_by_page.setdefault(int(page_number), []).append(fitz.Rect(bbox))
+
+    kept = []
+    for block in blocks:
+        bbox = block.get("bbox")
+        if not bbox:
+            kept.append(block)
+            continue
+        rect = fitz.Rect(bbox)
+        center = fitz.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+        if any(region.contains(center) for region in regions_by_page.get(int(block.get("page") or 0), [])):
+            continue
+        kept.append(block)
+    return kept
+
+
+def _remove_images_overlapping_tables(images: list[dict], tables: list[dict]) -> list[dict]:
+    kept = []
+    for image in images:
+        image_bbox = image.get("bbox")
+        if not image_bbox:
+            kept.append(image)
+            continue
+        image_rect = fitz.Rect(image_bbox)
+        overlaps_table = False
+        for table in tables:
+            if table.get("page_number") != image.get("page_number") or not table.get("bbox"):
+                continue
+            table_rect = fitz.Rect(table["bbox"])
+            intersection = image_rect & table_rect
+            if intersection.get_area() / max(min(image_rect.get_area(), table_rect.get_area()), 1) >= 0.50:
+                overlaps_table = True
+                break
+        if not overlaps_table:
+            kept.append(image)
+    return kept
+
+
+def save_extracted_pdf_images(images: list[dict], material_id: int) -> list[dict]:
+    from pathlib import Path
+    from django.conf import settings
+    media_dir = Path(settings.MEDIA_ROOT) / "extracted_images"
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+    for img in images:
+        if img.get("image_bytes"):
+            filename = f"mat_{material_id}_img_{img['index'] + 1}.png"
+            filepath = media_dir / filename
+            with open(filepath, "wb") as f:
+                f.write(img["image_bytes"])
+            img["image_url"] = f"{settings.MEDIA_URL}extracted_images/{filename}"
+    return images
+
+
+def _limited_text(text: str, limit: int = 12000) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit]
+
+
+def _outline_node_similarity_text(node: OutlineNode) -> str:
+    """Build a deterministic retrieval document for an outline node.
+
+    The material-to-outline selection is a lexical-matching task, so the node
+    document must expose the same vocabulary that a teacher would recognize as
+    the topic's title and contextual information. We intentionally keep the
+    surface form simple and explainable rather than injecting a probabilistic
+    semantic model.
+    """
+    path = _outline_path(node)
+    path_titles = [item.title for item in path]
+    related_info = []
+
+    for item in path:
+        if isinstance(item.related_info, dict):
+            related_info.append(json.dumps(item.related_info, ensure_ascii=False))
+
+    return " ".join([node.title, *path_titles, *related_info]).strip()
+
+
+def _rank_outline_nodes_by_tfidf(
+    course: CourseGroup,
+    title: str,
+    text: str,
+) -> list[tuple[OutlineNode, float]]:
+    """Return deterministic topic candidates and their cosine scores."""
+    nodes = list(course.nodes.all().order_by("depth", "order", "id"))
+    if not nodes:
+        return []
+
+    material_text = clean_pdf_text_for_extraction(f"{title}\n{text}", limit=16000)
+    if not material_text.strip():
+        return []
+
+    node_documents = [_outline_node_similarity_text(node) for node in nodes]
+    if not any(document.strip() for document in node_documents):
+        return []
+
+    try:
+        vectorizer = TfidfVectorizer(
+            analyzer="word",
+            ngram_range=(1, 2),
+            stop_words="english",
+            lowercase=True,
+            min_df=1,
+        )
+        matrix = vectorizer.fit_transform([material_text, *node_documents])
+    except (ValueError, TypeError):
+        return []
+
+    scores = cosine_similarity(matrix[0:1], matrix[1:]).flatten()
+    return sorted(
+        [(node, float(score)) for node, score in zip(nodes, scores)],
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+
+def _explicit_lesson_heading_node(course: CourseGroup, text: str) -> OutlineNode | None:
+    """Prefer an exact visible lesson heading when the PDF also supports it."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()][:5]
+    if not lines:
+        return None
+
+    def normalized(value: str) -> str:
+        value = re.sub(
+            r"^(?:lesson|topic)\s+\d+(?:\.\d+)*\s*[:.)-]\s*",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        return " ".join(re.findall(r"\w+", value.casefold()))
+
+    headings = {normalized(line) for line in lines}
+    candidates = [
+        node for node in course.nodes.filter(children__isnull=True).distinct()
+        if normalized(node.title) in headings
+    ]
+    if len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    scores = dict(_rank_outline_nodes_by_tfidf(course, "", text))
+    return candidate if scores.get(candidate, 0.0) >= TFIDF_COSINE_THRESHOLD else None
+
+
+def _choose_outline_node_by_tfidf(course: CourseGroup, title: str, text: str) -> OutlineNode | None:
+    """Match a learning material to the most similar outline node.
+
+    The algorithm is intentionally unchanged in substance: it represents a
+    single query document and a corpus of outline-node documents as TF-IDF
+    vectors, then measures L2-normalized lexical overlap with cosine similarity.
+
+    The refactor makes the retrieval contract explicit:
+        1. Clean the material text.
+        2. Build a node document for each outline node.
+        3. Learn one vectorizer on the combined corpus.
+        4. Rank the nodes only by cosine similarity.
+        5. Reject matches whose score is lower than the configured confidence
+           floor because a positive but tiny angle similarity is not stable IR
+           evidence.
+    """
+    heading_node = _explicit_lesson_heading_node(course, text)
+    if heading_node is not None:
+        return heading_node
+
+    ranked = _rank_outline_nodes_by_tfidf(course, title, text)
+    # Only a topic can receive a PDF: a module with topics under it is a
+    # heading, and a PDF filed there is grouped with none of its topics' PDFs.
+    parents = set(course.nodes.filter(children__isnull=False).values_list("id", flat=True))
+    ranked = [(node, score) for node, score in ranked if node.id not in parents]
+    if not ranked:
+        return None
+
+    best_node, best_score = ranked[0]
+    broad_match_count = sum(
+        score >= best_score * TFIDF_BROAD_MATCH_RATIO
+        for _, score in ranked
+    )
+
+    if (
+        best_score < TFIDF_COSINE_THRESHOLD
+        or broad_match_count > TFIDF_MAX_BROAD_MATCHES
+    ):
+        return None
+
+    return best_node
+
+
+def choose_outline_node_for_material(course: CourseGroup, title: str, text: str) -> OutlineNode | None:
+    """Public retrieval wrapper used by the generation pipeline.
+
+    This exposes the deterministic document matching API and preserves the
+    public contract expected by the rest of the lessons generation stack.
+    """
+    return _choose_outline_node_by_tfidf(course, title, text)
+
+
+def validate_outline_node_for_material(
+    course: CourseGroup,
+    selected_node: OutlineNode | None,
+    title: str,
+    text: str,
+) -> OutlineNode | None:
+    """Require real PDF evidence without demanding one infallible top-ranked node."""
+    if selected_node is None:
+        return choose_outline_node_for_material(course, title, text)
+    if selected_node.course_id != course.id:
+        return None
+
+    # Ignore the filename so a misleading name cannot manufacture support. A
+    # teacher-selected topic is accepted when its own text score is meaningful
+    # and reasonably close to the best sibling/related candidate. This avoids
+    # rejecting lessons that cover several legitimate neighboring subtopics.
+    ranked = _rank_outline_nodes_by_tfidf(course, "", text)
+    if not ranked:
+        return None
+    best_score = ranked[0][1]
+    selected_score = next(
+        (score for node, score in ranked if node.pk == selected_node.pk),
+        0.0,
+    )
+    if selected_score < SELECTED_TOPIC_COSINE_THRESHOLD:
+        return None
+    if best_score > 0 and selected_score < best_score * SELECTED_TOPIC_BEST_SCORE_RATIO:
+        return None
+    return selected_node
+
+
+def _outline_path(node: OutlineNode | None) -> list[OutlineNode]:
+    if node is None:
+        return []
+    path = [node]
+    current = node
+    while current.parent_id:
+        current = current.parent
+        path.append(current)
+    return list(reversed(path))
+
+
+def _outline_context_for_material(material: LearningMaterial) -> dict:
+    topic_path = _outline_path(material.outline_node)
+    module = material.module_node or (topic_path[0] if topic_path else None)
+    siblings = []
+    if material.outline_node_id:
+        siblings = list(
+            OutlineNode.objects.filter(
+                course=material.course,
+                parent_id=material.outline_node.parent_id,
+            )
+            .exclude(pk=material.outline_node_id)
+            .order_by("order", "id")
+            .values_list("title", flat=True)
+        )
+    return {
+        "course_title": material.course.title,
+        "module_title": module.title if module else "",
+        "module_related_info": module.related_info if module else {},
+        "topic_title": material.outline_node.title if material.outline_node else "",
+        "topic_related_info": material.outline_node.related_info if material.outline_node else {},
+        "topic_path": " / ".join(node.title for node in topic_path),
+        "sibling_topics": siblings,
+    }
+
+
+def generate_lesson_metadata_from_text(text: str, outline_context: dict | None = None) -> dict:
+    outline_context = outline_context or {}
+    lesson_title = outline_context.get("topic_title") or outline_context.get("module_title") or "Lesson"
+    return {
+        "lesson_title": lesson_title,
+        "concepts": [],
+    }
+
+
+def _is_same_label(left: str, right: str) -> bool:
+    return _normalized_heading_label(left) == _normalized_heading_label(right)
+
+
+def _remove_outline_container_objects(learning_objects: list[dict], outline_context: dict) -> list[dict]:
+    module_title = outline_context.get("module_title") or ""
+    topic_title = outline_context.get("topic_title") or ""
+    if not module_title:
+        return learning_objects
+
+    cleaned = []
+    for item in learning_objects:
+        title = item.get("title") or ""
+        content = item.get("content") or ""
+        if (
+            item.get("type") == "lesson_content"
+            and _is_same_label(title, module_title)
+            and topic_title
+            and not _is_same_label(module_title, topic_title)
+        ):
+            item = item.copy()
+            item["title"] = topic_title
+            item["source_outline_container_title"] = module_title
+        if _is_same_label(title, module_title) and not content.strip():
+            continue
+        cleaned.append(item)
+
+    for order, item in enumerate(cleaned):
+        item["order"] = order
+    return cleaned
+
+
+def remove_structural_metadata_learning_objects(learning_objects: list[dict]) -> list[dict]:
+    cleaned = [
+        item
+        for item in learning_objects
+        if not is_structural_metadata_label(item.get("title") or "")
+    ]
+    for order, item in enumerate(cleaned):
+        item["order"] = order
+    return cleaned
+
+
+def refine_learning_object_titles(
+    learning_objects: list[dict],
+    lesson_title: str = "",
+    outline_context: dict | None = None,
+) -> list[dict]:
+    return learning_objects
+
+
+def figures_narrated_at_upload() -> int | None:
+    """How many figures an upload narrates itself; ``None`` means every one.
+
+    Every figure is narrated during upload, so each one the teacher reviews
+    already carries the explanation a learner will hear. Each narration takes
+    the local model 20-40 s, so a module with many figures uploads slowly;
+    ``FIGURES_NARRATED_AT_UPLOAD`` caps it on a machine where that is too
+    slow, and publishing narrates the rest.
+    """
+    value = os.getenv("FIGURES_NARRATED_AT_UPLOAD", "").strip()
+    return max(0, int(value)) if value else None
+
+
+def describe_pdf_images(
+    images: list[dict],
+    lesson_title: str = "",
+    nearby_text: str = "",
+    *,
+    use_model: bool = True,
+    blocks: list[dict] | None = None,
+    model_limit: int | None = None,
+) -> list[dict]:
+    """Attach a spoken explanation to each extracted figure.
+
+    When a local vision model is available (see services.image_describer) each
+    figure is explained by what it *teaches*, for blind learners. When it
+    isn't, we fall back to whatever the figure already carried — its caption,
+    or the text printed inside it — exactly as before. `use_model=False`
+    forces that fallback (used in tests and for fast dry runs).
+    """
+    descriptions = []
+    # (figure position, passage printed under it, the model's narration)
+    candidates = []
+    for position, image in enumerate(images):
+        # Without its source link: the model is told what the figure is
+        # called, not where the picture was downloaded from.
+        caption = caption_without_links(image.get("caption") or "")
+        visible_text = image.get("visible_text") or ""
+        existing = image.get("description") or ""
+
+        model_description = ""
+        # ``model_limit`` narrates only the first figures; the rest keep their
+        # caption for now and are narrated when the topic is published.
+        if use_model and (model_limit is None or position < model_limit):
+            # Each figure is given the text printed around it rather than the
+            # document's opening, which only happened to be the right passage
+            # on a one-page handout. ``nearby_text`` remains the fallback for
+            # a page that holds no text of its own.
+            figure_text, upcoming = nearby_text, ""
+            if blocks:
+                around = lesson_text_around(
+                    blocks,
+                    page_number=image.get("page_number"),
+                    bbox=image.get("bbox"),
+                    siblings=images,
+                )
+                # The passage below the figure is what the lesson is about to
+                # say, so the narration introduces the figure instead of
+                # teaching the same thing a moment early.
+                figure_text = around["before"] or nearby_text
+                upcoming = around["after"]
+            # Text the figure was never printed beside cannot be what the
+            # lesson "already said", so it must not carry the instruction not
+            # to say it again: a figure alone on its page would be told to
+            # withhold an explanation of something this text never mentions.
+            model_description = describe_image_for_lesson(
+                image.get("image_bytes"),
+                lesson_title=lesson_title,
+                nearby_text=figure_text,
+                caption=caption,
+                visible_text=visible_text,
+                nearby_is_fallback=not blocks or figure_text == nearby_text,
+                upcoming_text=upcoming,
+            )
+            if blocks and model_description:
+                for passage in redundant_printed_passages(
+                    blocks,
+                    page_number=image.get("page_number"),
+                    bbox=image.get("bbox"),
+                    narration=model_description,
+                ):
+                    candidates.append((position, passage))
+
+        # A table's text left the lesson so it is not read twice; until the
+        # model narrates it, the table reads its own rows rather than nothing.
+        stand_in = spoken_table(visible_text) if image.get("is_table") else ""
+        description = model_description or existing or stand_in or caption
+        description_source = "vision_model" if model_description else "caption_or_visible_text"
+        descriptions.append(
+            {
+                "page": image["page_number"],
+                "image_index": image["index"],
+                "page_number": image["page_number"],
+                "index": image["index"],
+                "width": image["width"],
+                "height": image["height"],
+                "extension": image["extension"],
+                "description": description,
+                "content": description,
+                "image_url": image.get("image_url", ""),
+                # The "what it teaches" line, only when the model produced one.
+                "educational_purpose": model_description,
+                "description_source": description_source,
+                # Publish narrates a figure still on its stand-in, as it does
+                # one still on its caption.
+                "stand_in": stand_in if description == stand_in else "",
+                "described_by_block_id": None,
+                "contains_text": bool(visible_text),
+                "visible_text": visible_text,
+                "caption": caption,
+                "title": image.get("title") or "",
+                "bbox": image.get("bbox"),
+                "is_table": bool(image.get("is_table")),
+                "source": "table_pdf" if image.get("is_table") else "image_pdf",
+            }
+        )
+    _use_printed_descriptions(descriptions, candidates)
+    return descriptions
+
+
+# A PDF may print a figure's description right under it ("The image shows the
+# three states of matter ..."). Read as lesson text that follows the figure, it
+# became learning objects of its own and the figure was described twice. The
+# small vision model cannot be asked: measured, it answered "yes" for every
+# passage, even a one-word heading, and ignored the question when it was part
+# of the narration prompt. What it can do is describe the picture; a passage
+# that says what that description says is describing the same picture.
+# Measured with the TF-IDF similarity used for neighbouring learning objects,
+# on four PDFs: the three printed descriptions scored 0.31-0.46 (51-103 words);
+# lesson text of 30 words or more under a figure 0.00-0.23.
+_PRINTED_DESCRIPTION_SIMILARITY = float(os.getenv("PRINTED_DESCRIPTION_SIMILARITY", "0.28"))
+# A description walks through the picture; a heading, a label or a one-line
+# conclusion under it ("Therefore, Ben is as fast as Jen ...") does not.
+_MIN_PRINTED_DESCRIPTION_WORDS = 30
+
+
+def _use_printed_descriptions(descriptions: list[dict], candidates: list) -> None:
+    """Keep the author's printed explanation of a figure, not the model's.
+
+    ``candidates`` holds ``(figure position, passage)`` for every printed
+    paragraph next to a figure that says what the model's narration says (see
+    ``redundant_printed_passages``). The author's words are kept, the model's
+    narration is dropped, so the learner hears the figure explained once:
+
+    * a paragraph printed **below** the figure is its description. It becomes
+      the figure's narration and leaves the lesson text.
+    * a paragraph printed **above** it is the lesson's own explanation, which
+      the learner has just heard. It stays where it is, and the figure only
+      announces itself.
+    """
+    best = {}
+    for position, passage in candidates:
+        key = tuple(block.get("block_id") for block in passage["blocks"])
+        # A passage next to two figures explains at most one of them.
+        if passage["score"] > best.get(key, (0.0,))[0]:
+            best[key] = (passage["score"], position, passage)
+    chosen = {}
+    for score, position, passage in best.values():
+        # A figure between two matching passages keeps the one below: that is
+        # where a PDF prints a figure's own description.
+        current = chosen.get(position)
+        rank = (passage["where"] == "below", score)
+        if current is None or rank > (current["where"] == "below", current["score"]):
+            chosen[position] = passage
+    for position, passage in chosen.items():
+        block_ids = [block.get("block_id") for block in passage["blocks"]]
+        if passage["where"] == "below":
+            descriptions[position].update(
+                description=passage["text"],
+                content=passage["text"],
+                educational_purpose="",
+                description_source="pdf_description",
+                described_by_block_id=block_ids[0],
+                described_by_block_ids=block_ids,
+            )
+        else:
+            pointer = figure_pointer(
+                descriptions[position].get("caption"), descriptions[position].get("title"),
+            )
+            descriptions[position].update(
+                description=pointer,
+                content=pointer,
+                educational_purpose="",
+                description_source="pdf_text_nearby",
+                explained_by_block_ids=block_ids,
+            )
+
+
+def _mark_figure_descriptions(classified_blocks: list[dict], image_descriptions: list[dict]) -> list[dict]:
+    """Take a figure's printed description out of the lesson text.
+
+    It is the figure's narration now; left in place it would also become a
+    learning object of its own and the student would hear it twice.
+    """
+    described = {
+        block_id
+        for item in image_descriptions
+        for block_id in (
+            item.get("described_by_block_ids")
+            or [item.get("described_by_block_id")]
+        )
+        if block_id is not None
+    }
+    if not described:
+        return classified_blocks
+    return [
+        {
+            **block,
+            "category": "figure_description",
+            "reason": "Printed directly under a figure, and describes it.",
+            "include_in_narration": False,
+        }
+        if block.get("block_id") in described else block
+        for block in classified_blocks
+    ]
+
+
+# "Solids - figure", "Solids - table 2": the name extraction gives a figure that
+# the PDF printed no title or caption for. The author never wrote it.
+_SECTION_NAMED_FIGURE_TITLE = re.compile(r".+ - (?:figure|table)(?: \d+)?")
+
+
+def is_section_named_figure_title(title: str) -> bool:
+    return bool(_SECTION_NAMED_FIGURE_TITLE.fullmatch((title or "").strip()))
+
+
+# A full stop that ends an abbreviation, not a sentence: "Character vs.
+# Nature", "e.g. Water", "Dr. Rizal". Splitting there cut a bullet in two and
+# made the learner hear a pause in the middle of a phrase.
+_ABBREVIATION_END = re.compile(
+    # Words that often end a real sentence ("in", "no", "is") are left out:
+    # a missed split only makes a chunk longer, a wrong one cuts a phrase.
+    r"(?:\b(?:vs|etc|e\.g|i\.e|cf|approx|mr|mrs|ms|dr|prof|sr|jr|fig|figs|"
+    r"vol|pp|ca|mt|ft|lb|oz|dept|govt|inc|ltd|jan|feb|aug|sept|oct|nov|dec)"
+    r"|(?<![A-Za-z])[A-Z])\.$",
+    re.IGNORECASE,
+)
+
+
+def _split_sentences(text: str, *, next_must_be_capital: bool = False) -> list[str]:
+    """Split prose into sentences, never after an abbreviation or a list number."""
+    boundary = r"(?<!\d\.)(?<=[.!?])\s+" + (r"(?=[A-Z0-9])" if next_must_be_capital else "")
+    sentences = []
+    for piece in re.split(boundary, text or ""):
+        if sentences and _ABBREVIATION_END.search(sentences[-1]):
+            sentences[-1] = f"{sentences[-1]} {piece}"
+        else:
+            sentences.append(piece)
+    return sentences
+
+
+def _title_from_teacher_text(content: str, fallback: str = "Untitled content") -> str:
+    first_sentence = _split_sentences((content or "").strip())[0]
+    title = first_sentence[:100].strip(" .")
+    return (title or fallback)[:255]
+
+
+def _title_from_learning_object_item(item: dict, fallback: str = "Untitled content") -> str:
+    return _title_from_teacher_text(
+        item.get("content") or item.get("source_excerpt") or item.get("description") or item.get("visible_text") or "",
+        fallback,
+    )
+
+
+def _is_standalone_bullet_marker(text: str) -> bool:
+    """Identify any non-text PDF marker emitted as its own line."""
+    marker = (text or "").strip()
+    if not marker:
+        return False
+    return all(
+        character.isspace()
+        or unicodedata.category(character)[0] in {"P", "S", "C"}
+        for character in marker
+    )
+
+
+def _strip_leading_bullet_marker_lines(text: str) -> str:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    while len(lines) > 1 and _is_standalone_bullet_marker(lines[0]):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _inline_definition_split(text: str) -> tuple[str, str] | None:
+    text = _strip_leading_bullet_marker_lines(text)
+    text = re.sub(r"\s+", " ", text or "").strip()
+    first_token, separator, remainder = text.partition(" ")
+    if separator and _is_standalone_bullet_marker(first_token):
+        text = remainder.strip()
+    if not text or len(text) > 700:
+        return None
+    match = re.match(
+        r"^(?:(?:\d+[\.\)]|[\-\*•●])\s*)?([A-Z][A-Za-z0-9 /,&()]{1,70})\s*(?::|[-–—])\s+(.+)$",
+        text,
+    )
+    if not match:
+        return None
+    title = match.group(1).strip(" .:-–—")
+    content = match.group(2).strip()
+    if not title or not content or len(content.split()) < 3:
+        return None
+    if _is_admin_or_system_support_text(title):
+        return None
+    return title[:255], content
+
+
+def _multiline_definition_split(text: str) -> tuple[str, str] | None:
+    """Recognize two-column vocabulary rows preserved as PyMuPDF lines."""
+    if _is_symbolic_relation_text(text):
+        return None
+    text = _strip_leading_bullet_marker_lines(text)
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+    title = lines[0].strip(" .:-–—")
+    content = "\n".join(lines[1:]).lstrip("\x07•●▪ ").strip()
+    if not title or not content or len(title.split()) > 7 or len(content.split()) < 3:
+        return None
+    if re.search(r"[.!?]$", title) or _is_question_or_activity_text(title):
+        return None
+    if _is_admin_or_system_support_text(title):
+        return None
+    return title[:255], content
+
+
+def _definition_split(text: str) -> tuple[str, str] | None:
+    return _inline_definition_split(text) or _multiline_definition_split(text)
+
+
+def _followed_by_another_inline_definition(blocks: list[dict], index: int) -> bool:
+    """Return whether this labeled line begins a group of sibling definitions.
+
+    A visually wrapped bullet is often several PDF blocks: the first contains
+    ``Pollination: ...`` and the next two contain the rest of its paragraph.
+    Looking only at the very next block therefore misses the following
+    ``Fertilization: ...`` sibling and makes Pollination the section body. Walk
+    through a small, uninterrupted run of body blocks, but stop at every real
+    structural boundary so unrelated later definitions are never pulled in.
+    """
+    continuation_blocks = 0
+    for next_block in blocks[index + 1 :]:
+        next_text = (next_block.get("text") or "").strip()
+        if not next_text or _is_image_caption(next_text):
+            continue
+        if is_structural_metadata_label(next_text) or _starts_excluded_section(next_text):
+            return False
+        if next_block.get("category") not in {"lesson_content", "needs_review"}:
+            return False
+        if _definition_split(next_text) is not None:
+            return True
+        if _raw_learning_object_heading_title(next_block):
+            return False
+        continuation_blocks += 1
+        if continuation_blocks >= 8:
+            return False
+    return False
+
+
+def _split_numbered_definition_run(text: str) -> list[str]:
+    """Split one PDF block containing sequential numbered definitions.
+
+    The split is accepted only when every numbered item is independently a
+    labelled definition and the numbers are sequential. This keeps ordinary
+    numbered procedures and prose references out of this path.
+    """
+    candidates = [
+        candidate.strip()
+        for candidate in re.split(r"(?m)(?=^\s*\d+[.)]\s+[A-Z])", text or "")
+        if candidate.strip()
+    ]
+    if len(candidates) < 2:
+        return []
+    numbers = [_enumerated_item_number(candidate) for candidate in candidates]
+    if any(number is None for number in numbers):
+        return []
+    if any(right != left + 1 for left, right in zip(numbers, numbers[1:])):
+        return []
+    if any(_inline_definition_split(candidate) is None for candidate in candidates):
+        return []
+    return candidates
+
+
+def _descriptive_structural_title(title: str, content: str) -> str:
+    """Use an authored description instead of a bare ``Figure 1`` label.
+
+    PDF authors often write a structural label and its real heading on one line,
+    for example ``Figure 1 — Parts of a Fern``.  The label is useful source
+    text, but the descriptive phrase is the meaningful learning-object title.
+    """
+    if not re.fullmatch(
+        r"(?:figure|diagram|table|illustration)\s+\d+[A-Za-z]?",
+        (title or "").strip(),
+        re.IGNORECASE,
+    ):
+        return ""
+    description = re.sub(r"\s+", " ", content or "").strip()
+    if not description or len(description.split()) > 16 or re.search(r"[.!?]$", description):
+        return ""
+    return description[:255]
+
+
+def _split_embedded_heading_blocks(blocks: list[dict]) -> list[dict]:
+    """Separate an all-caps heading merged with body lines in one PDF block."""
+    expanded = []
+    for block in blocks:
+        original_text = block.get("text") or ""
+        normalized_text = _strip_leading_bullet_marker_lines(original_text)
+        original_lines = [line.strip() for line in original_text.splitlines() if line.strip()]
+        block = {
+            **block,
+            "text": normalized_text,
+            "is_bullet_item": bool(
+                original_lines
+                and (
+                    _is_standalone_bullet_marker(original_lines[0])
+                    or re.match(r"^\s*[\u2022\u25cf\u25aa\-*]\s*\S", original_text)
+                )
+            ),
+        }
+        lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+        numbered_definitions = _split_numbered_definition_run(normalized_text)
+        if numbered_definitions:
+            # Keep the source run together until the section builder can see
+            # whether it belongs to a shared parent.  Without that context the
+            # three short definitions below one figure were incorrectly turned
+            # into three tiny learning objects.
+            expanded.append(
+                {
+                    **block,
+                    "numbered_definition_items": numbered_definitions,
+                }
+            )
+            continue
+
+        first_line = lines[0] if lines else ""
+        letters = re.sub(r"[^A-Za-z]+", "", first_line)
+        heading_like = (
+            len(lines) >= 2
+            and bool(letters)
+            and letters.isupper()
+            and len(first_line.split()) <= 8
+            and len(" ".join(lines[1:]).split()) >= 5
+            and not _is_question_or_activity_text(first_line)
+        )
+        if not heading_like:
+            expanded.append(block)
+            continue
+
+        expanded.append({**block, "text": first_line, "line_count": 1})
+        expanded.append(
+            {
+                **block,
+                "text": "\n".join(lines[1:]).lstrip("\x07•●▪ ").strip(),
+                "line_count": max(len(lines) - 1, 1),
+            }
+        )
+    return expanded
+
+
+def _section_heading_title(text: str) -> str | None:
+    match = re.fullmatch(r"\s*\d+(?:\.\d+)*\.?\s+(.+?)\s*", text or "")
+    if not match:
+        return None
+    title = match.group(1).strip(" .:")
+    return title[:255] if title else None
+
+
+def _qualifies_as_section_parent(block: dict) -> bool:
+    """Return whether a numbered heading may parent the headings beneath it.
+
+    Being numbered is not sufficient. ``_learning_object_heading_title`` returns
+    a numbered title before it checks category, so quiz items ("1. ______
+    condense"), answer keys and quick-check sections reach the heading path too
+    and would otherwise be promoted into sections of their own.
+    """
+    return bool(
+        _section_heading_title(block.get("text", ""))
+        and block.get("category") == "lesson_content"
+        and block.get("include_in_narration")
+    )
+
+
+def _looks_like_plain_subtopic_heading(text: str) -> str | None:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if not text or len(text) > 90 or re.search(r"[.!]$", text):
+        return None
+    words = text.split()
+    word_count = len(words)
+    title_words = [
+        word.strip(":-,()")
+        for word in words
+        if word.lower().strip(":-,()") not in {"and", "or", "of", "in", "to", "for", "the", "a", "an"}
+    ]
+    title_cased_count = sum(1 for word in title_words if word[:1].isupper())
+    title_like = text.endswith("?") or title_cased_count >= (1 if word_count == 1 else max(2, len(title_words) - 1))
+    if 1 <= word_count <= 9 and re.search(r"[A-Za-z]", text) and title_like:
+        return text.strip(" .:")[:255]
+    return None
+
+
+def _looks_like_layout_body(block: dict) -> bool:
+    """Return whether a block supplies visible body evidence below a heading.
+
+    This deliberately uses document form rather than vocabulary. A short,
+    bold line is only useful as a layout heading when the next visible block
+    looks like authored prose. Requiring that evidence prevents isolated
+    callouts and emphasized equations from becoming empty learning objects.
+    """
+    text = re.sub(r"\s+", " ", block.get("text") or "").strip()
+    if not text or _is_image_caption(text) or _is_symbolic_relation_text(text):
+        return False
+    if block.get("category") in {
+        "answer_key",
+        "assessment",
+        "decorative_or_noise",
+        "navigation",
+        "reference",
+        "teacher_note",
+    }:
+        return False
+    if int(block.get("line_count") or 1) >= 2 and len(text.split()) >= 3:
+        return True
+    return len(text.split()) >= 3 and bool(re.search(r"[.!?;:]$", text))
+
+
+def _layout_heading_shape(block: dict) -> bool:
+    """Cheap non-recursive heading shape used while finding body evidence."""
+    raw_text = block.get("text") or ""
+    text = re.sub(r"\s+", " ", raw_text).strip()
+    return bool(
+        text
+        and "\n" not in raw_text.strip()
+        and int(block.get("line_count") or 1) == 1
+        and len(text) <= 90
+        and 1 <= len(text.split()) <= 9
+        and not re.search(r"[.!;:]$", text)
+        and not _is_symbolic_relation_text(text)
+        and not _starts_authored_list_item(text)
+        and (
+            block.get("is_bold")
+            or float(block.get("font_size") or 0.0) > 0
+        )
+    )
+
+
+def _layout_heading_candidate(blocks: list[dict], index: int) -> str | None:
+    """Infer a heading from typography and adjacency, without topic keywords.
+
+    Some authored subsection names contain only one meaningful word after a
+    short preposition. Title-case heuristics alone reject those lines even when
+    the PDF clearly renders them as bold labels over prose. This recognizer is
+    document-structural: it uses bold/relative-size emphasis, a single short
+    line, and nearby body evidence. It never checks for a subject name or a
+    predefined heading phrase.
+    """
+    block = blocks[index]
+    raw_text = block.get("text") or ""
+    text = re.sub(r"\s+", " ", raw_text).strip()
+    if (
+        not text
+        or "\n" in raw_text.strip()
+        or int(block.get("line_count") or 1) != 1
+        or len(text) > 90
+        or not 1 <= len(text.split()) <= 9
+        or re.search(r"[.!;:]$", text)
+        or _is_symbolic_relation_text(text)
+        or _starts_authored_list_item(text)
+        or block.get("is_figure_text")
+        or block.get("category") in {
+            "answer_key",
+            "assessment",
+            "decorative_or_noise",
+            "navigation",
+            "reference",
+            "teacher_note",
+        }
+    ):
+        return None
+
+    font_size = float(block.get("font_size") or 0.0)
+    nearby_body_sizes = [
+        float(candidate.get("font_size") or 0.0)
+        for candidate in blocks[max(0, index - 4) : min(len(blocks), index + 5)]
+        if candidate is not block
+        and float(candidate.get("font_size") or 0.0) > 0
+        and _looks_like_layout_body(candidate)
+    ]
+    body_size = sorted(nearby_body_sizes)[len(nearby_body_sizes) // 2] if nearby_body_sizes else 0.0
+    visually_emphasized = bool(block.get("is_bold")) or bool(
+        font_size and body_size and font_size > body_size + 0.25
+    )
+    if not visually_emphasized:
+        return None
+
+    # A heading may be followed by one uncertain sentence; classification
+    # confidence must not erase a relationship that the page layout preserves.
+    for following in blocks[index + 1 : index + 4]:
+        following_text = (following.get("text") or "").strip()
+        if not following_text or _is_image_caption(following_text):
+            continue
+        if _looks_like_layout_body(following):
+            return text[:255]
+        if _layout_heading_shape(following):
+            return None
+    return None
+
+
+def _annotate_layout_headings(blocks: list[dict]) -> list[dict]:
+    """Add internal, document-relative heading evidence to copied blocks."""
+    annotated = [{**block} for block in blocks]
+    for index, block in enumerate(annotated):
+        title = _layout_heading_candidate(annotated, index)
+        if title:
+            block["_layout_heading_title"] = title
+    return annotated
+
+
+def _is_supporting_component_heading(text: str) -> bool:
+    """Return whether a heading supplies evidence for the active concept."""
+    label = _normalized_heading_label(text)
+    return bool(
+        re.fullmatch(
+            r"(?:"
+            r"(?:definitions?|explanations?)(?:\s+(?:of|for|in)\s+.+)?"
+            r"|(?:(?:common|everyday|practical|real\s+world|worked)\s+)?examples?"
+            r"(?:\s+(?:of|for|in)\s+.+)?"
+            r"|as\s+a\s+general\s+rule"
+            r"|key\s+idea"
+            r")",
+            label,
+        )
+    )
+
+
+def _supporting_component_prefix(heading: str) -> str:
+    """Keep an authored lead-in's punctuation when it joins its section."""
+    heading = (heading or "").strip()
+    if re.search(r"[:,;]$", heading):
+        return heading
+    if _normalized_heading_label(heading) == "as a general rule":
+        return f"{heading},"
+    return f"{heading}:"
+
+
+# A lead-in is a word or a short phrase; anything longer that runs into
+# lower-case text is a wrapped heading or sentence, handled elsewhere.
+_MAX_LEADIN_LABEL_WORDS = 5
+
+
+def _starts_lower_case(text: str) -> bool:
+    first_letter = re.search(r"[A-Za-z]", text or "")
+    return bool(first_letter and first_letter.group(0).islower())
+
+
+def _next_text_continues_sentence(blocks: list[dict], index: int) -> bool:
+    """Return whether the next visible lesson text starts in lower case.
+
+    Then the line at ``index`` opens that sentence ("Remember" / "cooling a
+    gas slows ..."), so it is a lead-in, whatever word the author chose.
+    """
+    for following in blocks[index + 1 : index + 3]:
+        text = (following.get("text") or "").strip()
+        if not text or _is_image_caption(text):
+            continue
+        if following.get("category") not in {"lesson_content", "needs_review"}:
+            return False
+        return _starts_lower_case(text)
+    return False
+
+
+def _label_is_a_lesson_term(blocks: list[dict], index: int, label: str) -> bool:
+    """Return whether the lesson's own text uses this label as a word.
+
+    A defined term recurs ("Solid: matter with ..." and later "a solid has
+    ..."); an author's lead-in ("Remember", "Big idea") names nothing the lesson
+    teaches. A line that opens with the label does not count, so three "Key
+    idea:" call-outs do not make "key idea" a term.
+    """
+    words = re.findall(r"[a-z0-9]+", (label or "").casefold())
+    if not words:
+        return False
+    pattern = re.compile(
+        r"\b" + r"\s+".join(re.escape(word) for word in words) + r"(?:e?s)?\b",
+        re.IGNORECASE,
+    )
+    opens_with_label = re.compile(r"^\W*" + pattern.pattern, re.IGNORECASE)
+    for position, block in enumerate(blocks):
+        if position == index or block.get("category") not in {"lesson_content", "needs_review"}:
+            continue
+        text = re.sub(r"\s+", " ", block.get("text") or "").strip()
+        if not text or opens_with_label.match(text):
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
+def _in_definition_list(blocks: list[dict], index: int) -> bool:
+    """Return whether a labelled line has a labelled neighbour (a glossary)."""
+    if _followed_by_another_inline_definition(blocks, index):
+        return True
+    for previous in reversed(blocks[:index]):
+        text = (previous.get("text") or "").strip()
+        if not text or _is_image_caption(text):
+            continue
+        return (
+            previous.get("category") in {"lesson_content", "needs_review"}
+            and _definition_split(text) is not None
+        )
+    return False
+
+
+def _inline_definition_is_sentence_leadin(
+    source_text: str,
+    title: str,
+    content: str,
+) -> bool:
+    """Return whether a labelled block is one sentence, not title plus body.
+
+    PDF styling often emphasizes only a sentence's opening phrase. The block
+    still reaches us intact (``Key idea: solid particles ...``), but the
+    generic definition splitter used to remove that phrase from narration and
+    turn it into a concept title. Generic callout labels are always lead-ins;
+    a longer colon label followed by lower-case prose is also sentence-shaped.
+    Short vocabulary definitions such as ``Matter: anything ...`` keep their
+    existing title/body behavior.
+    """
+    normalized_source = re.sub(r"\s+", " ", source_text or "").strip()
+    normalized_title = _normalized_heading_label(title)
+    first_content_letter = re.search(r"[A-Za-z]", content or "")
+    if not normalized_source or not first_content_letter:
+        return False
+    if normalized_title in {"as a general rule", "example", "key idea"}:
+        return True
+    return bool(
+        len((title or "").split()) >= 4
+        and first_content_letter.group(0).islower()
+        # "Flowering plants rely on pollination -- pollen must travel ..." is
+        # the same sentence shape with a dash in place of the colon.
+        and re.match(rf"^{re.escape((title or '').strip())}\s*[:\-–—]", normalized_source, re.IGNORECASE)
+    )
+
+
+def _is_symbolic_relation_text(text: str) -> bool:
+    """Recognize compact authored relationships without knowing subject terms."""
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    return bool(
+        normalized
+        and len(normalized) <= 180
+        and re.search(r"\S\s*(?:\u2192|->|=>)\s*\S", normalized)
+    )
+
+
+def _current_concept_accepts_supporting_component(current: dict, heading: str) -> bool:
+    if not current or not _is_supporting_component_heading(heading):
+        return False
+    parts = current.get("parts") or []
+    if not parts or current.get("has_supporting_components") or len(parts) >= 2:
+        return True
+    existing_content = " ".join(parts)
+    return bool(
+        _is_symbolic_relation_text(existing_content)
+        or (
+            len((current.get("title") or "").split()) <= 3
+            and (
+                re.search(r"[.!?]$", existing_content)
+                or re.search(
+                    r"\b(?:is|are)\s+(?:a|an|the)\b|\bis defined as\b|\brefers? to\b",
+                    existing_content,
+                    flags=re.IGNORECASE,
+                )
+            )
+        )
+    )
+
+
+def _enumerated_item_number(text: str) -> int | None:
+    match = re.match(r"^\s*(\d+)[.)]\s+\S", text or "")
+    if not match or _is_question_or_activity_text(text):
+        return None
+    return int(match.group(1))
+
+
+def _is_discourse_continuation_label(text: str) -> bool:
+    """Recognize transition labels that continue a thought rather than name it."""
+    label = _normalized_heading_label(text)
+    return bool(
+        str(text or "").rstrip().endswith(":")
+        and label
+        in {
+            "afterward",
+            "consequently",
+            "eventually",
+            "finally",
+            "first",
+            "however",
+            "meanwhile",
+            "next",
+            "then",
+            "therefore",
+        }
+    )
+
+
+def _heading_refers_to_current_concept(current: dict, heading: str) -> bool:
+    """Keep a subheading with the concept whose title it names."""
+    ignored = {
+        "a",
+        "an",
+        "and",
+        "chapter",
+        "example",
+        "examples",
+        "for",
+        "in",
+        "lesson",
+        "of",
+        "part",
+        "section",
+        "the",
+        "to",
+        "unit",
+    }
+    title_words = [
+        word[:-1] if word.endswith("s") and len(word) > 3 else word
+        for word in _normalized_heading_label(current.get("title") or "").split()
+        if word not in ignored and not word.isdigit()
+    ]
+    heading_words = {
+        word[:-1] if word.endswith("s") and len(word) > 3 else word
+        for word in _normalized_heading_label(heading).split()
+        if word not in ignored and not word.isdigit()
+    }
+    # Containment, not overlap. A sub-heading names its parent -- "Examples of
+    # Solids" holds the whole of "Solids" -- where a sibling only brushes
+    # against it: "How Matter Changes State" shares one word of "Comparing the
+    # Three States", which reduces to exactly three and so slipped under the
+    # limit below, letting "state" alone carry the decision.
+    return bool(title_words and len(title_words) <= 3 and set(title_words) <= heading_words)
+
+
+def _raw_learning_object_heading_title(block: dict) -> str | None:
+    if block.get("teacher_override") or block.get("is_bullet_item"):
+        return None
+    if block.get("category") in {
+        "answer_key",
+        "assessment",
+        "decorative_or_noise",
+        "navigation",
+        "reference",
+        "teacher_note",
+    }:
+        return None
+    if (
+        block.get("category") == "document_metadata"
+        and block.get("reason") != "Short heading or label rather than narration."
+    ):
+        return None
+    text = block.get("text", "")
+    if _is_symbolic_relation_text(text):
+        return None
+    if is_structural_metadata_label(text):
+        return None
+    if int(block.get("line_count") or 1) >= 2 and not _section_heading_title(text):
+        return None
+    return (
+        _section_heading_title(text)
+        or block.get("_layout_heading_title")
+        or _looks_like_plain_subtopic_heading(text)
+    )
+
+
+def _learning_object_heading_title(block: dict) -> str | None:
+    if block.get("teacher_override") or block.get("is_bullet_item"):
+        return None
+    if block.get("category") == "navigation":
+        return None
+    if _is_symbolic_relation_text(block.get("text", "")):
+        return None
+    numbered_title = _section_heading_title(block.get("text", ""))
+    if numbered_title:
+        return numbered_title
+    if block.get("category") != "lesson_content" or not block.get("include_in_narration"):
+        return None
+    return block.get("_layout_heading_title") or _looks_like_plain_subtopic_heading(
+        block.get("text", "")
+    )
+
+
+def _normalized_heading_label(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+_DIVIDED_SECTION = re.compile(
+    r"\s*(?:part|section)\s+(?:\d+|[ivxlcdm]+)\s*[:.\-–—]\s*(?P<title>\S.*?)\s*",
+    re.IGNORECASE,
+)
+
+
+def _divided_section_title(text: str) -> str:
+    """The name of a lesson part: "Part 3: Understanding POV" -> "Understanding POV"."""
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    match = _DIVIDED_SECTION.fullmatch(normalized)
+    if not match or re.search(r"[.!?]$", normalized) or len(normalized.split()) > 12:
+        return ""
+    return match.group("title").strip(" .:")[:255]
+
+
+# "Summary: what to remember", "Key takeaways", "What I Have Learned": a
+# section that restates several concepts at the end of a lesson.
+_RECAP_HEADING = re.compile(
+    r"(?:lesson |chapter |unit )?summary\b|in summary\b|to summari[sz]e\b|let'?s summari[sz]e\b"
+    # A bare "Key Points" box often sits inside one concept's section, so only
+    # "key points to remember" counts.
+    r"|recap\b|key takeaways?\b|takeaways?\b|key points to remember\b|points to remember\b"
+    r"|what to remember\b|things to remember\b|what i (?:have )?learned\b|wrap[- ]?up\b"
+    r"|(?:in )?conclusion\b"
+)
+
+
+def is_recap_section(title: str, section_title: str = "") -> bool:
+    """True for an object in a lesson's summary or recap section.
+
+    A summary restates the lesson ("Solids hold a fixed shape ... Liquids keep
+    a fixed volume ..."), so by meaning it really is close to the sections it
+    sums up, and grouping paired PDF 2's summary with PDF 3's *Solids* and
+    *Gases* as if they were versions of one concept. It spans several
+    concepts, so it is never a version of one: it stays its own step.
+    """
+    for label in (section_title, _TITLE_PART_SUFFIX.sub("", title or "")):
+        normalized = _normalized_heading_label(label or "")
+        if normalized and _RECAP_HEADING.match(normalized):
+            return True
+    return False
+
+
+def is_structural_metadata_label(text: str) -> bool:
+    label = _normalized_heading_label(text)
+    if not label:
+        return False
+    return bool(
+        re.fullmatch(
+            r"(?:module|unit|chapter|lesson|week|quarter|section|part)\s+"
+            r"(?:\d+|[ivxlcdm]+)(?:\s+.+)?",
+            label,
+        )
+    )
+
+
+def _starts_excluded_section(text: str) -> bool:
+    if _is_admin_or_system_support_text(text) or _is_question_or_activity_text(text):
+        return True
+
+    label = _normalized_heading_label(text)
+    if label == "materials":
+        return True
+    excluded_section_labels = {
+        "about the author",
+        "about the authors",
+        "acknowledgment",
+        "acknowledgments",
+        "acknowledgement",
+        "acknowledgements",
+        "answer key",
+        "answers",
+        "bibliography",
+        "copyright",
+        "dedication",
+        "general instructions",
+        "glossary",
+        "index",
+        "learning objective",
+        "learning objectives",
+        "objective",
+        "objectives",
+        "essential question",
+        "essential questions",
+        "success criteria",
+        "learning goal",
+        "learning goals",
+        "chapter overview",
+        "course overview",
+        "lesson overview",
+        "module overview",
+        "unit overview",
+        "lesson objective",
+        "lesson objectives",
+        "teacher notes",
+        "teacher note",
+        "publisher information",
+        "references",
+        "sources",
+        "suggested answers",
+        "table of contents",
+        "activity",
+        "background and misconceptions",
+        "additional topics",
+        "cut or fold",
+        "extension activities",
+        "prior knowledge",
+        "other topics",
+        "probing questions to think about",
+        "projects and activities",
+        "quick check",
+        "quick checks",
+        "spark",
+        "a student handout and study guide",
+        "student handout",
+        "student handout and study guide",
+        "study tip",
+        "study tips",
+        "unit materials",
+        "using the internet",
+        "vocabulary",
+        "vocabulary activities",
+        "word sort",
+        "word work",
+    }
+    if label in excluded_section_labels or any(label.startswith(f"{section} ") for section in excluded_section_labels):
+        return True
+    if label.startswith("lesson ") and ":" in text:
+        return True
+    return False
+
+
+def _starts_contextual_excluded_section(blocks: list[dict], index: int) -> bool:
+    """Recognize ambiguous support headings only when their body is a prompt.
+
+    ``Reflection`` can name a real concept in subjects such as physics, so it
+    must not be globally excluded by title. In a student handout, however, a
+    Reflection heading immediately followed by a question is an activity
+    boundary and should not become a learning object.
+    """
+    text = (blocks[index].get("text") or "").strip()
+    if blocks[index].get("question_heading"):
+        # Classification saw the paragraph that answers it: a heading.
+        return False
+    if _starts_excluded_section(text):
+        return True
+    if _normalized_heading_label(text) != "reflection":
+        return False
+
+    for following in blocks[index + 1 :]:
+        following_text = (following.get("text") or "").strip()
+        if not following_text or _is_image_caption(following_text):
+            continue
+        return bool(
+            following.get("category") == "assessment"
+            or _is_question_or_activity_text(following_text)
+        )
+    return False
+
+
+def _is_learning_objective_statement(text: str) -> bool:
+    normalized = _normalized_heading_label(text)
+    if not normalized:
+        return False
+    objective_action_verbs = (
+        "analyze",
+        "calculate",
+        "classify",
+        "compare",
+        "contrast",
+        "define",
+        "demonstrate",
+        "describe",
+        "distinguish",
+        "evaluate",
+        "examine",
+        "explain",
+        "group",
+        "identify",
+        "illustrate",
+        "interpret",
+        "list",
+        "observe",
+        "outline",
+        "predict",
+        "recognize",
+        "relate",
+        "state",
+        "summarize",
+    )
+    if re.match(rf"^(?:{'|'.join(objective_action_verbs)})\b", normalized):
+        return True
+    if re.match(r"^(students should|learners should|learners will|students will|learners can|students can)\b", normalized):
+        return True
+    return False
+
+
+def _ends_excluded_section(block: dict, blocks: list[dict], index: int) -> bool:
+    stripped = (block.get("text") or "").strip()
+    if block.get("question_heading"):
+        # "What is Point of View?" over its answer is a new lesson heading,
+        # so the activity before it is over.
+        return True
+    if re.match(r"^[\u2022\-\*]", stripped):
+        return False
+    if _is_question_or_activity_text(stripped):
+        return False
+
+    heading = _raw_learning_object_heading_title(block)
+    if heading and (
+        (_section_heading_title(stripped) and _heading_has_following_content(blocks, index))
+        or _plain_heading_has_following_body_content(blocks, index)
+    ):
+        return True
+
+    return False
+
+
+def _excluded_section_allows_prose_exit(text: str) -> bool:
+    """Objectives may be followed directly by lesson prose without a heading.
+
+    Teacher-guide, worksheet, assessment, and reference sections deliberately
+    require a real heading before content can resume.
+    """
+    label = _normalized_heading_label(text)
+    return label in {
+        "learning objective",
+        "learning objectives",
+        "objective",
+        "objectives",
+        "lesson objective",
+        "lesson objectives",
+    }
+
+
+def _finalize_current_learning_object(current: dict | None, learning_objects: list[dict]) -> None:
+    if not current:
+        return
+    parts = current.pop("parts", [])
+    current.pop("has_supporting_components", None)
+    current.pop("expected_enumerated_item", None)
+    current.pop("from_inline_definition", None)
+    current.pop("heading_font_size", None)
+    adopted_inline_label = current.pop("adopted_inline_label", False)
+    content = _format_section_content(parts)
+    if content:
+        # PDF layout occasionally leaves a section heading immediately above a
+        # single, self-labelled passage.  Treating that passage as the body of
+        # the empty heading creates a title/content mismatch (the title names
+        # the preceding section while the first words of the body name the
+        # actual concept).  Prefer the authored inline label in that exact
+        # structural case. Generic component labels such as ``Definition`` or
+        # ``Examples`` still belong to the heading above them.
+        if parts and (len(parts) == 1 or adopted_inline_label):
+            labelled_passage = _definition_split(parts[0])
+            if labelled_passage:
+                passage_title, passage_content = labelled_passage
+                current_title = (current.get("title") or "").strip()
+                if (
+                    current_title
+                    and not _is_same_label(current_title, passage_title)
+                    and not _is_supporting_component_heading(current_title)
+                    and not _is_supporting_component_heading(passage_title)
+                    # "Flowering plants rely on pollination -- pollen must
+                    # ..." opens a sentence; it is not the paragraph's name,
+                    # and the author's heading above it stays.
+                    and not _inline_definition_is_sentence_leadin(
+                        parts[0], passage_title, passage_content,
+                    )
+                ):
+                    current["title"] = passage_title
+                    content = _format_section_content(
+                        [passage_content, *parts[1:]]
+                    )
+                    current["source_excerpt"] = parts[0]
+                    current["title_operation"] = "authored_inline_label"
+        current["content"] = content
+        if not (current.get("title") or "").strip():
+            current["title"] = _title_from_teacher_text(content)
+        learning_objects.append(current)
+
+
+def _is_instructional_table_or_chart_block(block: dict) -> bool:
+    text = (block.get("text") or "").strip()
+    if block.get("category") not in {"lesson_content", "table_header", "concept_metadata"}:
+        return False
+    return int(block.get("line_count") or 1) >= 3 and len(text.split()) >= 8
+
+
+def _block_is_excluded_from_learning_object(block: dict) -> bool:
+    text = block.get("text", "") or ""
+    label = _normalized_heading_label(text)
+    if re.search(r"\bpage\s+\d+\b", label) and len(text.split()) <= 8:
+        return True
+    if label.startswith(("prerequisite connection", "concept dependency")):
+        return True
+    if _is_admin_or_system_support_text(text):
+        return True
+    if _is_question_or_activity_text(text):
+        return True
+    if _is_learning_objective_statement(text):
+        return True
+    return block.get("category") in {
+        "answer_key",
+        "document_metadata",
+        "figure_description",
+        "learning_objective",
+        "assessment",
+        "navigation",
+        "teacher_note",
+        "reference",
+        "decorative_or_noise",
+    }
+
+
+def _is_admin_or_system_support_text(text: str) -> bool:
+    label = _normalized_heading_label(text)
+    if not label:
+        return False
+
+    admin_cues = (
+        "teacher review note",
+        "teacher should verify",
+        "local outline extraction may detect",
+        "generated learner path",
+        "prerequisite edge",
+        "edge scoring",
+        "concept node",
+        "concept nodes",
+        "learning path",
+        "learner path",
+        "dependency cues",
+        "prerequisite cues",
+    )
+    if any(cue in label for cue in admin_cues):
+        return True
+
+    # Exclude prose about how lesson content should be written or formatted;
+    # it describes the document rather than teaching its subject.
+    authoring_terms = {"write", "written", "read", "format", "notes", "sequence", "collection"}
+    document_terms = {"lesson", "content", "example", "examples", "question", "questions", "facts"}
+    if {"you", "want"}.issubset(set(label.split())):
+        tokens = set(label.split())
+        if tokens & authoring_terms and len(tokens & document_terms) >= 2:
+            return True
+
+    tokens = set(label.split())
+    editorial_terms = {"actual", "like", "more", "random", "rather", "should", "want"}
+    editorial_content_terms = {"content", "document", "format", "info", "information", "lesson", "notes", "read"}
+    if (
+        "teacher" in tokens
+        and "notes" in tokens
+        and tokens & editorial_terms
+        and tokens & editorial_content_terms
+    ):
+        return True
+
+    support_terms = {"teacher", "algorithm", "edge", "scoring", "verify"}
+    path_terms = {"learner", "learning", "path", "prerequisite", "dependency", "concept", "node", "nodes"}
+    return bool(tokens & support_terms) and len(tokens & path_terms) >= 2
+
+
+def _is_question_or_activity_text(text: str) -> bool:
+    stripped = re.sub(r"\s+", " ", text or "").strip()
+    label = _normalized_heading_label(stripped)
+    if not label:
+        return False
+    if re.match(r"^\s*[qa]\s*:", stripped, flags=re.IGNORECASE):
+        return True
+
+    section_labels = {
+        "answer",
+        "answer key",
+        "answers",
+        "expected answer",
+        "expected answers",
+        "suggested answer",
+        "suggested answers",
+        "sample answer",
+        "sample answers",
+        "correct answer",
+        "correct answers",
+        "application",
+        "assignment",
+        "assignments",
+        "question",
+        "questions",
+        "guide question",
+        "guide questions",
+        "discussion question",
+        "discussion questions",
+        "practice question",
+        "practice questions",
+        "quiz",
+        "quizzes",
+        "test",
+        "tests",
+        "assessment",
+        "assessments",
+        "evaluation",
+        "evaluations",
+        "activity",
+        "activities",
+        "learning activity",
+        "learning activities",
+        "enrichment activity",
+        "enrichment activities",
+        "practice activity",
+        "practice activities",
+        "exercise",
+        "exercises",
+        "worksheet",
+        "worksheets",
+        "review questions",
+        "review",
+        "practice",
+        "practice exercise",
+        "practice exercises",
+        "quick check",
+        "quick checks",
+        "practice task",
+        "practice tasks",
+        "check your understanding",
+        "check your knowledge",
+        "teacher check",
+        "knowledge check",
+        "comprehension check",
+        "self check",
+        "self check quiz",
+        "ask",
+        "test yourself",
+        "try this",
+        "let us try",
+        "lets try",
+        "your turn",
+        "challenge",
+        "drill",
+        "directions",
+        "direction",
+        "instructions",
+        "instruction",
+        "materials",
+        "materials needed",
+        "task",
+        "tasks",
+        "performance task",
+        "performance tasks",
+    }
+    if label in section_labels:
+        return True
+    if re.match(
+        r"^(?:practice\s+)?exercises?\s+(?:\d+|[a-z]|[ivxlcdm]+)(?:\b|$)",
+        label,
+    ):
+        return True
+    if any(re.fullmatch(rf"{re.escape(section)}\s+\d+", label) for section in section_labels):
+        return True
+    if any(
+        re.match(rf"^\s*{re.escape(section)}\s*[:\-â€“â€”]\s*\S", stripped, flags=re.IGNORECASE)
+        for section in section_labels
+    ):
+        return True
+    if stripped.endswith("?"):
+        return True
+    if re.search(
+        r"(?:^|[?\u2022\u25cf\u25aa\-*]\s*)"
+        r"(?:how|why|what|which|who|where|when|do|does|did|is|are|can|could|should|would)\b"
+        r"[^?]{1,500}\?",
+        stripped,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(r"_{3,}", stripped):
+        return True
+    if len(re.findall(r"(?:^|\s)[A-Da-d][.)]\s+", stripped)) >= 2:
+        return True
+
+    prompt = re.sub(r"^(?:[\u2022\-\*]\s*)?(?:\d+[\.\)]|[a-zA-Z][\.\)])\s*", "", stripped).strip()
+    prompt_label = _normalized_heading_label(prompt)
+    if prompt and prompt.endswith("?"):
+        return True
+
+    instruction_verbs = (
+        "answer",
+        "arrange",
+        "calculate",
+        "choose",
+        "circle",
+        "classify",
+        "compare",
+        "complete",
+        "conduct",
+        "create",
+        "define",
+        "describe",
+        "discuss",
+        "draw",
+        "encircle",
+        "enumerate",
+        "explain",
+        "fill",
+        "give",
+        "identify",
+        "infer",
+        "label",
+        "list",
+        "make",
+        "match",
+        "observe",
+        "predict",
+        "select",
+        "solve",
+        "underline",
+        "write",
+    )
+    instruction_phrases = (
+        "answer the following",
+        "choose the correct",
+        "classify the following",
+        "complete the",
+        "fill in",
+        "match the",
+        "multiple choice",
+        "true or false",
+        "write your answer",
+        "write your answers",
+    )
+    if re.match(r"^\s*(?:directions?|instructions?)\s*:", stripped, flags=re.IGNORECASE):
+        return True
+    numbered_or_bulleted_prompt = prompt != stripped
+    if re.match(r"^(?:q\d+|question\s*\d+|answer)\b", label):
+        return True
+    if numbered_or_bulleted_prompt and re.match(rf"^(?:{'|'.join(instruction_verbs)})\b", prompt_label):
+        return True
+    if any(phrase in prompt_label for phrase in instruction_phrases):
+        return True
+    return False
+
+
+def _looks_like_body_text(text: str, block: dict) -> bool:
+    text = (text or "").strip()
+    if not text or _raw_learning_object_heading_title(block):
+        return False
+    if block.get("category") in {"concept_metadata", "table_header"}:
+        return False
+    bullet_text = re.sub(r"^[\u2022\-\*]\s*", "", text).strip()
+    word_count = len(text.split())
+    if bullet_text != text and bullet_text:
+        return True
+    if int(block.get("line_count") or 1) >= 2 and word_count >= 3:
+        return True
+    if word_count < 8:
+        return False
+    return bool(re.search(r"[.!;:)]$", text) or ":" in text) or int(block.get("line_count") or 1) >= 2
+
+
+def _block_is_kept_content(block: dict) -> bool:
+    text = block.get("text", "") or ""
+    if _block_is_excluded_from_learning_object(block):
+        return False
+    # An uncertain block may be attached to an already validated concept
+    # heading by the stateful builder, but it cannot create a standalone
+    # learning object by itself.
+    if block.get("category") == "needs_review":
+        return False
+    return (
+        block.get("category") == "lesson_content"
+        and block.get("include_in_narration")
+        and not _raw_learning_object_heading_title(block)
+    ) or _is_instructional_table_or_chart_block(block) or _looks_like_body_text(text, block)
+
+
+def _heading_has_following_content(blocks: list[dict], start_index: int) -> bool:
+    for next_block in blocks[start_index + 1 :]:
+        text = (next_block.get("text") or "").strip()
+        if not text or _is_image_caption(text):
+            continue
+        if _block_is_kept_content(next_block):
+            return True
+        if _raw_learning_object_heading_title(next_block) or next_block.get("category") in {
+            "learning_objective",
+            "teacher_note",
+            "reference",
+        }:
+            return False
+    return False
+
+
+def _plain_heading_has_following_body_content(blocks: list[dict], start_index: int) -> bool:
+    for next_block in blocks[start_index + 1 :]:
+        text = (next_block.get("text") or "").strip()
+        if not text or _is_image_caption(text):
+            continue
+        if _is_supporting_component_heading(text):
+            continue
+        if _is_symbolic_relation_text(text):
+            return True
+        if ":" in text and len(text.split()) >= 3:
+            return True
+        if _section_heading_title(text) or _looks_like_plain_subtopic_heading(text) or _starts_excluded_section(text):
+            return False
+        bullet_text = re.sub(r"^[\u2022\-\*]\s*", "", text).strip()
+        if bullet_text != text:
+            return len(bullet_text.split()) >= 2
+        if len(text.split()) >= 3 and (re.search(r"[.!;:)]$", text) or ":" in text or int(next_block.get("line_count") or 1) >= 2):
+            return True
+    return False
+
+
+# "Figure 2. ...", "Figure 2: ...", "Figure 5A: ...", "Fig. 3B. ..." -- the
+# label a printed caption opens with. Modules number related figures 5A, 5B
+# and use a colon as often as a period; missing either left the caption to be
+# read as a heading, and "Figure 5A: Speed" became a lesson chunk's title.
+_CAPTION_LABEL = re.compile(r"\s*(?:figure|fig\.?)\s*\d+[A-Za-z]?\s*[.:]\s*", re.IGNORECASE)
+# A caption is a line or two. A longer block that opens like one is prose
+# that happens to start with a figure reference, and must not be skipped.
+_MAX_CAPTION_WORDS = 20
+
+
+def _image_caption_title(text: str) -> str | None:
+    label = _CAPTION_LABEL.match(text or "")
+    match = re.match(r"(.+)", (text or "")[label.end():], flags=re.DOTALL) if label else None
+    if not match:
+        return None
+    caption = match.group(1).strip()
+    caption = re.split(r"\bThis image\b|\bThis figure\b", caption, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    caption = caption.rstrip(". ")
+    return caption[:255] if caption else None
+
+
+def _is_image_caption(text: str) -> bool:
+    return bool(_CAPTION_LABEL.match(text or "")) and len((text or "").split()) <= _MAX_CAPTION_WORDS
+
+
+def _format_section_content(parts: list[str]) -> str:
+    normalized_parts = [
+        normalized
+        for part in parts
+        if part and part.strip()
+        for normalized in [_normalize_pdf_content_part(part)]
+        if normalized
+    ]
+    formatted_parts: list[str] = []
+    for normalized in normalized_parts:
+        if (
+            formatted_parts
+            and not re.search(r"[.!?;:]\s*$", formatted_parts[-1])
+            and re.match(r"^[a-z(]", normalized.lstrip())
+        ):
+            formatted_parts[-1] = f"{formatted_parts[-1].rstrip()} {normalized.lstrip()}"
+        else:
+            formatted_parts.append(normalized)
+    return "\n".join(formatted_parts).strip()
+
+
+def _append_pdf_text_to_learning_object(item: dict, text: str, block: dict) -> bool:
+    """Attach an extracted PDF block without rewriting its text."""
+    if item.get("type") != "lesson_content" or not text.strip():
+        return False
+
+    existing = (item.get("content") or "").strip()
+    item["content"] = _format_section_content([existing, text])
+    if not item.get("source_excerpt"):
+        item["source_excerpt"] = text
+    if not item.get("source_page"):
+        item["source_page"] = block.get("page")
+    return True
+
+
+def _is_short_wrapped_continuation(item: dict, text: str, block: dict) -> bool:
+    """Accept one visual spillover line when the prior sentence is unfinished."""
+    existing = (item.get("content") or "").rstrip()
+    text = (text or "").strip()
+    if item.get("type") != "lesson_content" or not existing or not text:
+        return False
+    # A normal full-width PDF line commonly carries 13-20 words. The old
+    # twelve-word cap dropped the middle line of wrapped bullets while keeping
+    # their shorter final line. Forty still rejects paragraph-sized blocks;
+    # the lowercase, same-page and unfinished-sentence guards below do the
+    # structural work.
+    if re.search(r"[.!?;:]$", existing) or len(text.split()) > 40:
+        return False
+    if _is_question_or_activity_text(text) or _is_admin_or_system_support_text(text):
+        return False
+    if item.get("source_page") and block.get("page") and item["source_page"] != block["page"]:
+        return False
+    return bool(re.match(r"^[a-z(]", text))
+
+
+def _short_definition_run_belongs_to_current(
+    current: dict | None,
+    definition_items: list[str],
+    source_text: str,
+    block: dict,
+) -> bool:
+    """Return whether short sibling definitions should remain one parent object.
+
+    This is based on document structure and size, not subject-specific words:
+    the definitions must be consecutive, individually short, directly follow an
+    active parent, and keep the completed object within a readable size.
+    """
+    if not current or not current.get("parts") or not (2 <= len(definition_items) <= 6):
+        return False
+    if current.get("from_inline_definition") and not current.get("from_structural_label"):
+        return False
+    if (
+        current.get("source_page") is not None
+        and block.get("page") is not None
+        and block.get("page")
+        not in {current.get("source_page"), current.get("source_page") + 1}
+    ):
+        return False
+
+    per_item_limit = max(
+        12,
+        int(os.getenv("LEARNING_OBJECT_SHORT_DEFINITION_MAX_WORDS", "45")),
+    )
+    combined_limit = max(
+        per_item_limit,
+        int(os.getenv("LEARNING_OBJECT_COHESIVE_SECTION_MAX_WORDS", "170")),
+    )
+    if any(len(re.findall(r"\b\w+\b", item)) > per_item_limit for item in definition_items):
+        return False
+
+    parent_text = _format_section_content(current.get("parts") or [])
+    combined_text = _format_section_content([parent_text, source_text])
+    return len(re.findall(r"\b\w+\b", combined_text)) <= combined_limit
+
+
+def _adjacent_short_definition_run(
+    blocks: list[dict],
+    start_index: int,
+) -> list[tuple[int, str]]:
+    """Return a compact run of separately extracted labelled definitions.
+
+    A PDF may place every item in a definition list in its own text block. The
+    existing multi-definition path only sees lists that PyMuPDF happened to
+    return as one block, so identical page layouts could produce very different
+    learning objects. This recognizer relies on adjacency, size, page flow and
+    alignment rather than the vocabulary of the list.
+    """
+    run: list[tuple[int, str]] = []
+    first_page = None
+    first_x = None
+    combined_words = 0
+    per_item_limit = max(
+        12,
+        int(os.getenv("LEARNING_OBJECT_SHORT_DEFINITION_MAX_WORDS", "45")),
+    )
+    combined_limit = max(
+        per_item_limit,
+        int(os.getenv("LEARNING_OBJECT_COHESIVE_SECTION_MAX_WORDS", "170")),
+    )
+
+    for index in range(start_index, min(len(blocks), start_index + 8)):
+        block = blocks[index]
+        text = (block.get("text") or "").strip()
+        if not text or _is_image_caption(text):
+            continue
+        if block.get("category") not in {"lesson_content", "needs_review"}:
+            break
+        if _raw_learning_object_heading_title(block):
+            break
+        definition = _definition_split(text)
+        if not definition:
+            break
+
+        word_count = len(re.findall(r"\b\w+\b", text))
+        if word_count > per_item_limit:
+            return []
+        combined_words += word_count
+        if combined_words > combined_limit:
+            return []
+
+        page = block.get("page")
+        bbox = block.get("bbox") or ()
+        block_x = float(bbox[0]) if len(bbox) >= 1 else None
+        if first_page is None:
+            first_page = page
+            first_x = block_x
+        else:
+            if page is not None and first_page is not None and page not in {first_page, first_page + 1}:
+                break
+            if first_x is not None and block_x is not None:
+                page_width = float(block.get("page_width") or 0.0)
+                tolerance = max(18.0, page_width * 0.04 if page_width else 0.0)
+                if abs(block_x - first_x) > tolerance:
+                    break
+        run.append((index, text))
+
+    # Two labelled children can be an ordinary pair of independent concepts.
+    # Three or more short, consecutive and aligned children are strong layout
+    # evidence of a shared authored list.
+    return run if len(run) >= 3 else []
+
+
+def _layout_component_belongs_to_current(
+    current: dict | None,
+    block: dict,
+    *,
+    followed_by_sibling: bool,
+) -> bool:
+    """Keep a visual supporting label inside its immediately owning section.
+
+    This is the non-semantic counterpart to
+    ``_current_concept_accepts_supporting_component``. It only applies when a
+    subsection was inferred from PDF layout, already has body text, and the
+    labelled block is aligned directly below it. Runs of sibling definitions
+    remain independent objects, preserving glossary and process-list behavior.
+    """
+    if (
+        not current
+        or not current.get("from_layout_heading")
+        or not current.get("section_title")
+        or not current.get("parts")
+        or current.get("from_inline_definition")
+        or followed_by_sibling
+        or int(block.get("line_count") or 1) < 2
+    ):
+        return False
+    if (
+        current.get("source_page") is not None
+        and block.get("page") is not None
+        and current.get("source_page") != block.get("page")
+    ):
+        return False
+
+    bbox = block.get("bbox") or ()
+    if len(bbox) < 2:
+        return False
+    block_x = float(bbox[0])
+    block_y = float(bbox[1])
+    current_x = current.get("source_x")
+    current_y = current.get("source_y")
+    if current_x is None or current_y is None or block_y <= float(current_y):
+        return False
+    page_width = float(block.get("page_width") or 0.0)
+    alignment_tolerance = max(12.0, page_width * 0.03 if page_width else 0.0)
+    return abs(block_x - float(current_x)) <= alignment_tolerance
+
+
+_MAX_POSITIONED_HEADING_WORDS = 12
+
+
+def _positioned_heading_title(block: dict) -> str | None:
+    """The section a heading block opens, whether or not text follows it."""
+    text = re.sub(r"\s+", " ", block.get("text") or "").strip()
+    if (
+        not text
+        or block.get("is_figure_text")
+        or block.get("is_repeated_page_chrome")
+        or _is_image_caption(text)
+        or len(text.split()) > _MAX_POSITIONED_HEADING_WORDS
+        # A heading is a label, not a sentence or a lead-in to one.
+        or re.search(r"[.!?:;,]$", text)
+        or is_structural_metadata_label(text)
+        or _is_supporting_component_heading(text)
+    ):
+        return None
+    return _raw_learning_object_heading_title(block)
+
+
+def _positioned_headings(blocks: list[dict]) -> list[tuple[int, float, str]]:
+    headings = []
+    for block in blocks:
+        title = _positioned_heading_title(block)
+        if title and block.get("page") is not None and block.get("bbox"):
+            headings.append((int(block["page"]), float(block["bbox"][1]), title))
+    return sorted(headings)
+
+
+def _heading_above(headings: list[tuple[int, float, str]], page, top) -> str:
+    """The last heading printed above a point, on its page or an earlier one."""
+    if page is None or top is None:
+        return ""
+    position = (int(page), float(top))
+    above = [title for heading_page, heading_top, title in headings if (heading_page, heading_top) < position]
+    return above[-1] if above else ""
+
+
+def build_section_learning_objects(classified_blocks: list[dict], image_descriptions: list[dict]) -> list[dict]:
+    classified_blocks = _annotate_layout_headings(
+        _split_embedded_heading_blocks(classified_blocks)
+    )
+    learning_objects = []
+    has_section_headings = any(_learning_object_heading_title(block) for block in classified_blocks)
+    figure_titles = [
+        _image_caption_title(block.get("text", ""))
+        for block in classified_blocks
+        if _image_caption_title(block.get("text", ""))
+    ]
+
+    for index, image in enumerate(image_descriptions):
+        # A figure's title names the concept and is read aloud, so it comes
+        # from what the PDF printed: a supplied title, then the caption. The
+        # description's first sentence ("The image shows three arrangements
+        # of particles ...") says what the picture looks like, not what it is
+        # called; without a caption the figure is named after its section once
+        # sections are known (below), and the sentence is only the last resort.
+        description = (image.get("description") or "").strip()
+        caption = (image.get("caption") or "").strip()
+        provided_title = (image.get("title") or "").strip()
+        caption_title = _image_caption_title(caption) if caption else None
+        title_from_section = False
+        if provided_title:
+            title = provided_title[:255]
+        elif caption_title:
+            title = caption_title
+        elif caption:
+            title = _title_from_teacher_text(caption, "Extracted image")
+        else:
+            title_from_section = True
+            title = _title_from_teacher_text(
+                description or image.get("visible_text") or image.get("content") or "",
+                "Extracted image",
+            )
+
+        if "content" in image:
+            image_content = image.get("content") or ""
+        else:
+            image_content = description
+
+        learning_objects.append(
+            {
+                "order": len(learning_objects),
+                "title": title,
+                "type": "image_description",
+                "image_url": image.get("image_url") or "",
+                "content": image_content,
+                "source": "teacher_image_description",
+                "source_page": image.get("page_number") or image.get("page"),
+                "source_block_id": None,
+                "image_index": image.get("index", index),
+                "source_excerpt": caption or image.get("visible_text") or description,
+                "is_table": bool(image.get("is_table")),
+                "title_from_section": title_from_section,
+                "source_y": float((image.get("bbox") or (0, 0, 0, 0))[1]),
+            }
+        )
+
+    current = None
+    active_section_title = ""
+    # The authored section a following sub-heading belongs to. Kept apart from
+    # active_section_title, which serves the inline-definition path only.
+    section_parent_title = ""
+    section_parent_font_size = 0.0
+    skipping_excluded_section = False
+    excluded_section_allows_prose_exit = False
+    can_append_to_previous = True
+    consumed_definition_block_indexes: set[int] = set()
+    for index, block in enumerate(classified_blocks):
+        if index in consumed_definition_block_indexes:
+            continue
+        text = block.get("text", "").strip()
+        if not text or _is_image_caption(text):
+            continue
+
+        if is_structural_metadata_label(text):
+            _finalize_current_learning_object(current, learning_objects)
+            current = None
+            active_section_title = ""
+            # "Part 3: Understanding Point of View (POV)" divides the lesson
+            # and names what follows, so the headings under it sit in that
+            # section. A bare "Part 3", or a module or lesson label, does not.
+            divided_section = _divided_section_title(text)
+            section_parent_title = divided_section
+            # No size is recorded: authors often print the "Part" label
+            # smaller than the headings inside it, and a larger heading must
+            # not be read as leaving the part. The next part, or a numbered
+            # section, replaces it.
+            section_parent_font_size = 0.0
+            can_append_to_previous = False
+            continue
+
+        # A rhetorical question can be an authored bridge to an explanation.
+        # Keep the explanation attached to the active concept, but never retain
+        # the question itself as a learning object. Assessment sections such as
+        # "Teacher Check" are handled by the excluded-section state instead.
+        if (
+            not skipping_excluded_section
+            and block.get("category") == "assessment"
+            and text.rstrip().endswith("?")
+            and _heading_has_following_content(classified_blocks, index)
+        ):
+            continue
+
+        if _starts_contextual_excluded_section(classified_blocks, index):
+            _finalize_current_learning_object(current, learning_objects)
+            current = None
+            active_section_title = ""
+            section_parent_title = ""
+            section_parent_font_size = 0.0
+            skipping_excluded_section = True
+            excluded_section_allows_prose_exit = _excluded_section_allows_prose_exit(text)
+            can_append_to_previous = False
+            continue
+        if skipping_excluded_section:
+            prose_exit = (
+                excluded_section_allows_prose_exit
+                and block.get("category") == "lesson_content"
+                and int(block.get("line_count") or 1) >= 2
+                and len(text.split()) >= 5
+                and not _is_learning_objective_statement(text)
+            )
+            if _ends_excluded_section(block, classified_blocks, index) or prose_exit:
+                skipping_excluded_section = False
+                if _starts_contextual_excluded_section(classified_blocks, index):
+                    skipping_excluded_section = True
+                    excluded_section_allows_prose_exit = _excluded_section_allows_prose_exit(text)
+                    continue
+            else:
+                continue
+
+        numbered_definition_items = block.get("numbered_definition_items") or []
+        if numbered_definition_items:
+            if _short_definition_run_belongs_to_current(
+                current,
+                numbered_definition_items,
+                text,
+                block,
+            ):
+                current["parts"].append(_normalize_pdf_content_part(text))
+                current["chunk_operation"] = "preserved_shared_definition_group"
+                if not current.get("source_excerpt"):
+                    current["source_excerpt"] = text
+                can_append_to_previous = True
+                continue
+
+            # Without a suitable shared parent, retain the previous behavior:
+            # each independently labelled definition becomes its own object,
+            # while its complete numbered source sentence remains untouched.
+            child_section_title = active_section_title or section_parent_title
+            if current is not None:
+                child_section_title = current.get("title") or child_section_title
+                if current.get("parts"):
+                    current["section_title"] = child_section_title
+                    _finalize_current_learning_object(current, learning_objects)
+                current = None
+            for definition in numbered_definition_items:
+                split_definition = _inline_definition_split(definition)
+                if not split_definition:
+                    continue
+                definition_title, _definition_content = split_definition
+                learning_objects.append(
+                    {
+                        "order": len(learning_objects),
+                        "section_title": child_section_title,
+                        "title": definition_title,
+                        "type": "lesson_content",
+                        "content": _normalize_pdf_content_part(definition),
+                        "source": "teacher_pdf",
+                        "source_page": block.get("page"),
+                        "source_block_id": block.get("block_id"),
+                        "source_excerpt": definition,
+                    }
+                )
+            can_append_to_previous = True
+            continue
+
+        item_number = _enumerated_item_number(text)
+        expected_item_number = current.get("expected_enumerated_item") if current else None
+        starts_enumerated_list = bool(
+            current
+            and current.get("parts")
+            and str(current["parts"][-1]).rstrip().endswith(":")
+        )
+        if current and item_number is not None and (
+            (starts_enumerated_list and item_number == 1) or item_number == expected_item_number
+        ):
+            current["parts"].append(text)
+            current["expected_enumerated_item"] = item_number + 1
+            if not current.get("source_excerpt"):
+                current["source_excerpt"] = text
+            continue
+        if current and expected_item_number is not None:
+            current.pop("expected_enumerated_item", None)
+
+        if current is not None and _is_discourse_continuation_label(text):
+            current["parts"].append(text)
+            continue
+
+        # These short callout labels introduce evidence for the open section;
+        # they are not concepts of their own. Handle them before generic
+        # heading detection because some PDFs style the label too weakly for
+        # the title-case heuristic (for example, "As a general rule"). A label
+        # printed clearly larger than the section heading is a real heading.
+        label = _normalized_heading_label(text)
+        open_heading_size = float(
+            section_parent_font_size
+            or (current or {}).get("heading_font_size")
+            or 0.0
+        )
+        block_font_size = float(block.get("font_size") or 0.0)
+        #
+        # Any other short label ("Remember", "Big idea", "Note") is recognised
+        # by the sentence it opens: the text after it continues in lower case.
+        # A real heading is followed by a new, capitalised sentence.
+        if (
+            current is not None
+            and "\n" not in text
+            and len(text.split()) <= 8
+            and (
+                label in {"as a general rule", "key idea"}
+                or re.fullmatch(
+                    r"(?:common|everyday|practical|real\s+world|worked)\s+examples?",
+                    label,
+                )
+                or (
+                    len(text.split()) <= _MAX_LEADIN_LABEL_WORDS
+                    and not re.search(r"[.!?]$", text)
+                    and _next_text_continues_sentence(classified_blocks, index)
+                    and not _label_is_a_lesson_term(
+                        classified_blocks, index, text.rstrip(" :,;")
+                    )
+                )
+            )
+            and not (
+                block_font_size
+                and open_heading_size
+                and block_font_size > open_heading_size + 0.5
+            )
+        ):
+            current["parts"].append(_supporting_component_prefix(text))
+            current["has_supporting_components"] = True
+            can_append_to_previous = True
+            continue
+
+        inline_definition = None
+        if block.get("category") in {"lesson_content", "needs_review"}:
+            inline_definition = _definition_split(text)
+        if inline_definition:
+            title, content = inline_definition
+            sentence_leadin = _inline_definition_is_sentence_leadin(text, title, content)
+            # "Big idea: cooling a gas ..." inside an open section is one
+            # sentence of that section, not a concept named "Big idea". A
+            # glossary keeps splitting: its entries sit next to each other.
+            # Under an authored section the line already becomes a part
+            # linked to that section, which grouping keeps with it; only a
+            # line that would become a parentless concept is joined here.
+            if (
+                current is not None
+                and current.get("parts")
+                and not (active_section_title or section_parent_title)
+                and _starts_lower_case(content)
+                and len(title.split()) <= 3
+                and not _in_definition_list(classified_blocks, index)
+                and not _label_is_a_lesson_term(classified_blocks, index, title)
+            ):
+                current["parts"].append(_normalize_pdf_content_part(text))
+                current["has_supporting_components"] = True
+                if not current.get("source_excerpt"):
+                    current["source_excerpt"] = text
+                can_append_to_previous = True
+                continue
+            adjacent_definition_run = _adjacent_short_definition_run(
+                classified_blocks,
+                index,
+            )
+            if (
+                current is not None
+                and current.get("parts")
+                and not current.get("from_inline_definition")
+                and adjacent_definition_run
+                and _short_definition_run_belongs_to_current(
+                    current,
+                    [entry_text for _, entry_text in adjacent_definition_run],
+                    "\n".join(entry_text for _, entry_text in adjacent_definition_run),
+                    block,
+                )
+            ):
+                current["parts"].extend(
+                    _normalize_pdf_content_part(entry_text)
+                    for _, entry_text in adjacent_definition_run
+                )
+                current["chunk_operation"] = "preserved_shared_definition_group"
+                current["source_block_ids"] = list(
+                    dict.fromkeys(
+                        block_id
+                        for block_id in [
+                            current.get("source_block_id"),
+                            *(
+                                classified_blocks[entry_index].get("block_id")
+                                for entry_index, _ in adjacent_definition_run
+                            ),
+                        ]
+                        if block_id is not None
+                    )
+                )
+                consumed_definition_block_indexes.update(
+                    entry_index
+                    for entry_index, _ in adjacent_definition_run
+                    if entry_index != index
+                )
+                can_append_to_previous = True
+                continue
+            followed_by_sibling = _followed_by_another_inline_definition(classified_blocks, index)
+            structural_title = _descriptive_structural_title(title, content)
+            if structural_title:
+                title = structural_title
+                # Copying a title must not delete it from the source content,
+                # so the authored description stays. The bare "Figure 1" label
+                # does not: read aloud, it points a listener at a figure the
+                # PDF only describes in words.
+                content = structural_title
+            preserve_definition_source = bool(block.get("preserve_definition_source"))
+            if preserve_definition_source:
+                content = _normalize_pdf_content_part(text)
+            if (
+                not preserve_definition_source
+                and current is not None
+                and (
+                    _current_concept_accepts_supporting_component(current, title)
+                    or _layout_component_belongs_to_current(
+                        current,
+                        block,
+                        followed_by_sibling=followed_by_sibling,
+                    )
+                )
+            ):
+                current["parts"].append(
+                    _normalize_pdf_content_part(text)
+                    if sentence_leadin
+                    else f"{_supporting_component_prefix(title)}\n{content}"
+                )
+                current["has_supporting_components"] = True
+                if not current.get("source_excerpt"):
+                    current["source_excerpt"] = text
+                can_append_to_previous = True
+                continue
+            if structural_title:
+                # ``Figure 1 — Descriptive heading`` opens a parent object; a
+                # numbered definition run below it consists of children, not
+                # peer definitions of the bare Figure label.
+                followed_by_sibling = False
+                if current is not None and current.get("title"):
+                    active_section_title = current["title"]
+            if current is not None:
+                if followed_by_sibling:
+                    if current.get("from_inline_definition"):
+                        # A definition whose sibling run was interrupted by page
+                        # furniture is a peer of the terms around it, never their
+                        # section. Promoting it made the first glossary entry the
+                        # parent of every term after it, and of itself.
+                        if current.get("parts"):
+                            _finalize_current_learning_object(current, learning_objects)
+                    else:
+                        active_section_title = current.get("title", "")
+                        if current.get("parts"):
+                            current["section_title"] = active_section_title
+                            _finalize_current_learning_object(current, learning_objects)
+                    current = None
+                elif not current.get("parts"):
+                    # One labeled definition directly below an empty heading
+                    # defines that heading and stays verbatim as its body.
+                    current["parts"].append(text)
+                    current["adopted_inline_label"] = True
+                    if not current.get("source_excerpt"):
+                        current["source_excerpt"] = text
+                    continue
+            _finalize_current_learning_object(current, learning_objects)
+            current = None
+            inline_item = {
+                "order": len(learning_objects),
+                # A labeled definition sitting under an authored section belongs
+                # to it. The inline path only ever knew about sibling-run titles,
+                # so "Diagram description" under "2. Solids" came out parentless.
+                "section_title": active_section_title or section_parent_title,
+                "title": title,
+                "type": "lesson_content",
+                # A sentence whose opening phrase looks like a label stays whole.
+                "content": _normalize_pdf_content_part(text) if sentence_leadin else content,
+                "source": "teacher_pdf",
+                "source_page": block.get("page"),
+                "source_block_id": block.get("block_id"),
+                "source_excerpt": text,
+            }
+            if (followed_by_sibling or active_section_title) and not structural_title:
+                learning_objects.append(inline_item)
+            else:
+                current = {
+                    **inline_item,
+                    "content": "",
+                    "parts": [inline_item["content"]],
+                    "from_inline_definition": True,
+                    "from_structural_label": bool(structural_title),
+                }
+                can_append_to_previous = True
+            continue
+
+        heading_title = _learning_object_heading_title(block)
+        if not heading_title:
+            raw_heading_title = _raw_learning_object_heading_title(block)
+            if raw_heading_title and _section_heading_title(text) and _heading_has_following_content(classified_blocks, index):
+                heading_title = raw_heading_title
+            elif raw_heading_title and _plain_heading_has_following_body_content(classified_blocks, index):
+                heading_title = raw_heading_title
+        if heading_title:
+            if current is not None and (
+                _current_concept_accepts_supporting_component(current, heading_title)
+                or (
+                    not _section_heading_title(text)
+                    and _heading_refers_to_current_concept(current, heading_title)
+                )
+            ):
+                current["parts"].append(_supporting_component_prefix(heading_title))
+                current["has_supporting_components"] = True
+                can_append_to_previous = True
+                continue
+            _finalize_current_learning_object(current, learning_objects)
+            active_section_title = ""
+            if _section_heading_title(text):
+                # Any numbered heading closes the previous section; only an
+                # authored instructional one may open a new one. A non-numbered
+                # heading falls through and inherits the section it sits under.
+                section_parent_title = (
+                    heading_title if _qualifies_as_section_parent(block) else ""
+                )
+                section_parent_font_size = (
+                    float(block.get("font_size") or 0.0)
+                    if section_parent_title
+                    else 0.0
+                )
+            elif section_parent_title:
+                # A larger plain heading has returned to a higher visual level
+                # and must not inherit the last numbered child as its section.
+                # Smaller plain headings still behave as sub-headings. The
+                # tolerance absorbs harmless fractional PDF font differences.
+                heading_font_size = float(block.get("font_size") or 0.0)
+                if (
+                    heading_font_size
+                    and section_parent_font_size
+                    and heading_font_size > section_parent_font_size + 0.5
+                ):
+                    section_parent_title = ""
+                    section_parent_font_size = 0.0
+            current = {
+                "order": len(learning_objects),
+                "section_title": section_parent_title,
+                "title": heading_title,
+                "type": "lesson_content",
+                "content": "",
+                "source": "teacher_pdf",
+                "source_page": block.get("page"),
+                "source_block_id": block.get("block_id"),
+                "source_excerpt": "",
+                # Classification found the paragraph answering this question
+                # heading; the final accessibility review must not drop the
+                # concept for having a question as its title.
+                "from_question_heading": bool(block.get("question_heading")),
+                "heading_font_size": float(block.get("font_size") or 0.0),
+                "source_x": float((block.get("bbox") or (0, 0, 0, 0))[0]),
+                "source_y": float((block.get("bbox") or (0, 0, 0, 0))[1]),
+                "from_layout_heading": bool(block.get("_layout_heading_title")),
+                "parts": [],
+            }
+            if block.get("_layout_heading_title") and section_parent_title:
+                current["chunk_operation"] = "preserved_layout_subsection"
+            can_append_to_previous = True
+            continue
+
+        keep_as_content = _block_is_kept_content(block)
+
+        if not keep_as_content:
+            if block.get("category") in {"assessment", "teacher_note", "concept_metadata", "table_header", "reference"}:
+                _finalize_current_learning_object(current, learning_objects)
+                current = None
+                can_append_to_previous = False
+            elif (
+                block.get("category") == "needs_review"
+                and current is None
+                and can_append_to_previous
+                and learning_objects
+                and _is_short_wrapped_continuation(learning_objects[-1], text, block)
+            ):
+                _append_pdf_text_to_learning_object(learning_objects[-1], text, block)
+            elif current is not None and not _block_is_excluded_from_learning_object(block):
+                current["parts"].append(text)
+                if not current.get("source_excerpt"):
+                    current["source_excerpt"] = text
+            continue
+
+        if current is None:
+            # Once the PDF has established concept headings, a body block that
+            # has no new heading is continuation text for the preceding concept.
+            # Keeping it there prevents extraction/layout fragments from being
+            # promoted into made-up learning-object titles.
+            if can_append_to_previous and has_section_headings and learning_objects:
+                if _append_pdf_text_to_learning_object(learning_objects[-1], text, block):
+                    continue
+
+            if not can_append_to_previous and has_section_headings:
+                continue
+
+            # A genuinely unheaded document still needs one usable card. Its
+            # title is copied from its own first sentence, never generated.
+            unheaded_item = {
+                "order": len(learning_objects),
+                "title": _title_from_teacher_text(text),
+                "type": "lesson_content",
+                "content": text,
+                "source": "teacher_pdf",
+                "source_page": block.get("page"),
+                "source_block_id": block.get("block_id"),
+                "source_excerpt": text,
+            }
+            if has_section_headings:
+                current = {**unheaded_item, "content": "", "parts": [text]}
+                can_append_to_previous = True
+            else:
+                learning_objects.append(unheaded_item)
+            continue
+        if current.get("title", "").casefold() == text.casefold():
+            continue
+        current["parts"].append(text)
+        if not current.get("source_excerpt"):
+            current["source_excerpt"] = text
+
+    _finalize_current_learning_object(current, learning_objects)
+
+    block_positions = {
+        block.get("block_id"): float((block.get("bbox") or (0, 0, 0, 0))[1])
+        for block in classified_blocks
+        if block.get("block_id") is not None
+    }
+    for item in learning_objects:
+        if item.get("source_y") is None:
+            item["source_y"] = block_positions.get(item.get("source_block_id"), float("inf"))
+    learning_objects.sort(
+        key=lambda item: (
+            int(item.get("source_page") or 10**9),
+            float(item.get("source_y") if item.get("source_y") is not None else float("inf")),
+            int(item.get("order") or 0),
+        )
+    )
+    # An image is turned into an item above, before this function has walked a
+    # single text block, so at that moment no heading context exists and it is
+    # built without a section. The heading was always knowable -- it is simply
+    # the one the nearest preceding passage sits under -- but only once the
+    # list is in document order, which is what the sort above just did.
+    #
+    # Left unset, `section_title` is empty on every figure (measured: 9 of 9
+    # across three real uploads), and it is the primary grouping signal: runs
+    # of objects under one heading are how the system finds that several
+    # passages are one teachable unit. A figure with no section joins no run.
+    #
+    # Nothing here overwrites a section a text item already has, and a figure
+    # that comes before any section keeps the empty value it has today rather
+    # than being given one it cannot justify.
+    #
+    # A top-level passage such as "Solids" names its section in its title and
+    # leaves section_title empty, so its title is the section a figure after
+    # it belongs to.
+    #
+    # But the heading printed above a figure is better evidence than the last
+    # passage before it: a section that is only a heading and a table ("6.
+    # SOLID VS. LIQUID VS. GAS", then the table) has no passage at all, and
+    # the table used to inherit the previous section.
+    #
+    # A heading that has passages under it already names their section
+    # ("Shape" sits in "Solids"), and the figure joins that same section. A
+    # heading with nothing but the figure under it is the section itself.
+    headings = _positioned_headings(classified_blocks)
+    section_of_heading = {}
+    for item in learning_objects:
+        title = (item.get("title") or "").strip()
+        if item.get("type") != "image_description" and title:
+            section_of_heading.setdefault(title, (item.get("section_title") or "").strip() or title)
+    active_section_title = ""
+    for item in learning_objects:
+        existing = (item.get("section_title") or "").strip()
+        if item.get("type") != "image_description":
+            active_section_title = existing or (item.get("title") or "").strip()
+        elif existing:
+            active_section_title = existing
+        else:
+            heading = _heading_above(headings, item.get("source_page"), item.get("source_y"))
+            item["section_title"] = (
+                section_of_heading.get(heading, heading) if heading else active_section_title
+            )
+
+    # A figure with no printed title or caption is named after its section
+    # ("Solids - figure"), numbered when the section has more than one.
+    untitled_by_section: dict[tuple[str, bool], list[dict]] = {}
+    for item in learning_objects:
+        section = (item.get("section_title") or "").strip()
+        if item.pop("title_from_section", False) and section:
+            untitled_by_section.setdefault((section, bool(item.get("is_table"))), []).append(item)
+    for (section, is_table), figures in untitled_by_section.items():
+        kind = "table" if is_table else "figure"
+        for number, item in enumerate(figures, start=1):
+            suffix = f" {number}" if len(figures) > 1 else ""
+            item["title"] = f"{section} - {kind}{suffix}"[:255]
+
+    for order, item in enumerate(learning_objects):
+        item.pop("source_x", None)
+        item.pop("from_layout_heading", None)
+        item["order"] = order
+    return learning_objects
+
+
+def build_learning_objects_from_pdf_blocks(extracted_blocks: list[dict], image_descriptions: list[dict]) -> list[dict]:
+    """Build learning objects from raw PDF text blocks.
+
+    The raw extraction step must not pre-judge every block as either content or
+    metadata. Those category assignments belong to the deterministic classifier,
+    which is responsible for deciding whether a block is instructional, heading,
+    reference, noise, or another role. This function therefore consults the
+    classifier on the full block stream and then hands the labeled evidence to
+    the section builder that assembles learning objects.
+    """
+    classified_blocks = classify_instructional_blocks(extracted_blocks)
+    image_descriptions = _images_on_lesson_pages(image_descriptions, classified_blocks)
+    return build_section_learning_objects(classified_blocks, image_descriptions)
+
+
+def _images_on_lesson_pages(image_descriptions: list[dict], classified_blocks: list[dict]) -> list[dict]:
+    """Drop pictures from pages the page-level pass set aside (cover, credits...)."""
+    set_aside = non_lesson_pages(classified_blocks)
+    if not set_aside:
+        return image_descriptions
+    return [
+        image for image in image_descriptions
+        if (image.get("page_number") or image.get("page")) not in set_aside
+    ]
+
+
+def _learning_object_word_count(item: dict) -> int:
+    return len(re.findall(r"\b[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)?\b", item.get("content") or ""))
+
+
+def _starts_authored_list_item(text: str) -> bool:
+    stripped = (text or "").lstrip()
+    return bool(
+        _enumerated_item_number(stripped) is not None
+        or re.match(r"^(?:[\u2022\u25cf\u25aa\u25e6\-*])\s+\S", stripped)
+    )
+
+
+def _learning_object_units(content: str) -> list[str]:
+    """Reconstruct visual wraps while retaining authored list boundaries."""
+    paragraphs = []
+    current_lines = []
+    for raw_line in (content or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            if current_lines:
+                paragraphs.append(" ".join(current_lines))
+                current_lines = []
+            continue
+
+        if current_lines:
+            previous_line = current_lines[-1]
+            current_starts_list_item = _starts_authored_list_item(current_lines[0])
+            next_starts_list_item = _starts_authored_list_item(line)
+            # A list marker starts a new authored unit only after another list
+            # item is already in progress. PDF visual wrapping can place a
+            # reference number at the start of the next line, as in
+            # ``Figure\n1. Mosses ...``. Flushing every line that begins with
+            # ``1.`` would turn a source wrap into a false content boundary.
+            if current_starts_list_item and next_starts_list_item:
+                paragraphs.append(" ".join(current_lines))
+                current_lines = []
+
+        if current_lines:
+            previous_line = current_lines[-1]
+            next_starts_new_idea = bool(re.match(r"^[A-Z0-9]", line))
+            previous_is_short_label = (
+                len(previous_line.split()) <= 8
+                and not re.search(r"[,\-]$", previous_line)
+            )
+            if next_starts_new_idea and (
+                previous_is_short_label
+                or previous_line.endswith(":")
+                or _is_symbolic_relation_text(previous_line)
+            ):
+                paragraphs.append(" ".join(current_lines))
+                current_lines = []
+
+        current_lines.append(line)
+        if (
+            re.search(r"[.!?][\"')\]]?$", line)
+            or line.endswith(":")
+            or _is_symbolic_relation_text(line)
+        ):
+            paragraphs.append(" ".join(current_lines))
+            current_lines = []
+
+    if current_lines:
+        paragraphs.append(" ".join(current_lines))
+
+    units = []
+    for paragraph in paragraphs:
+        sentences = _split_sentences(paragraph, next_must_be_capital=True)
+        units.extend(sentence.strip() for sentence in sentences if sentence.strip())
+    return units
+
+
+def _normalize_pdf_content_part(content: str) -> str:
+    """Remove visual PDF wraps while retaining authored content structure.
+
+    PDF lines reflect page width, not paragraph intent. Ordinary prose should
+    therefore flow naturally at the web page's width. Bullets, numbered items,
+    labels, blank-line paragraphs, and short label-led lists keep their
+    structural line breaks.
+    """
+    normalized_paragraphs: list[str] = []
+    for raw_paragraph in re.split(r"\n\s*\n", content or ""):
+        units = _learning_object_units(raw_paragraph)
+        if not units:
+            continue
+
+        output_lines: list[str] = []
+        prose_units: list[str] = []
+        follows_label = False
+
+        def flush_prose() -> None:
+            if prose_units:
+                output_lines.append(" ".join(prose_units))
+                prose_units.clear()
+
+        for unit in units:
+            stripped = unit.strip()
+            if not stripped:
+                continue
+            is_label = stripped.endswith(":") and len(stripped.split()) <= 10
+            is_list_item = _starts_authored_list_item(stripped)
+            is_short_labelled_entry = bool(
+                follows_label
+                and len(stripped.split()) <= 8
+                and not re.search(r"[.!?][\"')\]]?$", stripped)
+            )
+            if is_label or is_list_item or is_short_labelled_entry:
+                flush_prose()
+                output_lines.append(stripped)
+                follows_label = is_label or (follows_label and is_short_labelled_entry)
+                continue
+            prose_units.append(stripped)
+            follows_label = False
+
+        flush_prose()
+        if output_lines:
+            normalized_paragraphs.append("\n".join(output_lines))
+
+    return "\n\n".join(normalized_paragraphs).strip()
+
+
+def _cohesive_learning_object_units(content: str) -> list[str]:
+    """Keep a labelled list or example together as one splittable unit.
+
+    PDF extraction commonly represents a section such as ``Examples:`` as a
+    heading followed by one short line per item.  Treating every line as an
+    independent chunk boundary can leave the heading and first item in one
+    learning object and the rest of the list in another.  A word limit is a
+    soft accessibility target, so preserving the complete authored idea takes
+    precedence over splitting that labelled run at the exact limit.
+    """
+    authored_units = _learning_object_units(content)
+    cohesive_units: list[str] = []
+    labelled_run: list[str] = []
+
+    for unit in authored_units:
+        if unit.rstrip().endswith(":"):
+            if labelled_run:
+                cohesive_units.append("\n".join(labelled_run))
+            labelled_run = [unit]
+        elif labelled_run:
+            labelled_run.append(unit)
+        else:
+            cohesive_units.append(unit)
+
+    if labelled_run:
+        cohesive_units.append("\n".join(labelled_run))
+    return cohesive_units
+
+
+def _balanced_learning_object_groups(
+    units: list[str],
+    target_words: int,
+    maximum_words: int,
+) -> list[list[str]]:
+    """Partition authored units into balanced, readable contiguous groups."""
+    unit_words = [len(re.findall(r"\b\w+\b", unit)) for unit in units]
+    total_words = sum(unit_words)
+    desired_parts = min(len(units), max(2, (total_words + target_words - 1) // target_words))
+    minimum_parts = min(len(units), max(2, (total_words + maximum_words - 1) // maximum_words))
+    minimum_chunk_words = max(1, target_words // 2)
+
+    # Prefer the target number of cards, but use fewer when target-sized cards
+    # would strand a tiny final sentence. Each candidate is globally balanced
+    # rather than greedily filling the first card before considering the rest.
+    for part_count in range(desired_parts, minimum_parts - 1, -1):
+        ideal_words = total_words / part_count
+        states: dict[tuple[int, int], tuple[float, list[tuple[int, int]]]] = {
+            (0, 0): (0.0, [])
+        }
+        for part_number in range(1, part_count + 1):
+            for start in range(len(units)):
+                previous = states.get((part_number - 1, start))
+                if previous is None:
+                    continue
+                chunk_words = 0
+                maximum_end = len(units) - (part_count - part_number)
+                for end in range(start + 1, maximum_end + 1):
+                    chunk_words += unit_words[end - 1]
+                    is_single_cohesive_unit = end == start + 1
+                    if chunk_words > maximum_words and not is_single_cohesive_unit:
+                        break
+                    if chunk_words < minimum_chunk_words and not is_single_cohesive_unit:
+                        continue
+                    if chunk_words < minimum_chunk_words and is_single_cohesive_unit:
+                        # A short authored sentence is allowed only when there
+                        # is no way to combine it safely with a neighbour.
+                        can_join_left = start > 0 and unit_words[start - 1] + chunk_words <= maximum_words
+                        can_join_right = end < len(units) and chunk_words + unit_words[end] <= maximum_words
+                        if can_join_left or can_join_right:
+                            continue
+
+                    score = previous[0] + (chunk_words - ideal_words) ** 2
+                    state_key = (part_number, end)
+                    current = states.get(state_key)
+                    if current is None or score < current[0]:
+                        states[state_key] = (
+                            score,
+                            [*previous[1], (start, end)],
+                        )
+
+        result = states.get((part_count, len(units)))
+        if result is not None:
+            return [units[start:end] for start, end in result[1]]
+
+    return [units]
+
+
+def _split_oversized_learning_object(
+    item: dict,
+    target_words: int,
+    maximum_words: int,
+) -> list[dict]:
+    word_count = _learning_object_word_count(item)
+    cohesive_section_limit = max(
+        maximum_words,
+        int(os.getenv("LEARNING_OBJECT_COHESIVE_SECTION_MAX_WORDS", "170")),
+    )
+    preserves_shared_definition_group = (
+        item.get("chunk_operation") == "preserved_shared_definition_group"
+        and word_count <= cohesive_section_limit
+    )
+    if (
+        item.get("type") != "lesson_content"
+        or word_count <= maximum_words
+        or preserves_shared_definition_group
+    ):
+        return [item]
+
+    units = _cohesive_learning_object_units(item.get("content") or "")
+    if len(units) < 2:
+        return [item]
+
+    groups = _balanced_learning_object_groups(units, target_words, maximum_words)
+
+    if len(groups) < 2:
+        return [item]
+
+    title = (item.get("title") or "Learning object").strip()
+    split_items = []
+    for index, group in enumerate(groups, start=1):
+        content = "\n".join(group)
+        split_items.append(
+            {
+                **item,
+                "title": f"{title} (Part {index} of {len(groups)})"[:255],
+                "content": content,
+                "source_excerpt": content,
+                "chunk_index": index,
+                "chunk_count": len(groups),
+                "chunk_operation": "split_at_authored_boundaries",
+            }
+        )
+    return split_items
+
+
+def _is_relation_micro_object(item: dict) -> bool:
+    content = (item.get("content") or "").strip()
+    return "\n" not in content and _is_symbolic_relation_text(content)
+
+
+def _adjacent_learning_object_similarity(left: dict, right: dict) -> float:
+    documents = [
+        f"{left.get('title', '')} {left.get('content', '')}",
+        f"{right.get('title', '')} {right.get('content', '')}",
+    ]
+    try:
+        matrix = TfidfVectorizer(lowercase=True, stop_words="english", ngram_range=(1, 2)).fit_transform(documents)
+    except (TypeError, ValueError):
+        return 0.0
+    return float(cosine_similarity(matrix[0:1], matrix[1:2])[0, 0])
+
+
+def _is_protected_outline_object(item: dict, outline_context: dict) -> bool:
+    protected_titles = {
+        str(outline_context.get("topic_title") or ""),
+        str(outline_context.get("module_title") or ""),
+        *(str(title) for title in (outline_context.get("sibling_topics") or [])),
+    }
+    return any(title and _is_same_label(item.get("title") or "", title) for title in protected_titles)
+
+
+def _section_variant_maximum_words() -> int:
+    return max(1, int(os.getenv("LEARNING_OBJECT_SECTION_VARIANT_MAX_WORDS", "25")))
+
+
+def _is_section_variant_item(item: dict) -> bool:
+    """Return whether this is one labelled facet of its section.
+
+    A heading with short labelled items beneath it -- "PARTICLE ARRANGEMENT"
+    over "Solid", "Liquid" and "Gas" -- teaches one idea by contrast. Each item
+    says what the others do not, so they share almost no wording and adjacent
+    similarity reads them as unrelated. Left split they are too small to teach
+    from and too generic to match across PDFs, and they take their section's
+    label with them, which makes that label ambiguous. The shared section is the
+    evidence that they belong to one another.
+    """
+    if item.get("type") != "lesson_content":
+        return False
+    section = (item.get("section_title") or "").strip()
+    title = (item.get("title") or "").strip()
+    if not section or not title:
+        return False
+    if _learning_object_word_count(item) >= _section_variant_maximum_words():
+        return False
+    # The heading that introduces the run is part of the run it introduces.
+    return _is_same_label(title, section) or len(title.split()) <= 3
+
+
+def _section_names_one_concept(section: str) -> bool:
+    """Return whether a section names a concept rather than a container.
+
+    "Vocabulary", "Glossary" and "Everyday Examples" collect entries that merely
+    sit together: each term stands alone and must stay its own object.
+    "PARTICLE ARRANGEMENT" names a single idea whose items are facets of it.
+    The label itself is what separates the two, and the grouping module already
+    keeps that list. Imported lazily, matching how that module reaches back into
+    this one.
+    """
+    from .semantic_grouping import _specific_normalized_label
+
+    return bool(_specific_normalized_label(section))
+
+
+def _is_authored_labeled_child(item: dict) -> bool:
+    """Return whether the PDF explicitly authored this object as a labeled child.
+
+    ``Seed formation: ...`` and ``Fruit formation: ...`` are complete sibling
+    concepts, not fragments to combine merely because their explanations are
+    short. ``source_excerpt`` retains that original structure after title and
+    body extraction, so this guard needs no subject-specific title list.
+    """
+    definition = _definition_split(item.get("source_excerpt") or "")
+    return bool(
+        definition
+        and _is_same_label(item.get("title") or "", definition[0])
+    )
+
+
+def _can_merge_section_variants(left: dict, right: dict) -> bool:
+    section = (left.get("section_title") or "").strip()
+    if not section or section != (right.get("section_title") or "").strip():
+        return False
+    if _is_authored_labeled_child(left) or _is_authored_labeled_child(right):
+        return False
+    if not _section_names_one_concept(section):
+        return False
+    return _is_section_variant_item(left) and _is_section_variant_item(right)
+
+
+def _can_merge_short_learning_objects(
+    left: dict,
+    right: dict,
+    minimum_words: int,
+    similarity_threshold: float,
+    outline_context: dict,
+) -> bool:
+    if left.get("type") != "lesson_content" or right.get("type") != "lesson_content":
+        return False
+    if "preserved_layout_subsection" in {
+        left.get("chunk_operation"),
+        right.get("chunk_operation"),
+    }:
+        return False
+    if not left.get("section_title") or left.get("section_title") != right.get("section_title"):
+        return False
+    if _is_protected_outline_object(left, outline_context) or _is_protected_outline_object(right, outline_context):
+        return False
+    # Checked before the size gate: these items run slightly longer than a micro
+    # object, and their evidence is the authored section rather than wording.
+    if _can_merge_section_variants(left, right):
+        return True
+    if _learning_object_word_count(left) >= minimum_words or _learning_object_word_count(right) >= minimum_words:
+        return False
+    if _is_relation_micro_object(left) and _is_relation_micro_object(right):
+        return True
+    return _adjacent_learning_object_similarity(left, right) >= similarity_threshold
+
+
+def _merge_learning_object_group(group: list[dict]) -> dict:
+    section_title = (group[0].get("section_title") or "").strip()
+    first_title = (group[0].get("title") or "Concept").strip()
+    last_title = (group[-1].get("title") or "Concept").strip()
+    merged_title = section_title or f"{first_title} to {last_title}"
+    merged_content = "\n".join(
+        f"{(item.get('title') or '').strip()}: {(item.get('content') or '').strip()}".strip(": ")
+        for item in group
+    )
+    source_pages = list(dict.fromkeys(item.get("source_page") for item in group if item.get("source_page")))
+    source_block_ids = list(
+        dict.fromkeys(item.get("source_block_id") for item in group if item.get("source_block_id"))
+    )
+    return {
+        **group[0],
+        "section_title": "" if section_title else group[0].get("section_title", ""),
+        "title": merged_title[:255],
+        "content": merged_content,
+        "source_excerpt": merged_content,
+        "source_pages": source_pages,
+        "source_block_ids": source_block_ids,
+        "chunk_count": len(group),
+        "chunk_operation": "adjacent_short_object_merge",
+    }
+
+
+def _is_continuation_callout_label(title: str) -> bool:
+    title = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    return bool(
+        re.fullmatch(
+            r"(?:important|key|main|big) (?:idea|point|fact)|remember|takeaway|summary",
+            title,
+        )
+    )
+
+
+def _is_short_continuation_callout(item: dict) -> bool:
+    """Return whether an object is a short conclusion to the prior concept."""
+    if item.get("type") != "lesson_content" or _learning_object_word_count(item) > 20:
+        return False
+    return _is_continuation_callout_label(item.get("title") or "")
+
+
+def _attach_short_continuation_callouts(learning_objects: list[dict]) -> list[dict]:
+    """Attach summary callouts before chunking so they cannot become orphan cards."""
+    attached: list[dict] = []
+    for item in learning_objects:
+        if (
+            attached
+            and _is_short_continuation_callout(item)
+            and attached[-1].get("type") == "lesson_content"
+        ):
+            previous = {**attached[-1]}
+            label = (item.get("title") or "Important idea").strip()
+            callout = (item.get("content") or "").strip()
+            previous["content"] = (
+                f"{(previous.get('content') or '').rstrip()}\n{label}:\n{callout}"
+            ).strip()
+            previous["source_excerpt"] = previous["content"]
+            previous["source_pages"] = list(
+                dict.fromkeys(
+                    page
+                    for page in [
+                        *(previous.get("source_pages") or []),
+                        previous.get("source_page"),
+                        *(item.get("source_pages") or []),
+                        item.get("source_page"),
+                    ]
+                    if page is not None
+                )
+            )
+            previous["source_block_ids"] = list(
+                dict.fromkeys(
+                    block_id
+                    for block_id in [
+                        *(previous.get("source_block_ids") or []),
+                        previous.get("source_block_id"),
+                        *(item.get("source_block_ids") or []),
+                        item.get("source_block_id"),
+                    ]
+                    if block_id is not None
+                )
+            )
+            previous["chunk_operation"] = "attached_continuation_callout"
+            attached[-1] = previous
+            continue
+        attached.append(item)
+    return attached
+
+
+def balance_learning_object_chunks(
+    learning_objects: list[dict],
+    outline_context: dict | None = None,
+) -> list[dict]:
+    """Balance object size using authored boundaries and adjacent lexical cohesion."""
+    outline_context = outline_context or {}
+    minimum_words = max(1, int(os.getenv("LEARNING_OBJECT_MIN_WORDS", "8")))
+    target_words = max(minimum_words + 1, int(os.getenv("LEARNING_OBJECT_MAX_WORDS", "60")))
+    default_maximum = (target_words * 4 + 2) // 3
+    maximum_words = max(
+        target_words,
+        int(os.getenv("LEARNING_OBJECT_HARD_MAX_WORDS", str(default_maximum))),
+    )
+    similarity_threshold = min(
+        1.0,
+        max(0.0, float(os.getenv("LEARNING_OBJECT_MERGE_COSINE_THRESHOLD", "0.32"))),
+    )
+
+    split_objects = []
+    for item in _attach_short_continuation_callouts(learning_objects):
+        split_objects.extend(
+            _split_oversized_learning_object(item, target_words, maximum_words)
+        )
+
+    balanced = []
+    index = 0
+    while index < len(split_objects):
+        group = [split_objects[index]]
+        next_index = index + 1
+        while next_index < len(split_objects) and _can_merge_short_learning_objects(
+            group[-1],
+            split_objects[next_index],
+            minimum_words,
+            similarity_threshold,
+            outline_context,
+        ):
+            group.append(split_objects[next_index])
+            next_index += 1
+        balanced.append(_merge_learning_object_group(group) if len(group) > 1 else group[0])
+        index = next_index
+
+    for order, item in enumerate(balanced):
+        item["order"] = order
+    return balanced
+
+
+_TITLE_PART_SUFFIX = re.compile(r"\s*\(\s*part\s+\d+\s+of\s+\d+\s*\)\s*$", re.IGNORECASE)
+
+
+def disambiguate_repeated_titles(learning_objects: list[dict]) -> list[dict]:
+    """Add the section to a title that repeats inside one PDF.
+
+    A PDF with a "SOLID" section and a "Solid" part under "PARTICLE
+    ARRANGEMENT" gave two concepts the same name: a learner met two steps
+    called "Solid", and the learning path's same-name rule treats such a pair
+    as one idea. The part becomes "Solid (Particle Arrangement)". A title used
+    once, the pieces of one split passage, and a heading other objects name
+    as their section are never renamed.
+    """
+    referenced_sections = {
+        (item.get("section_title") or "").strip()
+        for item in learning_objects
+        if (item.get("section_title") or "").strip()
+    }
+    by_name: dict[str, list[dict]] = {}
+    for item in learning_objects:
+        base = _TITLE_PART_SUFFIX.sub("", item.get("title") or "").strip()
+        if base:
+            by_name.setdefault(base.casefold(), []).append(item)
+    for name, items in by_name.items():
+        # The pieces of one passage share a section; only two different
+        # places in the document make the name ambiguous.
+        places = {(item.get("section_title") or "").strip().casefold() or name for item in items}
+        if len(places) < 2:
+            continue
+        for item in items:
+            title = (item.get("title") or "").strip()
+            section = (item.get("section_title") or "").strip()
+            base = _TITLE_PART_SUFFIX.sub("", title).strip()
+            if not section or section.casefold() == name or title in referenced_sections:
+                continue
+            part = title[len(base):]
+            label = section.title() if section.isupper() else section
+            item["title"] = f"{base} ({label}){part}"[:255]
+    return learning_objects
+
+
+# Bullet and checkbox glyphs, including the private-use bullet Word exports.
+_SPOKEN_BULLET = re.compile(r"^\s*[•●▪■◦☐☑✓*\-–]\s*")
+
+
+def _spoken_list_lines(text: str) -> str:
+    """End each list item with a full stop so a voice pauses between them.
+
+    "Has a definite shape / Has a definite volume / Particles are tightly
+    packed" has line breaks and no punctuation; spoken, it ran together as one
+    sentence. A line that already ends a clause, or that continues in lower
+    case on the next line (a wrapped sentence), is left alone.
+    """
+    lines = [_SPOKEN_BULLET.sub("", line).strip() for line in text.split("\n")]
+    lines = [line for line in lines if line]
+    for index, line in enumerate(lines[:-1]):
+        following = lines[index + 1]
+        if re.search(r"[.!?:;,\-–—]$", line) or following[:1].islower():
+            continue
+        lines[index] = f"{line}."
+    return "\n".join(lines)
+
+
+def _accessible_narration_text(text: str) -> str:
+    """Verbalize common visual relationship symbols for screenless listening."""
+    spoken = str(text or "")
+    replacements = (
+        (r"\s*(?:\u2192|->|=>)\s*", " to "),
+        (r"\s*\u2264\s*", " less than or equal to "),
+        (r"\s*\u2265\s*", " greater than or equal to "),
+        (r"\s*\u2260\s*", " is not equal to "),
+    )
+    for pattern, replacement in replacements:
+        spoken = re.sub(pattern, replacement, spoken)
+    # "2 + 3 = 5" is arithmetic; "SOLID = keeps its shape and volume" is a
+    # summary line, where "equals" reads as nonsense and "means" is meant.
+    spoken = re.sub(r"(?<=[\d)])\s*=\s*(?=[\d(])", " equals ", spoken)
+    spoken = re.sub(r"\s*=\s*", " means ", spoken)
+    spoken = _spoken_list_lines(spoken)
+    spoken = re.sub(r"[ \t]+", " ", spoken).strip()
+    # Glossaries commonly omit punctuation after short definitions. Preserve
+    # the extracted wording in the learning object, but close the spoken form
+    # so TTS does not run it into the next playlist item.
+    if spoken and not re.search(r"[.!?][\"')\]]?$", spoken):
+        spoken += "."
+    return spoken
+
+
+def build_narration_script_from_learning_objects(learning_objects: list[dict]) -> list[dict]:
+    narration = []
+    previous_section_title = ""
+    for item in learning_objects:
+        section_title = (item.get("section_title") or "").strip()
+        title = (item.get("title") or "").strip()
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        if section_title:
+            if section_title != previous_section_title:
+                if _is_same_label(title, section_title):
+                    content = f"{section_title}. {content}".strip()
+                else:
+                    content = f"In {section_title}. {title}: {content}".strip()
+            else:
+                content = f"{title}: {content}".strip()
+        elif title and not _is_same_label(title, content):
+            content = f"{title}. {content}".strip()
+        content = _accessible_narration_text(content)
+        narration.append(
+            {
+                "order": len(narration) + 1,
+                "type": item.get("type"),
+                # Carried through so the clip synthesised for this narration
+                # item can be found again by the object it speaks for; the
+                # lesson package reads a version's audio that way.
+                "learning_object_id": item.get("learning_object_id"),
+                "section_title": section_title,
+                "title": title,
+                "page": item.get("source_page"),
+                "content": content,
+                "source": item.get("source"),
+                "source_block_id": item.get("source_block_id"),
+                "image_index": item.get("image_index"),
+            }
+        )
+        previous_section_title = section_title
+    return narration
+
+
+def build_lesson_playlist(narration_script: list[dict]) -> list[dict]:
+    playlist = []
+    for item in narration_script:
+        playlist.append(
+            {
+                "order": len(playlist),
+                "title": (
+                    item.get("title")
+                    or (
+                        _title_from_teacher_text(item.get("content", ""))
+                        if item.get("type") in {"teacher_text", "lesson_content"}
+                        else _title_from_teacher_text(item.get("content", ""), "Extracted image")
+                    )
+                ),
+                "type": item.get("type"),
+                "learning_object_id": item.get("learning_object_id"),
+                "narration_item_order": item.get("order"),
+            }
+        )
+    return playlist
+
+
+def _review_block(block: dict) -> dict:
+    return {
+        "block_id": block.get("block_id"),
+        "page": block.get("page"),
+        "content": block.get("text", ""),
+        "text": block.get("text", ""),
+        "category": block.get("category"),
+        "include_in_narration": bool(block.get("include_in_narration")),
+        "confidence": block.get("confidence"),
+        "reason": block.get("reason", ""),
+        "source": "teacher_pdf",
+    }
+
+
+def _review_blocks(blocks: list[dict]) -> list[dict]:
+    return [_review_block(block) for block in blocks]
+
+
+def review_learning_objects_for_bvi_learners(learning_objects: list[dict]) -> list[dict]:
+    """Remove non-learner fragments and questions before chunking/narration.
+
+    This is a deterministic final guard. It does not invent or summarize text;
+    it only removes lines that the structural classifier already recognizes as
+    teacher-facing, administrative, assessment, or activity content.
+    """
+    reviewed = []
+    for original in learning_objects:
+        item = {**original}
+        is_image = item.get("type") in {"image_description", "image"} or bool(item.get("image_url"))
+        if is_image:
+            reviewed.append(item)
+            continue
+
+        title = (item.get("title") or "").strip()
+        content = (item.get("content") or "").strip()
+        # "What Is Matter?" over its definition is a heading, not a quiz
+        # item; dropping it by its title deleted PDF 3's definition of matter
+        # and the English handout's definitions of plot, conflict and POV.
+        # Its lines are still checked one by one below, like any concept's.
+        question_heading = item.pop("from_question_heading", False)
+        if not content:
+            continue
+        if _is_admin_or_system_support_text(title) or (
+            _is_question_or_activity_text(title) and not question_heading
+        ):
+            continue
+
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if _is_admin_or_system_support_text(content):
+            # A layout block may join a valid relation to a teacher comment.
+            # Retain only independently meaningful authored relationships.
+            kept_lines = [line for line in lines if _is_symbolic_relation_text(line)]
+        else:
+            kept_lines = [
+                line
+                for line in lines
+                if not _is_admin_or_system_support_text(line)
+                and not _is_question_or_activity_text(line)
+            ]
+
+        cleaned_content = "\n".join(kept_lines).strip()
+        if not cleaned_content:
+            continue
+        if cleaned_content != content:
+            item["content"] = cleaned_content
+            item["accessibility_cleanup"] = "removed_nonlearner_text"
+        reviewed.append(item)
+
+    for order, item in enumerate(reviewed):
+        item["order"] = order
+    return reviewed
+
+
+def _sync_learning_objects(material: LearningMaterial, generated_json: dict):
+    from .learning_resource_linker import (
+        normalize_learning_object_title,
+        prior_grouping_fingerprints,
+        prior_learning_object_groups,
+        question_snapshots,
+        refresh_question_learning_object_links,
+        refresh_learning_object_match_suggestions,
+        remove_empty_learning_object_groups,
+        resolve_learning_object_group,
+        synchronize_detected_questions,
+    )
+
+    if not _material_exists(material):
+        raise MaterialDeletedDuringGeneration(
+            f"Learning material {material.pk} was deleted before learning objects were saved."
+        )
+    prior_groups = prior_learning_object_groups(material)
+    prior_fingerprints = prior_grouping_fingerprints(material)
+    material.learning_objects.all().delete()
+    synced_learning_objects = []
+    for item in generated_json.get("learning_objects", []):
+        if is_structural_metadata_label(item.get("title") or ""):
+            continue
+        # Filtering must not leak the source-list index into persisted order.
+        # If item zero is structural metadata, the first actual learning object
+        # is still order zero in both the database and the material snapshot.
+        index = len(synced_learning_objects)
+        is_image = item.get("type") in {"image_description", "image"} or bool(item.get("image_url"))
+        kind = LearningObject.Kind.IMAGE if is_image else LearningObject.Kind.TEXT
+        title = (
+            item.get("title")
+            or _title_from_learning_object_item(
+                item,
+                "Extracted image" if is_image else "Untitled content",
+            )
+        )[:255]
+        group = resolve_learning_object_group(
+            material,
+            title,
+            kind,
+            index,
+            content=item.get("content") or "",
+            section_title=item.get("section_title") or "",
+            prior_groups=prior_groups,
+        )
+        prior_key = (normalize_learning_object_title(title), index)
+        restored = group is not None and prior_groups.get(prior_key) == group.id
+        learning_object = LearningObject.objects.create(
+            material=material,
+            group=group,
+            # Blank lets the model fingerprint the new text; a restored grouping
+            # keeps the text it was actually decided against.
+            grouping_content_hash=prior_fingerprints.get(prior_key, "") if restored else "",
+            kind=kind,
+            section_title=(item.get("section_title") or "")[:255],
+            title=title,
+            content=item.get("content") or "",
+            image_url=item.get("image_url") or "",
+            source_page=item.get("source_page"),
+            source_block_id=item.get("source_block_id"),
+            source_excerpt=item.get("source_excerpt") or "",
+            order=index,
+        )
+        synced_learning_objects.append(
+            {
+                **item,
+                "order": index,
+                "kind": kind,
+                "learning_object_id": learning_object.id,
+                "learning_object_group_id": learning_object.group_id,
+            }
+        )
+    generated_json["learning_objects"] = synced_learning_objects
+    remove_empty_learning_object_groups(material)
+    refresh_learning_object_match_suggestions(material)
+    synchronize_detected_questions(material, generated_json.get("classified_blocks") or [])
+    if material.outline_node_id and material.learning_objects.exists():
+        question_only_materials = (
+            LearningMaterial.objects.filter(
+                course=material.course,
+                outline_node_id=material.outline_node_id,
+                questions__isnull=False,
+                learning_objects__isnull=True,
+            )
+            .exclude(pk=material.pk)
+            .distinct()
+        )
+        for question_material in question_only_materials:
+            refresh_question_learning_object_links(question_material)
+            question_document_json = question_material.generated_json or {}
+            question_document_json["questions"] = question_snapshots(question_material)
+            question_material.generated_json = question_document_json
+            question_material.save(update_fields=["generated_json"])
+    generated_json["questions"] = question_snapshots(material)
+    material.generated_json = generated_json
+    _save_material_update(material, ["generated_json"])
+
+
+def rebuild_generated_outputs_from_classifications(generated_json: dict) -> dict:
+    classified_blocks = generated_json.get("classified_blocks") or []
+    image_descriptions = generated_json.get("image_descriptions") or []
+    sections = split_classified_blocks(classified_blocks)
+    learning_objects = remove_structural_metadata_learning_objects(
+        build_section_learning_objects(classified_blocks, image_descriptions)
+    )
+    learning_objects = review_learning_objects_for_bvi_learners(learning_objects)
+    learning_objects = balance_learning_object_chunks(
+        learning_objects,
+        generated_json.get("teacher_outline_context") or {},
+    )
+    narration_script = build_narration_script_from_learning_objects(learning_objects)
+    playlist = build_lesson_playlist(narration_script)
+    updated = {
+        **generated_json,
+        "narration_script": narration_script,
+        "learning_objects": learning_objects,
+        "learning_objectives": _review_blocks(sections["learning_objectives"]),
+        "assessments": _review_blocks(sections["assessments"]),
+        "teacher_notes": _review_blocks(sections["teacher_notes"]),
+        "concept_metadata_blocks": _review_blocks(sections["concept_metadata_blocks"]),
+        "ignored_blocks": _review_blocks(sections["ignored_blocks"]),
+        "lesson_playlist": playlist,
+    }
+    return updated
+
+
+def apply_classification_override(
+    material: LearningMaterial,
+    block_id: int,
+    category: str | None = None,
+    include_in_narration: bool | None = None,
+) -> LearningMaterial:
+    generated_json = material.generated_json or {}
+    classified_blocks = generated_json.get("classified_blocks") or []
+    changed = False
+    for block in classified_blocks:
+        if int(block.get("block_id") or -1) != int(block_id):
+            continue
+        if category:
+            block["category"] = category
+        if include_in_narration is not None:
+            block["include_in_narration"] = bool(include_in_narration)
+        elif category:
+            block["include_in_narration"] = category == "lesson_content"
+        block["teacher_override"] = True
+        block["reason"] = "Teacher override."
+        changed = True
+        break
+    if not changed:
+        raise ValueError("Classified block was not found.")
+
+    material.generated_json = rebuild_generated_outputs_from_classifications(generated_json)
+    _save_material_update(material, ["generated_json"])
+    _sync_learning_objects(material, material.generated_json)
+    return material
+
+
+def generate_material_outputs(
+    material: LearningMaterial,
+    *,
+    propagate_validation_error: bool = False,
+) -> LearningMaterial:
+    import time as _time
+    _t0 = _time.monotonic()
+
+    def _trace(step):
+        logger.info("[TRACE material %s] %s (+%ss)", material.id, step, int(_time.monotonic() - _t0))
+
+    try:
+        _trace("start: extracting PDF text")
+        try:
+            text = extract_pdf_text(material.pdf_file.path)
+        except (fitz.FileDataError, fitz.EmptyFileError) as exc:
+            raise LearningMaterialValidationError(
+                "The uploaded file is not a readable PDF."
+            ) from exc
+        is_image_only_pdf = not _has_enough_embedded_pdf_text(text)
+        if is_image_only_pdf:
+            _trace("embedded text is sparse; using deterministic PDF page extraction fallback")
+            transcribed_text = transcribe_image_only_pdf_pages(material.pdf_file.path)
+            if not transcribed_text.strip():
+                raise LearningMaterialValidationError("No readable text was found in the PDF.")
+            text = transcribed_text
+            extracted_blocks = _text_blocks_from_transcription(transcribed_text)
+        else:
+            extracted_blocks = extract_pdf_text_blocks(material.pdf_file.path)
+
+        cleaned_preserved_text = clean_pdf_text_for_extraction(text, limit=None)
+        if not cleaned_preserved_text.strip():
+            raise LearningMaterialValidationError(
+                "No meaningful lesson text was found in the PDF."
+            )
+        if is_course_outline_document(cleaned_preserved_text):
+            raise LearningMaterialValidationError(
+                "This PDF appears to be a course outline, not lesson material. "
+                "Upload it through Course outline extraction."
+            )
+        metadata_text = _limited_text(cleaned_preserved_text)
+        extraction_mode = "deterministic_page_text_fallback" if is_image_only_pdf else "embedded_pdf_text"
+        _trace(f"text extracted: {len(text)} chars, {len(extracted_blocks)} blocks, mode={extraction_mode}")
+
+        selected_node = material.outline_node
+        _trace("validating PDF against course outline")
+        matched_node = validate_outline_node_for_material(
+            material.course,
+            selected_node,
+            material.title,
+            metadata_text,
+        )
+        if matched_node is None:
+            if selected_node is not None:
+                raise LearningMaterialValidationError(
+                    f'This PDF does not match the selected topic "{selected_node.title}" '
+                    "or any sufficiently confident topic in the approved course outline."
+                )
+            raise LearningMaterialValidationError(
+                "This PDF does not match any topic in the approved course outline."
+            )
+
+        auto_classified = selected_node is None
+        if auto_classified:
+            material.outline_node = matched_node
+            if material.module_node_id is None:
+                module_node = matched_node
+                while module_node.parent_id is not None:
+                    module_node = module_node.parent
+                material.module_node = module_node
+
+        table_images = [] if is_image_only_pdf else extract_instructional_pdf_tables(material.pdf_file.path)
+        if table_images:
+            extracted_blocks = exclude_text_blocks_inside_tables(extracted_blocks, table_images)
+        regular_images = [] if is_image_only_pdf else extract_meaningful_pdf_images(material.pdf_file.path)
+        regular_images = _remove_images_overlapping_tables(regular_images, table_images)
+        images = [*table_images, *regular_images]
+        for image_index, image in enumerate(images):
+            image["index"] = image_index
+        if images and material.id:
+            images = save_extracted_pdf_images(images, material.id)
+        _trace(f"images extracted: {len(images)} ({len(table_images)} tables)")
+
+        outline_context = _outline_context_for_material(material)
+
+        _trace("generating lesson metadata")
+        metadata = generate_lesson_metadata_from_text(metadata_text, outline_context=outline_context)
+        lesson_title = outline_context.get("topic_title") or metadata.get("lesson_title") or material.title
+        _trace("classifying instructional blocks")
+        classified_blocks = classify_instructional_blocks(extracted_blocks)
+        document_role = detect_instructional_document_role(classified_blocks)
+        _trace(f"document role detected: {document_role}")
+        # Pictures on the cover, credits or answer-key pages are dropped here,
+        # before any is narrated: describing them only to discard them cost a
+        # model call each.
+        set_aside_pages = non_lesson_pages(classified_blocks)
+        if set_aside_pages:
+            images = [image for image in images if image.get("page_number") not in set_aside_pages]
+        _trace(f"recording {len(images)} images for teacher descriptions")
+        # Narrated during upload, so a teacher reviews each figure with the
+        # explanation a learner will hear. Publishing retries any the model
+        # could not write (Ollama down) or left as only the printed caption.
+        image_descriptions = describe_pdf_images(
+            images,
+            lesson_title,
+            cleaned_preserved_text,
+            blocks=extracted_blocks,
+            model_limit=figures_narrated_at_upload(),
+        )
+        _trace("building learning objects")
+        classified_blocks = _mark_figure_descriptions(classified_blocks, image_descriptions)
+        image_descriptions = _images_on_lesson_pages(image_descriptions, classified_blocks)
+        sections = split_classified_blocks(classified_blocks)
+        learning_objects = build_section_learning_objects(classified_blocks, image_descriptions)
+        if document_role == "assessment":
+            # A question-only PDF must not be copied back into lesson narration,
+            # even when it contains prose-like prompts or answer choices.
+            learning_objects = []
+        fallback_used = False
+        if (
+            document_role != "assessment"
+            and not sections["assessments"]
+            and not learning_objects
+        ):
+            fallback_objects = build_fallback_learning_objects_from_text(cleaned_preserved_text)
+            learning_objects = fallback_objects
+            for order, item in enumerate(learning_objects):
+                item["order"] = order
+            fallback_used = bool(fallback_objects)
+        learning_objects = _remove_outline_container_objects(learning_objects, outline_context)
+        learning_objects = remove_structural_metadata_learning_objects(learning_objects)
+        learning_objects = refine_learning_object_titles(
+            learning_objects,
+            lesson_title=lesson_title,
+            outline_context=outline_context,
+        )
+        learning_objects = review_learning_objects_for_bvi_learners(learning_objects)
+        learning_objects = balance_learning_object_chunks(learning_objects, outline_context)
+        learning_objects = disambiguate_repeated_titles(learning_objects)
+        narration_script = build_narration_script_from_learning_objects(learning_objects)
+        playlist = build_lesson_playlist(narration_script)
+        generated_json = {
+            "generated_json_version": 4,
+            "lesson_title": lesson_title,
+            "suggested_lesson_title": metadata.get("lesson_title") or "",
+            "teacher_outline_context": outline_context,
+            "classification_method": (
+                "tfidf_cosine_similarity"
+                if auto_classified
+                else "teacher_selected_topic_validated_by_tfidf"
+            ),
+            "document_role": document_role,
+            "summary": "",
+            "original_text": text,
+            "cleaned_preserved_text": cleaned_preserved_text,
+            "text_extraction_mode": extraction_mode,
+            "classified_blocks": classified_blocks,
+            "narration_script": narration_script,
+            "learning_objects": learning_objects,
+            "learning_objectives": _review_blocks(sections["learning_objectives"]),
+            "assessments": _review_blocks(sections["assessments"]),
+            "teacher_notes": _review_blocks(sections["teacher_notes"]),
+            "concept_metadata_blocks": _review_blocks(sections["concept_metadata_blocks"]),
+            "ignored_blocks": _review_blocks(sections["ignored_blocks"]),
+            "concepts": metadata.get("concepts", []),
+            "image_descriptions": image_descriptions,
+            "lesson_playlist": playlist,
+            "preservation_metadata": {
+                "teacher_text_preserved": True,
+                "teacher_text_rewritten": False,
+                "learning_object_fallback_used": fallback_used,
+                "cleanup_applied": [
+                    "removed_repeated_header_footer",
+                    "removed_page_number",
+                    "normalized_excess_whitespace",
+                    "joined_layout_broken_lines",
+                ],
+            },
+        }
+
+        material.extracted_text = text
+        material.generated_json = generated_json
+        material.status = LearningMaterial.Status.COMPLETED
+        material.error_message = ""
+        _save_material_update(
+            material,
+            ["outline_node", "module_node", "extracted_text", "generated_json", "status", "error_message"],
+        )
+
+        _sync_learning_objects(material, generated_json)
+        _trace(f"done: status={material.status}")
+    except MaterialDeletedDuringGeneration as exc:
+        _trace(f"stopped: {exc}")
+    except LearningMaterialValidationError as exc:
+        _trace(f"REJECTED: {exc}")
+        if propagate_validation_error:
+            raise
+        material.status = LearningMaterial.Status.FAILED
+        material.error_message = str(exc)
+        try:
+            _save_material_update(material, ["status", "error_message"])
+        except MaterialDeletedDuringGeneration as deleted_exc:
+            _trace(f"stopped while saving rejection state: {deleted_exc}")
+    except Exception as exc:
+        _trace(f"FAILED: {type(exc).__name__}: {exc}")
+        material.status = LearningMaterial.Status.FAILED
+        material.error_message = str(exc)
+        try:
+            _save_material_update(material, ["status", "error_message"])
+        except MaterialDeletedDuringGeneration as deleted_exc:
+            _trace(f"stopped while saving failure state: {deleted_exc}")
+
+    return material

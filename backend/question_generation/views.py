@@ -1,0 +1,498 @@
+import threading
+
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from lessons.models import LearningMaterial
+from lessons.services.audio_generator import mark_material_audio_stale
+from course.version_assignment import assign_group_versions
+
+from .models import GeneratedQuestion, GenerationEvent, GenerationRun, LearnerResponse
+from .serializers import QuestionSerializer
+
+
+class GetQuestionView(APIView):
+    """
+    GET /api/questions/?node_id=<learning_object_id>&thinking_order=LOT&learner_id=learner_123
+
+    Returns an unanswered question for this learner at the requested
+    thinking order (LOT or HOT).
+    """
+    def get(self, request):
+        node_id = request.query_params.get("node_id")
+        thinking_order = request.query_params.get("thinking_order", "LOT")
+        learner_id = request.query_params.get("learner_id")
+
+        if not node_id or not learner_id:
+            return Response(
+                {"error": "node_id and learner_id required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        answered_ids = LearnerResponse.objects.filter(
+            learner_id=learner_id,
+            question__node_id=node_id,
+        ).values_list("question_id", flat=True)
+
+        question = (
+            GeneratedQuestion.objects
+            .filter(node_id=node_id, thinking_order=thinking_order, status="final")
+            .exclude(id__in=answered_ids)
+            .order_by("?")
+            .first()
+        )
+
+        if not question:
+            return Response(
+                {"message": "No more questions at this thinking order"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        return Response(QuestionSerializer(question).data)
+
+
+class SubmitAnswerView(APIView):
+    """
+    POST /api/questions/submit/
+    Body: {"question_id": 1, "selected_answer": "B", "learner_id": "learner_123"}
+    """
+    def post(self, request):
+        question_id = request.data.get("question_id")
+        selected = request.data.get("selected_answer")
+        learner_id = request.data.get("learner_id")
+
+        if not question_id or selected is None or not learner_id:
+            return Response(
+                {"error": "question_id, selected_answer and learner_id required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            question = GeneratedQuestion.objects.get(id=question_id)
+        except GeneratedQuestion.DoesNotExist:
+            return Response(
+                {"error": "Question not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        is_correct = selected == question.correct_answer
+
+        LearnerResponse.objects.create(
+            learner_id=learner_id,
+            question=question,
+            selected_answer=selected,
+            is_correct=is_correct,
+        )
+
+        return Response({
+            "is_correct": is_correct,
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation,
+        })
+
+
+class QuestionStatsView(APIView):
+    """
+    GET /api/questions/stats/?node_id=<learning_object_id>&learner_id=learner_123
+
+    Per-node progress stats for a learner, broken down by thinking order.
+    """
+    def get(self, request):
+        node_id = request.query_params.get("node_id")
+        learner_id = request.query_params.get("learner_id")
+
+        if not node_id or not learner_id:
+            return Response(
+                {"error": "node_id and learner_id required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        questions = GeneratedQuestion.objects.filter(node_id=node_id, status="final")
+        responses = LearnerResponse.objects.filter(
+            learner_id=learner_id,
+            question__node_id=node_id,
+        )
+
+        by_thinking_order = {}
+        for order in ("LOT", "HOT"):
+            order_responses = responses.filter(question__thinking_order=order)
+            by_thinking_order[order] = {
+                "total": questions.filter(thinking_order=order).count(),
+                "answered": order_responses.values("question_id").distinct().count(),
+                "correct": order_responses.filter(is_correct=True)
+                    .values("question_id").distinct().count(),
+            }
+
+        return Response({
+            "total": sum(d["total"] for d in by_thinking_order.values()),
+            "answered": sum(d["answered"] for d in by_thinking_order.values()),
+            "correct": sum(d["correct"] for d in by_thinking_order.values()),
+            "by_thinking_order": by_thinking_order,
+        })
+
+
+# ── Generation pipeline (teacher-facing) ──
+
+# If a "running" run has emitted nothing for this long, assume the server
+# restarted mid-run and the thread is gone.
+STALE_RUN_SECONDS = 300
+
+
+def _normal_question_source(node):
+    """Return the sole question source for a concept, or an actionable error."""
+    if node.group_id is None:
+        return node, ""
+    state = assign_group_versions(node.group)
+    if not state.get("classification_complete") or not state.get("original_selected"):
+        return None, "Classify this concept's PDF variants before generating questions."
+    normal = node.group.learning_objects.filter(
+        pk=state["representative_id"],
+    ).first()
+    if normal is None or not (normal.content or "").strip():
+        return None, "This concept has no usable Normal version."
+    return normal, ""
+
+
+def _run_pipeline(run_id, material_id, node_ids=None, skip_complete=False):
+    """Thread target: run the pipeline, streaming trace events to the DB."""
+    from .services.pipeline import generate_questions_for_material
+
+    seq_counter = [0]
+
+    def on_event(event_type, message, data):
+        seq_counter[0] += 1
+        GenerationEvent.objects.create(
+            run_id=run_id,
+            seq=seq_counter[0],
+            event_type=event_type,
+            message=message,
+            data=data,
+        )
+
+    try:
+        run = GenerationRun.objects.select_related("material").get(id=run_id)
+        material = run.material
+        # questions are saved to the DB per node as the pipeline progresses
+        questions = generate_questions_for_material(
+            material,
+            on_event=on_event,
+            node_ids=node_ids,
+            skip_complete=skip_complete or run.node_id is None,
+        )
+        on_event("saved", f"Saved {len(questions)} questions to database",
+                 {"count": len(questions)})
+        GenerationRun.objects.filter(id=run_id).update(
+            status="finished", finished_at=timezone.now())
+    except Exception as e:  # noqa: BLE001 — surface anything to the trace
+        on_event("error", f"{type(e).__name__}: {e}", None)
+        GenerationRun.objects.filter(id=run_id).update(
+            status="failed", finished_at=timezone.now())
+
+
+class StartGenerationView(APIView):
+    """
+    POST /api/generation/materials/<material_id>/start/
+    Body (optional): {"node_id": <learning_object_id>}
+
+    Teacher-triggered: generate questions for every narrated learning object
+    of a completed material, or for a single learning object when node_id is
+    given. Image objects are valid when their narration has been written.
+    Runs in the background; poll the trace endpoint.
+    """
+    def post(self, request, material_id, node_id=None):
+        try:
+            material = LearningMaterial.objects.get(id=material_id)
+        except LearningMaterial.DoesNotExist:
+            return Response({"error": "Material not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        if material.status != LearningMaterial.Status.COMPLETED:
+            return Response(
+                {"error": f"Material is not completed (status: {material.status})"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_nodes = material.learning_objects.exclude(content="")
+        if not content_nodes.exists():
+            return Response(
+                {"error": "Material has no narrated learning objects to generate from"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        node = None
+        requested_node_id = node_id if node_id is not None else request.data.get("node_id")
+        skip_complete = request.data.get("skip_complete", requested_node_id is None) is True
+        if requested_node_id is not None:
+            node = content_nodes.filter(id=requested_node_id).first()
+            if node is None:
+                return Response(
+                    {"error": "Learning object not found for this material "
+                              "(or it has no narration content)"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            normal, normal_error = _normal_question_source(node)
+            if normal_error:
+                return Response({"error": normal_error}, status=status.HTTP_409_CONFLICT)
+            if normal.id != node.id:
+                return Response(
+                    {"error": "Questions can only be generated from this concept's Normal version.",
+                     "normal_learning_object_id": normal.id},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            normal_ids = []
+            seen_groups = set()
+            for candidate in content_nodes.select_related("group"):
+                scope_key = candidate.group_id or f"object:{candidate.id}"
+                if scope_key in seen_groups:
+                    continue
+                seen_groups.add(scope_key)
+                normal, normal_error = _normal_question_source(candidate)
+                if normal_error:
+                    return Response({"error": normal_error}, status=status.HTTP_409_CONFLICT)
+                if normal.material_id == material.id:
+                    normal_ids.append(normal.id)
+            if not normal_ids:
+                return Response(
+                    {"error": "This material contains no Normal learning objects to generate from."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # One question run at a time; unstick runs orphaned by a server restart.
+        # Scoped to this kind deliberately: an extraction or publish run is
+        # unrelated work, and refusing to generate questions because a PDF is
+        # still being read would be a conflict the teacher cannot act on.
+        for run in GenerationRun.objects.filter(
+            status="running",
+            kind=GenerationRun.Kind.QUESTIONS,
+        ):
+            last_event = run.events.order_by("-seq").first()
+            last_activity = last_event.created_at if last_event else run.started_at
+            if (timezone.now() - last_activity).total_seconds() > STALE_RUN_SECONDS:
+                run.status = "failed"
+                run.finished_at = timezone.now()
+                run.save(update_fields=["status", "finished_at"])
+            else:
+                return Response(
+                    {"error": "A generation run is already in progress", "run_id": run.id},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        run = GenerationRun.objects.create(
+            material=material, node=node, kind=GenerationRun.Kind.QUESTIONS,
+        )
+        threading.Thread(
+            target=_run_pipeline,
+            args=(
+                run.id,
+                material.id,
+                [node.id] if node else normal_ids,
+                skip_complete,
+            ),
+            daemon=True,
+        ).start()
+        return Response(
+            {"run_id": run.id, "node_id": node.id if node else None},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class MaterialQuestionsView(APIView):
+    """
+    GET /api/generation/materials/<material_id>/questions/
+
+    Teacher-facing review of the stored question bank, grouped per learning
+    object. Includes correct answers — never expose this to learners.
+    """
+    THINKING_ORDER_RANK = {"LOT": 0, "HOT": 1}
+
+    def get(self, request, material_id):
+        try:
+            material = LearningMaterial.objects.get(id=material_id)
+        except LearningMaterial.DoesNotExist:
+            return Response({"error": "Material not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        nodes = material.learning_objects.exclude(content="").order_by("order", "id")
+        payload = []
+        for node in nodes:
+            questions = sorted(
+                node.generated_questions.filter(status="final"),
+                key=lambda q: (self.THINKING_ORDER_RANK.get(q.thinking_order, 2), q.id),
+            )
+            payload.append({
+                "node_id": node.id,
+                "node_title": node.title,
+                "questions": [
+                    {
+                        "id": q.id,
+                        "question_text": q.question_text,
+                        "question_format": q.question_format,
+                        "choices": q.choices,
+                        "correct_answer": q.correct_answer,
+                        "explanation": q.explanation,
+                        "thinking_order": q.thinking_order,
+                        "bloom_level": q.bloom_level,
+                        "category": q.category,
+                    }
+                    for q in questions
+                ],
+            })
+        return Response(payload)
+
+
+class QuestionDetailView(APIView):
+    """
+    PATCH /api/generation/questions/<question_id>/
+    Body: any of {"question_text", "choices", "correct_answer", "explanation"}
+
+    Teacher review edits to a stored question. DELETE removes the question.
+    NOTE: editing or deleting cascades no learner responses except on delete.
+    """
+    def patch(self, request, question_id):
+        try:
+            question = GeneratedQuestion.objects.get(id=question_id)
+        except GeneratedQuestion.DoesNotExist:
+            return Response({"error": "Question not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+
+        if "question_text" in data:
+            text = str(data["question_text"]).strip()
+            if not text:
+                return Response({"error": "Question text cannot be blank"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            question.question_text = text
+
+        if "choices" in data:
+            if question.question_format != "MCQ":
+                return Response({"error": "Only MCQ questions have choices"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            choices = data["choices"]
+            if not isinstance(choices, dict) or len(choices) < 2:
+                return Response({"error": "Choices must be an object with at least two options"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            cleaned = {str(k).strip().upper(): str(v).strip() for k, v in choices.items()}
+            if any(not v for v in cleaned.values()):
+                return Response({"error": "Choice text cannot be blank"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            question.choices = cleaned
+
+        if "correct_answer" in data:
+            question.correct_answer = str(data["correct_answer"]).strip()
+
+        if "explanation" in data:
+            question.explanation = str(data["explanation"]).strip()
+
+        if question.question_format == "MCQ":
+            if question.correct_answer not in (question.choices or {}):
+                return Response({"error": "Correct answer must be one of the choice letters"},
+                                status=status.HTTP_400_BAD_REQUEST)
+        elif question.question_format == "TF":
+            question.correct_answer = question.correct_answer.capitalize()
+            if question.correct_answer not in ("True", "False"):
+                return Response({"error": "Correct answer must be True or False"},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        question.save()
+        mark_material_audio_stale(question.node.material, scope="questions")
+        return Response({
+            "id": question.id,
+            "question_text": question.question_text,
+            "question_format": question.question_format,
+            "choices": question.choices,
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation,
+            "thinking_order": question.thinking_order,
+            "bloom_level": question.bloom_level,
+            "category": question.category,
+        })
+
+    def delete(self, request, question_id):
+        question = GeneratedQuestion.objects.select_related("node__material").filter(id=question_id).first()
+        if question is None:
+            return Response({"error": "Question not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+        material = question.node.material
+        deleted, _ = GeneratedQuestion.objects.filter(id=question_id).delete()
+        if not deleted:
+            return Response({"error": "Question not found"},
+                            status=status.HTTP_404_NOT_FOUND)
+        mark_material_audio_stale(material, scope="questions")
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class GenerationRunsView(APIView):
+    """GET /api/generation/runs/?material_id=<id> — recent runs, newest first."""
+    def get(self, request):
+        runs = GenerationRun.objects.select_related("material", "node").order_by("-started_at")
+        material_id = request.query_params.get("material_id")
+        if material_id:
+            runs = runs.filter(material_id=material_id)
+        return Response([
+            {
+                "id": r.id,
+                "material_id": r.material_id,
+                "material_title": r.material.title if r.material_id else None,
+                "node_id": r.node_id,
+                "node_title": r.node.title if r.node else None,
+                "status": r.status,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+            }
+            for r in runs[:20]
+        ])
+
+
+class GenerationTraceView(APIView):
+    """
+    GET /api/generation/runs/<run_id>/events/?after=<seq>
+
+    Returns run status plus events with seq > after (default: all).
+    Poll this with the last seq already received.
+    """
+    def get(self, request, run_id):
+        try:
+            run = GenerationRun.objects.select_related(
+                "material", "node", "outline_node"
+            ).get(id=run_id)
+        except GenerationRun.DoesNotExist:
+            return Response({"error": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            after = int(request.query_params.get("after", 0))
+        except ValueError:
+            after = 0
+
+        events = run.events.filter(seq__gt=after)
+        return Response({
+            "run": {
+                "id": run.id,
+                # Lets one progress dialog label itself for every pipeline.
+                "kind": run.kind,
+                "kind_label": run.get_kind_display(),
+                "material_id": run.material_id,
+                # A publish run covers a topic and has no material.
+                "material_title": run.material.title if run.material_id else None,
+                "node_id": run.node_id,
+                "node_title": run.node.title if run.node else None,
+                "outline_node_id": run.outline_node_id,
+                "outline_node_title": run.outline_node.title if run.outline_node_id else None,
+                "status": run.status,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+            },
+            "events": [
+                {
+                    "seq": e.seq,
+                    "event_type": e.event_type,
+                    "message": e.message,
+                    "data": e.data,
+                    "created_at": e.created_at,
+                }
+                for e in events
+            ],
+        })

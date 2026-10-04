@@ -1,0 +1,589 @@
+{
+  "topics": [
+    340,
+    343
+  ],
+  "required": [
+    [
+      "c846",
+      "c970"
+    ],
+    [
+      "c847",
+      "c970"
+    ],
+    [
+      "c846",
+      "c975"
+    ],
+    [
+      "c847",
+      "c975"
+    ],
+    [
+      "c848",
+      "c978"
+    ]
+  ],
+  "unrelated": false,
+  "_note": "AI-drafted recommendation (not teacher-verified), 2026-09-30: the same AI tool as topics 340/357, asked for each concept of the second topic which concepts of the first topic must be learned first, on docs/course-pair-340-343-2026-09-30.md. Concept numbers there map to the concept ids below.",
+  "concepts": {
+    "340": [
+      {
+        "key": "c820",
+        "concept_id": 820,
+        "title": "Matter usually exists in one of three everyday states",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Matter usually exists in one of three everyday states",
+            "section_title": "",
+            "content": "Matter usually exists in one of three everyday states: solid, liquid, and gas. What state matter is in depends on two things: how closely packed its particles are, and how much energy (movement) those particles have.",
+            "material_id": 63,
+            "order": 1
+          },
+          {
+            "title": "What Is Matter? (Part 1 of 2)",
+            "section_title": "",
+            "content": "Matter is anything that has mass and takes up space.\nYour desk, the air you breathe, the water you drink, and even you are all made of matter.\nScientists sort matter into three common states based on how its particles are arranged and how they move: solid, liquid, and gas.",
+            "material_id": 64,
+            "order": 0
+          },
+          {
+            "title": "What Is Matter? (Part 2 of 2)",
+            "section_title": "",
+            "content": "Each state has its own shape, volume, and particle behavior, but all matter is made of the same kinds of tiny particles — what changes between the states is how closely packed those particles are and how much energy they have.",
+            "material_id": 64,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c809",
+        "concept_id": 809,
+        "title": "Particle arrangement in solids, liquids, and gases",
+        "section_title": "",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Particle arrangement in solids, liquids, and gases",
+            "section_title": "",
+            "content": "The image shows three arrangements of particles representing solids, liquids, and gases. In the first, the solid shows particles tightly packed together in fixed positions, suggesting a rigid structure. The second arrangement depicts particles close together but able to move, indicating a fluid state. Finally, the third shows particles far apart and moving freely, representing a gaseous state where movement is unrestricted.",
+            "material_id": 62,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": "c821",
+        "concept_id": 821,
+        "title": "As a general rule",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "As a general rule",
+            "section_title": "",
+            "content": "As a general rule: the more energy particles have, the faster they move and the further apart they spread. Solids have the least particle energy and movement; gases have the most.",
+            "material_id": 63,
+            "order": 2
+          }
+        ]
+      },
+      {
+        "key": "c810",
+        "concept_id": 810,
+        "title": "Matter",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Matter",
+            "section_title": "Matter",
+            "content": "Matter is anything that has mass and occupies space. A book, water, air, a spoon, and a balloon all contain matter. Matter can be described using observable properties such as shape, volume, texture, color, and how it behaves inside a container.",
+            "material_id": 62,
+            "order": 1
+          }
+        ]
+      },
+      {
+        "key": "c846",
+        "concept_id": 846,
+        "title": "Solid",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Solid",
+            "section_title": "Matter",
+            "content": "A solid has a definite shape and a definite volume. Its particles are packed closely together and mainly vibrate in fixed positions. Examples include a stone, pencil, wooden block, and ice cube.",
+            "material_id": 62,
+            "order": 2
+          },
+          {
+            "title": "Solids",
+            "section_title": "Solids",
+            "content": "In a solid, particles are packed tightly together in a fixed, orderly pattern. They vibrate in place but do not move past one another.",
+            "material_id": 63,
+            "order": 3
+          },
+          {
+            "title": "Diagram description (Solids)",
+            "section_title": "Solids",
+            "content": "particles in a solid are drawn as evenly spaced dots arranged in tidy rows and columns, like a grid, showing a fixed, orderly pattern.",
+            "material_id": 63,
+            "order": 4
+          },
+          {
+            "title": "Key properties of solids",
+            "section_title": "Solids",
+            "content": "Has a fixed shape -- it does not change shape unless a force is applied.\nHas a fixed volume -- it takes up the same amount of space no matter what container it is in.\nParticles are tightly packed and only vibrate in place.\nGenerally difficult to compress (squeeze into a smaller space).\nEveryday examples:\nice cubes, a wooden chair, a rock, a coin, and a book.",
+            "material_id": 63,
+            "order": 5
+          },
+          {
+            "title": "Solids (Part 1 of 2)",
+            "section_title": "",
+            "content": "In a solid, particles are packed tightly together in a fixed pattern.\nThey vibrate in place but do not move past one another.\nBecause of this, a solid keeps a definite shape and a definite volume — it does not change shape to fit a container.",
+            "material_id": 64,
+            "order": 2
+          },
+          {
+            "title": "Solids (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday examples:\nAn ice cube keeps its shape whether it sits in a bowl or on a plate.\nA wooden block stays the same size and shape no matter where you put it.\nA rock does not flow or spread out like a liquid would.\nKey idea: solid particles are held in place by strong forces between them, so heating a solid makes the particles vibrate faster until, at the melting point, they break free of their fixed positions and the solid becomes a liquid.",
+            "material_id": 64,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c847",
+        "concept_id": 847,
+        "title": "Liquid",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Liquid",
+            "section_title": "Matter",
+            "content": "A liquid has a definite volume but no definite shape. It flows and takes the shape of its container. Its particles are close together but can slide past one another.\nExamples include water, milk, and cooking oil.",
+            "material_id": 62,
+            "order": 3
+          },
+          {
+            "title": "Liquids",
+            "section_title": "Liquids",
+            "content": "In a liquid, particles are still close together, but they have more energy than in a solid. They can slide past one another, which is why liquids can flow and change shape.",
+            "material_id": 63,
+            "order": 6
+          },
+          {
+            "title": "Diagram description (Liquids)",
+            "section_title": "Liquids",
+            "content": "particles in a liquid are drawn as dots that are close together but scattered in an irregular, flowing arrangement rather than a neat grid, showing that they can move around each other.",
+            "material_id": 63,
+            "order": 7
+          },
+          {
+            "title": "Key properties of liquids",
+            "section_title": "Liquids",
+            "content": "Has no fixed shape -- it takes the shape of its container.\nHas a fixed volume -- the amount of liquid stays the same even if the container changes.\nParticles can slide past each other, allowing the liquid to flow.\nGenerally difficult to compress, though slightly easier than a solid.\nEveryday examples:\nwater, milk, cooking oil, and juice.",
+            "material_id": 63,
+            "order": 8
+          },
+          {
+            "title": "Liquids (Part 1 of 2)",
+            "section_title": "",
+            "content": "In a liquid, particles are still close together, but they are free to slide past one another.\nThis gives a liquid a definite volume but no fixed shape — it takes the shape of whatever container holds it, while the amount of liquid stays the same.",
+            "material_id": 64,
+            "order": 4
+          },
+          {
+            "title": "Liquids (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday examples:\nWater poured from a bottle into a cup changes shape but not amount.\nJuice flows and settles at the bottom of any container you pour it into.\nCooking oil spreads out flat when poured onto a pan.\nKey idea: heating a liquid gives its particles enough energy to escape into the air entirely, a process called evaporation, which turns the liquid into a gas at its boiling point.",
+            "material_id": 64,
+            "order": 5
+          }
+        ]
+      },
+      {
+        "key": "c848",
+        "concept_id": 848,
+        "title": "Gas",
+        "section_title": "Matter",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Gas",
+            "section_title": "Matter",
+            "content": "A gas has no definite shape and no definite volume. It spreads out and fills the available space in its container. Its particles are far apart and move freely. Air and water vapor are examples of gases.",
+            "material_id": 62,
+            "order": 4
+          },
+          {
+            "title": "Gases",
+            "section_title": "Gases",
+            "content": "In a gas, particles have the most energy of the three states. They move quickly in every direction and spread far apart, filling all the space available to them.",
+            "material_id": 63,
+            "order": 9
+          },
+          {
+            "title": "Diagram description (Gases)",
+            "section_title": "Gases",
+            "content": "particles in a gas are drawn as widely spaced dots, each with a short line beside it representing fast, free movement in many directions.",
+            "material_id": 63,
+            "order": 10
+          },
+          {
+            "title": "Key properties of gases",
+            "section_title": "Gases",
+            "content": "Has no fixed shape and no fixed volume -- it spreads out to fill its container completely.\nParticles move quickly and freely, with large spaces between them.\nEasy to compress because there is so much empty space between particles.\nEveryday examples:\nthe air around you, helium in a balloon, and steam rising from a hot drink.",
+            "material_id": 63,
+            "order": 11
+          },
+          {
+            "title": "Gases (Part 1 of 2)",
+            "section_title": "",
+            "content": "In a gas, particles are spread far apart and move quickly in every direction.\nA gas has no definite shape and no definite volume — it expands to completely fill whatever container it is in.",
+            "material_id": 64,
+            "order": 6
+          },
+          {
+            "title": "Gases (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday examples:\nThe air inside a balloon spreads out evenly to fill the whole balloon.\nSteam rising from a hot cup of tea spreads out into the room.\nA helium tank fills every party balloon you attach to it, one at a time.\nKey idea: cooling a gas slows its particles down until they pack close enough together to form a liquid again, a process called condensation.",
+            "material_id": 64,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c831",
+        "concept_id": 831,
+        "title": "Comparing the Three States",
+        "section_title": "Comparing the Three States",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Comparing the Three States",
+            "section_title": "Comparing the Three States",
+            "content": "The table below summarizes the key differences. Row and column headers are labeled with text so the comparison does not depend on color alone.",
+            "material_id": 63,
+            "order": 12
+          },
+          {
+            "title": "5. Comparing the Three States",
+            "section_title": "Comparing the Three States",
+            "content": "The table shows three columns, labeled ‘Property’, ‘Solid’, ‘Liquid’, and ‘Gas’. The first row lists the properties being compared: shape, volume, particle spacing, particle movement, and compressibility. The ‘Solid’ column indicates that solids have a fixed shape and a fixed volume, with their particles vibrating closely together. In contrast, the ‘Liquid’ column shows that liquids take the shape of their container, have a fixed volume, and their particles slide past each other with a closer spacing than solids. Finally, the ‘Gas’ column describes that gases take the shape of their container, fill available space, have a far apart particle spacing, move quickly and freely, and are highly compressible.",
+            "material_id": 63,
+            "order": 13
+          }
+        ]
+      },
+      {
+        "key": "c832",
+        "concept_id": 832,
+        "title": "Comparing the Three States",
+        "section_title": "Comparing the Three States",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Shape",
+            "section_title": "Comparing the Three States",
+            "content": "Solids keep their shape; liquids and gases take the shape of their container.",
+            "material_id": 62,
+            "order": 5
+          },
+          {
+            "title": "Volume",
+            "section_title": "Comparing the Three States",
+            "content": "Solids and liquids have definite volume; gases expand to fill available space.",
+            "material_id": 62,
+            "order": 6
+          },
+          {
+            "title": "Particle arrangement",
+            "section_title": "Comparing the Three States",
+            "content": "Solid particles are tightly packed, liquid particles are close but mobile, and gas particles are widely spaced.",
+            "material_id": 62,
+            "order": 7
+          },
+          {
+            "title": "Flow",
+            "section_title": "Comparing the Three States",
+            "content": "Liquids and gases can flow, while solids normally do not.",
+            "material_id": 62,
+            "order": 8
+          },
+          {
+            "title": "Comparing the Three States",
+            "section_title": "Comparing the Three States",
+            "content": "The figure shows three columns comparing the properties of solids, liquids, and gases. In the first column, solids are shown to have a fixed shape and a fixed volume, with their particles packed very closely together and vibrating in place. The second column describes liquids as having a shape that takes the shape of the container they are in, maintaining a fixed volume, with their particles close together and sliding past each other. Finally, the third column indicates that gases fill the entire container, have no fixed volume, and their particles are far apart, moving freely and fast.",
+            "material_id": 64,
+            "order": 8
+          }
+        ]
+      },
+      {
+        "key": "c833",
+        "concept_id": 833,
+        "title": "Changing From One State to Another",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Changing From One State to Another",
+            "section_title": "",
+            "content": "Adding or removing heat energy can change matter from one state to another. These changes are called changes of state. The names below describe the direction of each change.",
+            "material_id": 63,
+            "order": 14
+          },
+          {
+            "title": "How Matter Changes State",
+            "section_title": "",
+            "content": "Matter can change from one state to another when heat energy is added or removed. Adding heat makes particles move faster and spread apart (melting, then evaporation). Removing heat makes particles slow down and move closer together (condensation, then freezing). These changes are physical changes: the substance is still the same material, just arranged differently.\nMelting — solid to liquid, caused by adding heat.\nFreezing — liquid to solid, caused by removing heat.\nEvaporation — liquid to gas, caused by adding heat.\nCondensation — gas to liquid, caused by removing heat.",
+            "material_id": 64,
+            "order": 9
+          }
+        ]
+      },
+      {
+        "key": "c834",
+        "concept_id": 834,
+        "title": "6. Changing From One State to Another",
+        "section_title": "Comparing the Three States",
+        "kind": "image",
+        "members": [
+          {
+            "title": "6. Changing From One State to Another",
+            "section_title": "Comparing the Three States",
+            "content": "The figure shows a table outlining changes between states of matter. It lists four changes: melting, freezing, evaporating, and condensing. The first entry describes melting, showing a change from a solid to a liquid, and indicates that energy is added, causing the particles to move faster and spread out. The second entry details freezing, where a liquid transforms into a solid, and energy is removed, resulting in the particles slowing down and locking into place. The third entry explains evaporating or boiling, where a liquid becomes a gas, and energy is added, allowing the particles to move fast enough to escape and spread far apart. Finally, the fourth entry describes condensing, where a gas turns back into a liquid, and energy is removed, causing the particles to slow down and move closer together.",
+            "material_id": 63,
+            "order": 15
+          }
+        ]
+      },
+      {
+        "key": "c835",
+        "concept_id": 835,
+        "title": "Example (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Example (Part 1 of 2)",
+            "section_title": "",
+            "content": "Example: an ice cube (solid) left on a counter absorbs heat from the air.\nIt melts into water (liquid).\nIf that water is heated on a stove until it boils, some of it evaporates into water vapor (gas).",
+            "material_id": 63,
+            "order": 16
+          },
+          {
+            "title": "Example (Part 2 of 2)",
+            "section_title": "",
+            "content": "Everyday Examples:\nWater is one of the few substances people commonly see in all three states.\nThe table below lists a few examples for each state.\nTry it yourself: look around the room you are in right now and name one solid, one liquid, and one gas you can find nearby.",
+            "material_id": 63,
+            "order": 17
+          }
+        ]
+      },
+      {
+        "key": "c837",
+        "concept_id": 837,
+        "title": "7. Everyday Examples",
+        "section_title": "Everyday Examples",
+        "kind": "image",
+        "members": [
+          {
+            "title": "7. Everyday Examples",
+            "section_title": "Everyday Examples",
+            "content": "The table is arranged into three columns, labelled ‘Solid’, ‘Liquid’, and ‘Gas’. The first column lists ice, wood, rock, and a metal spoon, while the second column lists water, cooking oil, milk, and juice. The third column lists water vapor or steam, helium, air, and carbon dioxide in soda. Each item in the first two columns is paired with a corresponding item in the third column, indicating examples of each state of matter.",
+            "material_id": 63,
+            "order": 18
+          }
+        ]
+      },
+      {
+        "key": "c838",
+        "concept_id": 838,
+        "title": "Summary: what to remember (Part 1 of 2)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Summary: what to remember (Part 1 of 2)",
+            "section_title": "",
+            "content": "Matter is made of particles and commonly exists as a solid, liquid, or gas.\nSolids hold a fixed shape and volume because their particles are tightly packed.\nLiquids keep a fixed volume but flow to fit their container because their particles can slide past each other.",
+            "material_id": 63,
+            "order": 19
+          },
+          {
+            "title": "Summary: what to remember (Part 2 of 2)",
+            "section_title": "",
+            "content": "Gases have no fixed shape or volume because their particles move quickly and spread far apart.\nAdding or removing heat energy can change matter from one state to another through melting, freezing, evaporating, and condensing.",
+            "material_id": 63,
+            "order": 20
+          }
+        ]
+      },
+      {
+        "key": "c818",
+        "concept_id": 818,
+        "title": "Everyday Examples",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Everyday Examples",
+            "section_title": "",
+            "content": "An ice cube is a solid, melted ice is liquid water, and water vapor is a gas. These examples show that the same substance can exist in different states. Heating and cooling can cause changes of state, but understanding each state should come first.",
+            "material_id": 62,
+            "order": 9
+          }
+        ]
+      }
+    ],
+    "343": [
+      {
+        "key": "c970",
+        "concept_id": 970,
+        "title": "Solutions, colloids, and suspensions differ in appearance and in how they treat light",
+        "section_title": "Curriculum Alignment",
+        "kind": "image",
+        "members": [
+          {
+            "title": "Solutions, colloids, and suspensions differ in appearance and in how they treat light",
+            "section_title": "Curriculum Alignment",
+            "content": "The illustration shows three distinct types of mixtures: a solution, a colloid, and a suspension. In the first image, a solution is depicted as a uniform and clear liquid, with light passing straight through it and the particles within it being too small to be seen or settle. The second image shows a colloid, where light is scattered inside the mixture, and the particles do not separate when the mixture is left undisturbed, like gatas, taho, or mayonesa. Finally, the third image represents a suspension, which is cloudy and the solid particles settle at the bottom when it is left undisturbed, such as muddy water or gawgaw in water, and light is blocked.",
+            "material_id": 71,
+            "order": 0
+          }
+        ]
+      },
+      {
+        "key": "c971",
+        "concept_id": 971,
+        "title": "Uniform and Non-Uniform Mixtures (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Uniform and Non-Uniform Mixtures (Part 1 of 3)",
+            "section_title": "",
+            "content": "The Grade 6 competency asks learners to sort mixtures by appearance.\nThe question is simple: does A uniform mixture, also called a homogeneous mixture, looks the same in every part.\nThe components are so evenly spread that you cannot tell them apart by looking.",
+            "material_id": 71,
+            "order": 1
+          },
+          {
+            "title": "Uniform and Non-Uniform Mixtures (Part 2 of 3)",
+            "section_title": "",
+            "content": "A glass of sugar water, a cup of brewed coffee without grounds, and a sip of buko juice all look like a single liquid, even though each one contains several materials.\nUniform mixtures of this kind are called solutions.\nA non-uniform mixture, also called a heterogeneous mixture, shows its components.",
+            "material_id": 71,
+            "order": 2
+          },
+          {
+            "title": "Uniform and Non-Uniform Mixtures (Part 3 of 3)",
+            "section_title": "",
+            "content": "You can see the separate parts, and different spoonfuls may not look the same.\nA bowl of halo-halo, a plate of pancit, a handful of rice mixed with corn, and a glass of muddy water are all non-uniform.",
+            "material_id": 71,
+            "order": 3
+          }
+        ]
+      },
+      {
+        "key": "c974",
+        "concept_id": 974,
+        "title": "Solutions: Solute and Solvent",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Solutions: Solute and Solvent",
+            "section_title": "",
+            "content": "In a solution, the material that dissolves is the solute, and the material that does the dissolving is the solvent. In sweetened coffee, the sugar is the solute and the hot water is the solvent. The solvent is usually the component present in the greater amount, and water is so common as a solvent that it is often called the universal solvent.\nThree conditions affect how quickly a solute dissolves, and learners can test each one:\nSize of the particles. Finely ground sugar dissolves faster than a large lump, because more of its surface touches the water.\nStirring. A stirred glass dissolves its sugar faster than one left standing, because stirring keeps bringing fresh water into contact with the solute.\nTemperature. Sugar dissolves faster in hot water than in cold water, which is why powdered drinks mix easily in warm water but leave grains at the bottom of a cold glass.\nNot every solute dissolves in every solvent. Salt and sugar dissolve in water, but cooking oil does not.\nOil and water separate into two layers no matter how long they are stirred, which is why a bottle of salad dressing must be shaken before use.",
+            "material_id": 71,
+            "order": 4
+          }
+        ]
+      },
+      {
+        "key": "c975",
+        "concept_id": 975,
+        "title": "Suspensions and Colloids (Part 1 of 3)",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Suspensions and Colloids (Part 1 of 3)",
+            "section_title": "",
+            "content": "Between the clear solution and the obviously separated mixture are two kinds worth naming.\nA suspension is a non-uniform mixture in which solid particles are large enough to be seen and heavy enough to settle when the mixture is left alone.",
+            "material_id": 71,
+            "order": 5
+          },
+          {
+            "title": "Suspensions and Colloids (Part 2 of 3)",
+            "section_title": "",
+            "content": "Gawgaw stirred into water, muddy water from a flooded street, and a bottle of medicine labelled \"shake well before using\" are all suspensions.\nTheir particles can be trapped by filter paper.\nA colloid sits in between.",
+            "material_id": 71,
+            "order": 6
+          },
+          {
+            "title": "Suspensions and Colloids (Part 3 of 3)",
+            "section_title": "",
+            "content": "Its particles are too small to settle out, so the mixture stays evenly cloudy for a long time, but they are still large enough to scatter light.\nGatas, taho, mayonesa, gulaman, and the smoke from burning leaves are colloids.\nShining a flashlight through a glass of milk reveals the beam",
+            "material_id": 71,
+            "order": 7
+          }
+        ]
+      },
+      {
+        "key": "c978",
+        "concept_id": 978,
+        "title": "Air as a Mixture",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Air as a Mixture (Part 1 of 2)",
+            "section_title": "",
+            "content": "Not all mixtures are liquids.\nAir is a mixture of gases, and the Grade 6 competency names its main components: nitrogen, which makes up the largest share; oxygen, which living things need for respiration; carbon dioxide, which plants use to make food; and water vapor, whose amount rises and falls with the weather.",
+            "material_id": 71,
+            "order": 8
+          },
+          {
+            "title": "Air as a Mixture (Part 2 of 2)",
+            "section_title": "",
+            "content": "Air is a uniform mixture: it looks the same throughout, and its gases do not settle into layers.\nBecause the components are only physically combined, each keeps its own properties — which is why oxygen can still support burning even while it is mixed with the other gases.",
+            "material_id": 71,
+            "order": 9
+          },
+          {
+            "title": "components: nitrogen, which makes up the largest share; oxygen, which living things need for",
+            "section_title": "Air as a Mixture",
+            "content": "The figure shows six different mixtures, each with its own components and appearance. The first mixture, kape with sugar, is shown as clear and uniform throughout, indicating it’s a solution. The halo-halo is presented with ice, milk, fruits, and beans clearly visible in separate parts, demonstrating it’s a non-uniform mixture. Next, the gatas mixture shows evenly cloudy fat droplets in water that do not settle, classifying it as a colloid. The gawgaw in water is cloudy and settles on standing, identifying it as a non-uniform suspension. The air mixture is shown as invisible and the same throughout, representing a uniform mixture, and finally, the suka at mantika mixture displays two separate layers of vinegar and cooking oil, classifying it as a non-uniform mixture.",
+            "material_id": 71,
+            "order": 10
+          }
+        ]
+      },
+      {
+        "key": "c981",
+        "concept_id": 981,
+        "title": "Prepare each mixture in its own glass",
+        "section_title": "",
+        "kind": "text",
+        "members": [
+          {
+            "title": "Prepare each mixture in its own glass",
+            "section_title": "",
+            "content": "sugar in water, salt in water, oil in water, gawgaw in water, soil in water, and milk in water. Stir each one twenty times.",
+            "material_id": 71,
+            "order": 11
+          }
+        ]
+      }
+    ]
+  }
+}
