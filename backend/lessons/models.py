@@ -1,8 +1,10 @@
 import hashlib
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Lower
 
 
 def grouping_fingerprint(title, content):
@@ -19,11 +21,31 @@ def grouping_fingerprint(title, content):
 class CourseGroup(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        related_name="courses_created",
+        on_delete=models.SET_NULL,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("title"),
+                "created_by",
+                name="unique_course_title_per_creator_ci",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        # Store one predictable spelling for whitespace so "Grade 9  Matter"
+        # cannot bypass the duplicate-name check.
+        self.title = " ".join((self.title or "").split())
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.title

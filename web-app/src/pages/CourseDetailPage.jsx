@@ -258,7 +258,7 @@ export default function CourseDetailPage() {
             <h3>{hierarchyConfirmed ? "Lesson Hierarchy" : "Edit Lesson Hierarchy"}</h3>
             <p className="muted-text">
               {hierarchyConfirmed
-                ? "Click a topic to open its learning material screen."
+                ? "Click a child topic to open its learning material screen. Numbered headings are for organization only."
                 : "These are the topic nodes. Confirm the hierarchy before uploading learning materials."}
               </p>
           </div>

@@ -58,6 +58,7 @@ from .features.pdf_processing.serializers import (
     LearningMaterialUploadInputSerializer,
 )
 from .features.pdf_processing.use_cases import (
+    DuplicatePdfUploadError,
     PdfProcessingUseCaseError,
     confirm_course_outline,
     regenerate_learning_material,
@@ -239,6 +240,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         if self.action == "create":
             return CourseCreateSerializer
         return CourseDetailSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["get"], url_path="review/modules", permission_classes=[permissions.IsAuthenticated])
     def review_modules(self, request, pk=None):
@@ -2128,6 +2132,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 course=course,
                 **input_serializer.validated_data,
             )
+        except DuplicatePdfUploadError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except PdfProcessingUseCaseError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -2157,6 +2163,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 course=course,
                 **input_serializer.validated_data,
             )
+        except DuplicatePdfUploadError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except PdfProcessingUseCaseError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2208,6 +2216,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             material, reused = upload_learning_material(
                 course=course, **input_serializer.validated_data
             )
+        except DuplicatePdfUploadError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except PdfProcessingUseCaseError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 

@@ -257,7 +257,7 @@ function TopLevelTopic({
 
   return (
     <section className={`hierarchy-section hierarchy-section-${color}`}>
-      <div className={`hierarchy-section-header ${readOnly ? "is-clickable" : ""}`}>
+      <div className="hierarchy-section-header">
         <div className="hierarchy-section-main">
           <span className={`hierarchy-number hierarchy-number-${color}`}>{index + 1}</span>
           <span className="hierarchy-chevron" aria-hidden="true">v</span>
@@ -271,23 +271,10 @@ function TopLevelTopic({
                 onCancel={() => setIsEditing(false)}
               />
             ) : (
-              readOnly ? (
-                <button
-                  type="button"
-                  className="hierarchy-title-button hierarchy-title-button-strong"
-                  onClick={() => onSelectNode(node)}
-                >
-                  <span className="hierarchy-title-line">
-                    <span>{node.title}</span>
-                    <LessonPdfBadge count={node.lesson_pdf_count} />
-                  </span>
-                </button>
-              ) : (
-                <h4 className="hierarchy-title-line">
-                  <span>{node.title}</span>
-                  <LessonPdfBadge count={node.lesson_pdf_count} />
-                </h4>
-              )
+              <h4 className="hierarchy-title-line">
+                <span>{node.title}</span>
+                <LessonPdfBadge count={node.lesson_pdf_count} />
+              </h4>
             )}
             {!isEditing && <RelatedInfo info={node.related_info} />}
           </div>
@@ -403,7 +390,7 @@ export default function CourseHierarchy({
       <div className="hierarchy-tip">
         <strong>Tip:</strong>{" "}
         {readOnly
-          ? "Click a topic to open its learning materials."
+          ? "Click a subtopic to open its learning materials. Numbered headings organize the course and are not links."
           : "Click a topic name to edit it, or use the small action icons at the right."}
       </div>
     </div>

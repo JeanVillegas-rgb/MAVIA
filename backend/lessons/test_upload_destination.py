@@ -12,6 +12,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
 from lessons.features.pdf_processing.use_cases import (
+    DuplicatePdfUploadError,
     PdfProcessingUseCaseError,
     upload_learning_material,
 )
@@ -53,6 +54,31 @@ class UploadDestinationTests(TestCase):
 
         self.assertFalse(reused)
         self.assertEqual(material.outline_node, self.topic)
+        generate.assert_called_once()
+
+    def test_same_lesson_pdf_bytes_are_rejected_in_the_same_course(self):
+        with patch("lessons.features.pdf_processing.use_cases.generate_material_outputs") as generate:
+            upload_learning_material(
+                course=self.course,
+                pdf_file=self._pdf(),
+                outline_node_id=self.topic.id,
+            )
+
+            with self.assertRaisesMessage(
+                DuplicatePdfUploadError,
+                "already been uploaded",
+            ):
+                upload_learning_material(
+                    course=self.course,
+                    pdf_file=SimpleUploadedFile(
+                        "renamed.pdf",
+                        b"%PDF-1.4 motion",
+                        content_type="application/pdf",
+                    ),
+                    outline_node_id=self.topic.id,
+                )
+
+        self.assertEqual(LearningMaterial.objects.count(), 1)
         generate.assert_called_once()
 
     def test_a_module_without_topics_is_still_a_valid_place(self):

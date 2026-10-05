@@ -22,6 +22,10 @@ class PdfProcessingUseCaseError(Exception):
     """A presentation-independent business error raised by a PDF use case."""
 
 
+class DuplicatePdfUploadError(PdfProcessingUseCaseError):
+    """The exact PDF bytes are already stored for the same course."""
+
+
 class RejectedLearningMaterialError(PdfProcessingUseCaseError):
     """A persisted lesson-material upload that failed document validation."""
 
@@ -69,14 +73,16 @@ def _find_existing_outline(
     course: CourseGroup,
     fingerprint: str,
 ) -> CourseOutline | None:
-    existing = course.outlines.filter(file_sha256=fingerprint).first()
+    # An outline defines a course. Reusing the exact same outline to create a
+    # second course is still a duplicate, even though the course IDs differ.
+    existing = CourseOutline.objects.filter(file_sha256=fingerprint).first()
     if existing:
         return existing
 
     # Files saved before outline fingerprints were introduced are checked once
     # and backfilled lazily. This lets duplicate detection work immediately
     # without requiring teachers to upload their existing outlines again.
-    for outline in course.outlines.filter(file_sha256="").exclude(outline_file=""):
+    for outline in CourseOutline.objects.filter(file_sha256="").exclude(outline_file=""):
         try:
             outline.outline_file.open("rb")
             existing_fingerprint = _file_sha256(outline.outline_file)
@@ -88,7 +94,7 @@ def _find_existing_outline(
             except Exception:
                 pass
 
-        fingerprint_owner = course.outlines.filter(
+        fingerprint_owner = CourseOutline.objects.filter(
             file_sha256=existing_fingerprint
         ).first()
         if fingerprint_owner is None:
@@ -108,27 +114,13 @@ def upload_course_outline(
 ) -> tuple[CourseGroup, bool]:
     """Store an outline source and merge its hierarchy into the course."""
     fingerprint = _file_sha256(outline_file)
-    existing = _find_existing_outline(course, fingerprint)
-    if existing is not None:
-        # A teacher can delete every extracted topic while the source PDF stays
-        # attached. Re-uploading that PDF should recover the empty hierarchy.
-        if not course.nodes.exists():
-            try:
-                with _temporary_pdf_copy(outline_file) as temporary_path:
-                    parsed_nodes = validate_course_outline_pdf(str(temporary_path))
-                    build_dag_from_outline(
-                        course,
-                        str(temporary_path),
-                        Path(outline_file.name).suffix,
-                        replace=False,
-                        parsed_nodes=parsed_nodes,
-                    )
-            except Exception as exc:
-                raise PdfProcessingUseCaseError(str(exc)) from exc
-            existing.is_approved = False
-            existing.approved_at = None
-            existing.save(update_fields=["is_approved", "approved_at"])
-        return course, True
+
+    existing_outline = _find_existing_outline(course, fingerprint)
+    existing_material = _find_existing_material(course, outline_file, fingerprint)
+    if existing_outline is not None or existing_material is not None:
+        raise DuplicatePdfUploadError(
+            "This exact PDF has already been uploaded to this course."
+        )
 
     try:
         with _temporary_pdf_copy(outline_file) as temporary_path:
@@ -307,9 +299,13 @@ def upload_learning_material(
             )
 
     fingerprint = _file_sha256(pdf_file)
+
     existing_material = _find_existing_material(course, pdf_file, fingerprint)
-    if existing_material is not None:
-        return existing_material, True
+    existing_outline = _find_existing_outline(course, fingerprint)
+    if existing_material is not None or existing_outline is not None:
+        raise DuplicatePdfUploadError(
+            "This exact PDF has already been uploaded to this course."
+        )
 
     material = LearningMaterial.objects.create(
         course=course,
