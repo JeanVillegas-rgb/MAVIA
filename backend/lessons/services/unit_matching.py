@@ -8,13 +8,17 @@ of consecutive objects under one heading -- but on its own it over-merges: a
 acted on only when the *other* PDF names it with a matching heading or title
 and the cross-encoder confirms: at or above the auto threshold its objects are
 placed into one concept, and between the review threshold and that the teacher
-sees a card first. Nothing is merged -- each object keeps its own text.
+sees a card first. Complete numbered Part 1..N runs are an explicit authored
+exception and can be reconciled without a semantic score. Every object keeps
+its own text.
 """
 
 from collections import defaultdict
 from dataclasses import dataclass
+import re
 
-from django.db.models import Q
+from django.db import transaction
+from django.db.models import F, Q
 
 from ..models import (
     LearningObject,
@@ -27,6 +31,8 @@ from .concept_bundles import bundle_label, bundle_lead, bundle_text
 from . import semantic_grouping
 
 METHOD = "heading_unit_v1"
+_NUMBERED_PART = re.compile(r"\s*\(\s*part\s+(\d+)\s*(?:of|/)\s*(\d+)\s*\)\s*$", re.I)
+_AUTOMATIC_SELECTION_KEYS = {"normal_material_id", "normal_assigned_by", "auto_label"}
 
 
 def heading_key(text):
@@ -72,6 +78,105 @@ def find_units(objects):
         else:
             index += 1
     return units
+
+
+def numbered_part_series(objects):
+    """Complete, consecutive Part 1 of N ... Part N of N runs in one PDF.
+
+    A shared heading alone is insufficient: it can contain different concepts.
+    The explicit suffix, base title, authored section and source order must all
+    agree. Keep the rows separate; only their concept membership is shared.
+    """
+    ordered = sorted(objects, key=lambda item: (item.order, item.id))
+    result = []
+    for index, first in enumerate(ordered):
+        marker = _NUMBERED_PART.search(first.title or "")
+        if not marker or int(marker.group(1)) != 1:
+            continue
+        total = int(marker.group(2))
+        if total < 2 or index + total > len(ordered):
+            continue
+        base = normalize_learning_object_title((first.title or "")[:marker.start()])
+        if not base:
+            continue
+        run = ordered[index:index + total]
+        if all(
+            item.material_id == first.material_id
+            and item.kind == first.kind
+            and item.represented_by_id is None
+            and item.order == first.order + offset
+            and (item.section_title or "").strip().casefold()
+                == (first.section_title or "").strip().casefold()
+            and (part := _NUMBERED_PART.search(item.title or "")) is not None
+            and int(part.group(1)) == offset + 1
+            and int(part.group(2)) == total
+            and normalize_learning_object_title((item.title or "")[:part.start()]) == base
+            for offset, item in enumerate(run)
+        ):
+            result.append(tuple(run))
+    return result
+
+
+@transaction.atomic
+def reconcile_numbered_parts(node):
+    """Join safe split-part groups, including their already matched PDF text.
+
+    Do not override a teacher decision, collapse a published path, or discard
+    different version selections. Such cases stay unchanged.
+    """
+    material_ids = list(
+        LearningObject.objects.filter(
+            material__outline_node=node,
+            material__generated_json__learning_objects_confirmed=True,
+            represented_by__isnull=True,
+        ).order_by().values_list("material_id", flat=True).distinct()
+    )
+    joined = 0
+    for material_id in material_ids:
+        rows = list(
+            LearningObject.objects.filter(material_id=material_id, represented_by__isnull=True)
+            .select_related("material", "group").order_by("order", "id")
+        )
+        for series in numbered_part_series(rows):
+            groups = list({item.group_id: item.group for item in series if item.group_id}.values())
+            if len(groups) < 2 or len(groups) != len({item.group_id for item in series}):
+                continue
+            if any(not LearningObjectGroup.objects.filter(pk=group.id).exists() for group in groups):
+                continue
+            target = series[0].group
+            base = normalize_learning_object_title(series[0].title)
+            if not target or any(
+                group.outline_node_id != target.outline_node_id
+                or normalize_learning_object_title(group.label) != base
+                or set((group.version_selection or {})) - _AUTOMATIC_SELECTION_KEYS
+                or group.version_selection != target.version_selection
+                or group.path_steps.exists()
+                or group.dependent_links.exists()
+                or group.prerequisite_links.exists()
+                or group.course_dependent_links.exists()
+                or group.course_prerequisite_links.exists()
+                for group in groups
+            ):
+                continue
+            group_ids = [group.id for group in groups]
+            if LearningObjectMatchSuggestion.objects.filter(
+                status=LearningObjectMatchSuggestion.Status.REJECTED,
+                source_learning_object__group_id__in=group_ids,
+                candidate_learning_object__group_id__in=group_ids,
+            ).exclude(source_learning_object__group_id=F("candidate_learning_object__group_id")).exists():
+                continue
+            members = list(LearningObject.objects.filter(group_id__in=group_ids).select_related("material"))
+            series_ids = {item.id for item in series}
+            if any(
+                item.represented_by_id is not None
+                or (item.material_id == series[0].material_id and item.id not in series_ids)
+                for item in members
+            ):
+                continue
+            place_unit(members, target)
+            unpublish_topic(node)
+            joined += 1
+    return joined
 
 
 def _connected_across_pdfs(objects):
@@ -331,6 +436,7 @@ def refresh_heading_unit_suggestions(node, runtime_instance=None):
     threshold is placed into one concept straight away; between the review
     threshold and that, a teacher reviews a card first.
     """
+    reconcile_numbered_parts(node)
     engine = runtime_instance or semantic_grouping.runtime()
     config = semantic_grouping.policy()
     threshold = config["review_threshold"]

@@ -4,8 +4,9 @@ A group's members are alternative presentations of one concept, written by
 different teachers. Two PDFs rarely chunk a lesson at the same grain, so a
 concept holds a *bundle* per PDF -- all of that file's objects for the concept,
 in document order -- and a role is decided for the whole bundle rather than for
-each object. One bundle is Normal; each other bundle is Simplified, Elaborated
-or an Extra.
+each object. The first relevant PDF is Normal unless the teacher explicitly
+replaces it; later PDFs can be Simplified or Elaborated.
+Unassigned source bundles remain available for teacher review.
 
 A version supplied by a PDF is its own objects: nothing is copied. Only
 generated wording is stored as a ``LessonVariant``. The roles themselves live in
@@ -39,12 +40,10 @@ from .version_classifier import VersionClassificationError, classify_group_versi
 logger = logging.getLogger(__name__)
 
 PRIMARY_SLOTS = ("SIMPLIFIED", "ELABORATED")
-ROLES = (*PRIMARY_SLOTS, "EXTRA")
+ROLES = PRIMARY_SLOTS
 
 # Provenance for a bundle pushed out of a primary slot by a teacher's newer
-# choice. It is deliberately not ``teacher``: the teacher chose the winner, not
-# this bundle's consolation role, so the record shows it was displaced and the
-# role stays open to reclassification.
+# choice. The displaced bundle no longer has a version role.
 DISPLACED_BY_TEACHER = "displaced_by_teacher"
 
 
@@ -183,18 +182,30 @@ def _stored_provenance(selection):
 def _normal_id(group, bundles):
     selection = group.version_selection or {}
     stored = selection.get("normal_material_id")
-    if stored in bundles:
+    if _normal_replacement_needed(group, bundles):
+        return None
+    # Only a teacher can override upload order. Older automatic selections
+    # have no provenance, so they migrate to the first relevant PDF on read.
+    if selection.get("normal_assigned_by") == LessonVariant.AssignedBy.TEACHER and stored in bundles:
         return stored
     order = _ordered_bundle_ids(group, bundles)
     return order[0] if order else None
 
 
-def normal_material_id(group):
-    """Which PDF supplies this concept's Normal version, if one is decided.
+def _normal_replacement_needed(group, bundles):
+    """A previously selected primary PDF vanished; do not silently promote one."""
+    selection = group.version_selection or {}
+    stored = selection.get("normal_material_id")
+    return stored is not None and stored not in bundles and bool(bundles)
 
-    Falls back to the earliest upload so the review screen always has a
-    baseline to show; only a classification or a teacher makes it durable.
-    """
+
+def _baseline_changed(group, bundles):
+    stored = (group.version_selection or {}).get("normal_material_id")
+    return stored is not None and stored != _normal_id(group, bundles)
+
+
+def normal_material_id(group):
+    """The first relevant PDF, or a teacher's explicit replacement."""
     return _normal_id(group, _eligible_bundles(group))
 
 
@@ -202,10 +213,21 @@ def bundle_roles(group):
     """``{material_id: role}`` for every bundle other than Normal."""
     bundles = _eligible_bundles(group)
     normal_id = _normal_id(group, bundles)
+    selection = group.version_selection or {}
+    if _baseline_changed(group, bundles):
+        return {}
+    automatic_current = selection.get("roles_signature") == _roles_signature(
+        bundles, _ordered_bundle_ids(group, bundles)
+    )
+    provenance = _stored_provenance(selection)
     return {
         material_id: role
-        for material_id, role in _stored_roles(group.version_selection or {}).items()
+        for material_id, role in _stored_roles(selection).items()
         if material_id in bundles and material_id != normal_id and role in ROLES
+        and (
+            automatic_current
+            or provenance.get(material_id) in (LessonVariant.AssignedBy.TEACHER, DISPLACED_BY_TEACHER)
+        )
     }
 
 
@@ -217,10 +239,17 @@ def bundle_role_provenance(group):
     it must have wording for that case too.
     """
     bundles = _eligible_bundles(group)
+    selection = group.version_selection or {}
+    if _baseline_changed(group, bundles):
+        return {}
+    automatic_current = selection.get("roles_signature") == _roles_signature(
+        bundles, _ordered_bundle_ids(group, bundles)
+    )
     return {
         material_id: who
-        for material_id, who in _stored_provenance(group.version_selection or {}).items()
+        for material_id, who in _stored_provenance(selection).items()
         if material_id in bundles
+        and (automatic_current or who in (LessonVariant.AssignedBy.TEACHER, DISPLACED_BY_TEACHER))
     }
 
 
@@ -312,7 +341,11 @@ def _proxy(objects):
 # 2: Gemma reports its evidence and its label is checked against it.
 # 3: evidence shortened to one phrase per list; the label is checked by
 #    measurements of the texts (content_measures), not by the evidence.
-CLASSIFICATION_VERSION = 3
+# 4: weak coverage of any Normal sentence asks for review, and novelty no
+#    longer changes a Simplified proposal into Elaborated automatically.
+# 5: remove Extra; unmatched or displaced source bundles need teacher review.
+# 6: first relevant PDF is Normal; the LLM classifies only later PDFs.
+CLASSIFICATION_VERSION = 6
 
 
 def _roles_signature(bundles, ordered_ids):
@@ -328,48 +361,60 @@ def _roles_signature(bundles, ordered_ids):
 def assign_group_versions(group, *, use_llm=False):
     """Classify this concept's bundles and record each one's role.
 
-    When requested, Gemma chooses the Normal bundle and the roles are stored
-    with its provenance. Calls that do not invoke the model still propose a
-    role from readability, but report every unconvincing one in
+    The first relevant PDF is Normal unless a teacher explicitly chose another.
+    Gemma only proposes roles for the supplementary PDFs. Calls that do not
+    invoke the model still propose a role from readability, but report every unconvincing one in
     ``needs_confirmation`` so the review screen can ask instead of pretending.
     """
     bundles = _eligible_bundles(group)
     ordered_ids = _ordered_bundle_ids(group, bundles)
     selection = dict(group.version_selection or {})
     all_objects = [item for material_id in ordered_ids for item in bundles[material_id]]
+    normal_id = _normal_id(group, bundles)
+    replacement_needed = _normal_replacement_needed(group, bundles)
+    if normal_id is not None and selection.get("normal_material_id") is None:
+        # Record the first relevant upload even for a one-PDF concept. If its
+        # last object is later deleted, the next PDF must not silently become
+        # Normal just because classification had not run yet.
+        selection["normal_material_id"] = normal_id
+        selection["normal_assigned_by"] = "upload_order"
+        group.version_selection = selection
+        group.save(update_fields=["version_selection"])
 
-    if len(bundles) < 2:
-        only_id = ordered_ids[0] if ordered_ids else None
-        lead = bundle_lead(bundles[only_id]) if only_id is not None else None
+    if len(bundles) < 2 or replacement_needed:
+        lead = bundle_lead(bundles[normal_id]) if normal_id is not None else None
         _sync_automatic_group_label(
             group,
             lead,
             members=all_objects,
-            heading=bundle_label(bundles[only_id]) if only_id is not None else "",
+            heading=bundle_label(bundles[normal_id]) if normal_id is not None else "",
         )
         return {
             "representative_id": lead.id if lead is not None else None,
-            "normal_material_id": only_id,
+            "normal_material_id": normal_id,
             "bundle_roles": {},
-            "original_selected": lead is not None,
-            "classification_complete": True,
+            "original_selected": lead is not None and not replacement_needed,
+            "normal_replacement_needed": replacement_needed,
+            "classification_complete": not replacement_needed,
             "assigned": [],
             "needs_confirmation": [],
             "kept_as_own_step": [],
-            "extras": 0,
             "classification_error": "",
         }
 
     signature = _roles_signature(bundles, ordered_ids)
-    classification_complete = selection.get("roles_signature") == signature
-    stored_roles = _stored_roles(selection)
-    stored_provenance = _stored_provenance(selection)
-
-    # Upload order is only a display fallback; a Normal bundle is durable once
-    # Gemma or a teacher has chosen it, so a later refresh cannot silently
-    # reshuffle the learning path.
-    original_selected = selection.get("normal_material_id") in bundles
-    normal_id = _normal_id(group, bundles)
+    baseline_changed = _baseline_changed(group, bundles)
+    classification_complete = not baseline_changed and selection.get("roles_signature") == signature
+    # An old role judged against another Normal is not reusable, even when a
+    # teacher once confirmed that role. Keep its source text, but review anew.
+    stored_roles = {} if baseline_changed else _stored_roles(selection)
+    stored_provenance = {} if baseline_changed else _stored_provenance(selection)
+    original_selected = True
+    if baseline_changed and use_llm:
+        # Old suppression links point at the former Normal. Clear them before
+        # settling new roles, or the new Normal itself could remain hidden
+        # from the lesson while an obsolete PDF is still its anchor.
+        group.learning_objects.exclude(represented_by__isnull=True).update(represented_by=None)
 
     classifications = {}
     if classification_complete:
@@ -382,41 +427,6 @@ def assign_group_versions(group, *, use_llm=False):
             classifications = {}
             classification_complete = False
     classification_error = ""
-
-    if use_llm and not original_selected:
-        try:
-            proxies = [_proxy(bundles[material_id]) for material_id in ordered_ids]
-            by_lead = {proxy.id: material_id for proxy, material_id in zip(proxies, ordered_ids)}
-            classifications = classify_group_versions(proxies)
-            original_lead_id = next(
-                item_id
-                for item_id, result in classifications.items()
-                if result["slot"] == "ORIGINAL"
-            )
-            normal_id = by_lead[original_lead_id]
-            original_selected = True
-            normal_object_ids = {item.id for item in bundles[normal_id]}
-            with transaction.atomic():
-                # Remove only obsolete, unedited generated placements after a
-                # successful new selection: they were written against wording
-                # that is no longer the concept's baseline.
-                LessonVariant.objects.filter(
-                    learning_object_id__in=[item.id for item in all_objects],
-                    origin=LessonVariant.Origin.GENERATED,
-                ).exclude(assigned_by=LessonVariant.AssignedBy.TEACHER).exclude(
-                    learning_object_id__in=normal_object_ids,
-                ).delete()
-                selection["normal_material_id"] = normal_id
-                group.version_selection = selection
-                group.save(update_fields=["version_selection"])
-        except (VersionClassificationError, StopIteration, KeyError) as exc:
-            classification_error = str(exc)
-            logger.warning(
-                "Content-version classification failed: group=%s model=%s error=%s",
-                group.id,
-                settings.CONTENT_VERSION_LLM_MODEL,
-                exc,
-            )
 
     normal_bundle = bundles[normal_id]
     representative = bundle_lead(normal_bundle)
@@ -452,6 +462,7 @@ def assign_group_versions(group, *, use_llm=False):
         verdict = compare(normal_text, bundle_text(objects))
         llm = classifications.get(lead.id)
         llm_slot = llm["slot"] if llm and llm["slot"] in ROLES else None
+        llm_needs_review = bool(llm and llm["slot"] == "NEEDS_REVIEW")
         llm_confidence = llm["confidence"] if llm else None
         # Gemma decides the role; measurements of the two texts check it
         # (facts kept, content added, easier to read). FKGL and confidence are
@@ -471,12 +482,13 @@ def assign_group_versions(group, *, use_llm=False):
             "confident": accepted if llm_slot else verdict["confident"],
             # A role that failed the check is not stored, so the text is never
             # served as that version; it stays available as its own telling.
-            "rejected": bool(llm_slot) and not accepted,
+            "rejected": llm_needs_review or (bool(llm_slot) and not accepted),
             "review_issues": review["issues"] if review else [],
             "review_concerns": review["concerns"] if review else [],
             "review_measures": review["measures"] if review else None,
             "llm_evidence": (llm or {}).get("evidence"),
             "llm_slot": llm_slot,
+            "llm_classified": llm is not None,
             "llm_confidence": llm_confidence,
             "llm_reason": llm["reason"] if llm else "",
             "readability_slot": verdict["slot"],
@@ -529,6 +541,8 @@ def assign_group_versions(group, *, use_llm=False):
     claimed = {}
     for material_id in (*teacher_ids, *automatic_ids):
         proposal = by_material[material_id]
+        if stored_provenance.get(material_id) == DISPLACED_BY_TEACHER:
+            continue
         if material_id in teacher_ids:
             slot = stored_roles[material_id]
             who = LessonVariant.AssignedBy.TEACHER
@@ -553,43 +567,46 @@ def assign_group_versions(group, *, use_llm=False):
             slot = proposal["slot"]
             who = proposal["assigned_by"]
         if slot in PRIMARY_SLOTS and claimed.get(slot, material_id) != material_id:
-            # Wording that loses a primary slot is kept as an extra rather
-            # than dropped: a teacher wrote it.
-            slot = "EXTRA"
-            who = _displaced_provenance(who)
+            # A source that loses a contested slot remains unassigned for
+            # teacher review; it is never forced into another version role.
             persisted.discard(material_id)
-        if slot in PRIMARY_SLOTS:
-            claimed[slot] = material_id
+            continue
+        if slot not in PRIMARY_SLOTS:
+            continue
+        claimed[slot] = material_id
         roles[material_id] = slot
         provenance[material_id] = who
 
     assigned = []
     needs_confirmation = []
-    # A role readability caught is settled, not an open question: the text
-    # stays a teaching step of its own and the missing version is generated.
-    # Listing it under "needs your decision" would hand the teacher a task
-    # for every catch.
+    # Every unassigned source remains visible for teacher review. None is
+    # silently dropped or forced into a learner-facing version.
     kept_as_own_step = []
     for material_id in candidate_ids:
         proposal = by_material[material_id]
-        role = roles.get(material_id, proposal["slot"])
+        role = roles.get(material_id)
         entry = {**_public(proposal), "slot": role}
         if material_id in persisted:
             if role in PRIMARY_SLOTS:
                 assigned.append({**entry, "persisted": True})
             continue
-        if proposal.get("rejected"):
-            kept_as_own_step.append(entry)
+        if role is None:
+            needs_confirmation.append(entry)
             continue
         if not proposal["confident"]:
             needs_confirmation.append(entry)
             continue
         if role in PRIMARY_SLOTS:
             assigned.append(entry)
-    extras = sum(role == "EXTRA" for role in roles.values())
 
     stored_role_json = {str(key): value for key, value in roles.items()}
     stored_provenance_json = {str(key): value for key, value in provenance.items()}
+    stored_provenance_json.update({
+        str(material_id): DISPLACED_BY_TEACHER
+        for material_id in candidate_ids
+        if stored_provenance.get(material_id) == DISPLACED_BY_TEACHER
+        and material_id not in roles
+    })
     # Only a run that was actually asked to classify writes a role down. A
     # plain read -- the grouping step loads the whole topic through here --
     # still returns what readability proposes, so a caller can show it as a
@@ -611,7 +628,7 @@ def assign_group_versions(group, *, use_llm=False):
     # complete would bury it: it would come back as a persisted decision and
     # never reach the teacher again.
     fully_classified = all(
-        by_material[material_id]["llm_slot"]
+        by_material[material_id]["llm_classified"]
         or material_id in teacher_ids
         or material_id in persisted
         for material_id in candidate_ids
@@ -626,6 +643,7 @@ def assign_group_versions(group, *, use_llm=False):
         # render only genuine review cases without making another slow LLM call.
         selection.update({
             "normal_material_id": normal_id,
+            "normal_assigned_by": selection.get("normal_assigned_by") or "upload_order",
             "roles_signature": signature,
             "classification_assignments": {
                 str(item_id): result for item_id, result in classifications.items()
@@ -636,6 +654,7 @@ def assign_group_versions(group, *, use_llm=False):
     elif use_llm and settings.CONTENT_VERSION_LLM_ENABLED and not classification_error:
         # The Normal bundle was still chosen; only the roles stay open.
         selection["normal_material_id"] = normal_id
+        selection["normal_assigned_by"] = selection.get("normal_assigned_by") or "upload_order"
         selection.pop("roles_signature", None)
         changed = True
         classification_complete = False
@@ -643,9 +662,8 @@ def assign_group_versions(group, *, use_llm=False):
         group.version_selection = selection
         group.save(update_fields=["version_selection"])
 
-    # Before classification this is the stable first-upload fallback. Once
-    # Gemma selects the Normal bundle, the same rule automatically replaces it
-    # with that bundle's cleaned heading. Explicit teacher labels stay locked.
+    # The first relevant PDF is the baseline before and after classification.
+    # Explicit teacher labels stay locked.
     _sync_automatic_group_label(
         group,
         representative,
@@ -658,11 +676,11 @@ def assign_group_versions(group, *, use_llm=False):
         "normal_material_id": normal_id,
         "bundle_roles": dict(roles),
         "original_selected": original_selected,
+        "normal_replacement_needed": False,
         "classification_complete": classification_complete,
         "assigned": assigned,
         "needs_confirmation": needs_confirmation,
         "kept_as_own_step": kept_as_own_step,
-        "extras": extras,
         "classification_error": classification_error,
     }
 
@@ -681,6 +699,7 @@ def assign_source_to_slot(representative, source, slot):
     group = source.group
     if group is None:
         raise ValueError("Only grouped learning objects have version slots")
+    group.refresh_from_db(fields=["version_selection"])
 
     bundles = _eligible_bundles(group)
     if source.material_id == _normal_id(group, bundles):
@@ -697,28 +716,22 @@ def assign_source_to_slot(representative, source, slot):
             None,
         )
         if displaced_id is not None:
-            # The teacher's new choice wins the primary slot, but the wording
-            # it displaces is another PDF's and is kept as an extra -- under
-            # its own provenance, because the teacher did not choose this role
-            # for it.
-            displaced_provenance = _displaced_provenance(
-                _stored_provenance(group.version_selection or {}).get(displaced_id)
-            )
-            set_bundle_role(group, displaced_id, "EXTRA", assigned_by=displaced_provenance)
+            # Keep the displaced PDF wording, but leave its role open for
+            # review and stop representing it through the old Normal.
+            prune_bundle_role(group, displaced_id)
+            selection = dict(group.version_selection or {})
+            provenance = dict(selection.get("bundle_roles_assigned_by") or {})
+            provenance[str(displaced_id)] = DISPLACED_BY_TEACHER
+            selection["bundle_roles_assigned_by"] = provenance
+            group.version_selection = selection
+            group.save(update_fields=["version_selection"])
+            for item in bundles.get(displaced_id, []):
+                if item.represented_by_id:
+                    item.represented_by = None
+                    item.save(update_fields=["represented_by"])
 
     set_bundle_role(group, source.material_id, slot)
 
-    if displaced_id is not None:
-        # Losing a slot is not the same as being demoted to an extra: the
-        # displaced wording takes whichever primary slot it actually fits, and
-        # only stays an extra when none is free. That role is settled here,
-        # with the decision that caused it. It used to be re-derived by the
-        # next page load instead, which is no longer true now that a read
-        # records nothing -- the displaced bundle would have stayed an extra
-        # and its wording would have been regenerated rather than used.
-        rederived = assign_group_versions(group)["bundle_roles"].get(displaced_id)
-        if rederived and rederived != "EXTRA":
-            set_bundle_role(group, displaced_id, rederived, assigned_by=displaced_provenance)
     for item in bundles.get(source.material_id, [source]):
         if item.represented_by_id != representative.id:
             item.represented_by = representative
@@ -734,21 +747,36 @@ def assign_source_to_slot(representative, source, slot):
 
 @transaction.atomic
 def assign_source_as_representative(group, source):
-    """Make another PDF's bundle Normal and give the old Normal its role."""
+    """Record a teacher's explicit choice of a replacement Normal PDF."""
+    group.refresh_from_db(fields=["version_selection"])
     state = assign_group_versions(group)
     representative_id = state["representative_id"]
-    if representative_id is None:
+    replacement_needed = state.get("normal_replacement_needed", False)
+    if representative_id is None and not replacement_needed:
         raise ValueError("This group has no Normal version")
     if source.group_id != group.id:
         raise ValueError("The selected source is not in this concept group")
-    if source.id == representative_id:
+    if source.id == representative_id and not replacement_needed:
+        selection = dict(group.version_selection or {})
+        if selection.get("normal_material_id") != source.material_id:
+            # The first-upload rule has already made this the visible Normal,
+            # but an older LLM choice may still be stored. Confirming it must
+            # also clear roles judged against that older baseline.
+            selection.update({
+                "normal_material_id": source.material_id,
+                "normal_assigned_by": LessonVariant.AssignedBy.TEACHER,
+                "bundle_roles": {},
+                "bundle_roles_assigned_by": {},
+            })
+            selection.pop("roles_signature", None)
+            selection.pop("classification_assignments", None)
+            group.version_selection = selection
+            group.save(update_fields=["version_selection"])
         return source
 
     bundles = _eligible_bundles(group)
     normal_id = state["normal_material_id"]
-    previous_slot = state["bundle_roles"].get(source.material_id)
-    if previous_slot is None:
-        raise ValueError("Classify this PDF source before making it Normal")
+    previous_slot = None if replacement_needed else bundle_roles(group).get(source.material_id)
 
     new_normal = bundles[source.material_id]
     # Generated wording was grounded in the old Normal and must be regenerated
@@ -767,20 +795,37 @@ def assign_source_as_representative(group, source):
     provenance = dict(selection.get("bundle_roles_assigned_by") or {})
     roles.pop(str(source.material_id), None)
     provenance.pop(str(source.material_id), None)
-    roles[str(normal_id)] = previous_slot
-    provenance[str(normal_id)] = LessonVariant.AssignedBy.TEACHER
+    if replacement_needed:
+        # Every old role was judged against a deleted baseline. No surviving
+        # source gets a new role until it is reviewed against this choice.
+        roles.clear()
+        provenance.clear()
+    elif previous_slot in PRIMARY_SLOTS:
+        roles[str(normal_id)] = previous_slot
+        provenance[str(normal_id)] = LessonVariant.AssignedBy.TEACHER
+    else:
+        # The teacher chose a new baseline, not a role for the old baseline.
+        # Keep the old PDF visible until its role is reviewed.
+        roles.pop(str(normal_id), None)
+        provenance[str(normal_id)] = DISPLACED_BY_TEACHER
     selection.update({
         "normal_material_id": source.material_id,
+        "normal_assigned_by": LessonVariant.AssignedBy.TEACHER,
         "bundle_roles": roles,
         "bundle_roles_assigned_by": provenance,
     })
+    selection.pop("roles_signature", None)
+    selection.pop("classification_assignments", None)
     group.version_selection = selection
     group.save(update_fields=["version_selection"])
 
     new_normal_ids = [item.id for item in new_normal]
-    group.learning_objects.exclude(pk__in=new_normal_ids).update(
-        represented_by=bundle_lead(new_normal),
-    )
+    group.learning_objects.exclude(pk__in=new_normal_ids).update(represented_by=None)
+    for material_id, objects in bundles.items():
+        if roles.get(str(material_id)) in PRIMARY_SLOTS:
+            type(source).objects.filter(pk__in=[item.pk for item in objects]).update(
+                represented_by=bundle_lead(new_normal)
+            )
     group.learning_objects.filter(pk__in=new_normal_ids).update(represented_by=None)
     source.represented_by = None
     _sync_automatic_group_label(
@@ -801,21 +846,19 @@ def review_gemma_role(llm, verdict, normal_text=None, candidate_text=None):
       read (Dale-Chall);
     * ELABORATED -- the facts are kept and something is added.
 
-    One correction is made: SIMPLIFIED on a text that keeps the facts and adds
-    content becomes ELABORATED (the overlap rule). Any other role the
-    measurements do not support is not stored. A problem Gemma itself reports
-    (a missing fact, a contradiction, another topic) also stops it. Extra is
-    left exactly as before. FKGL and Gemma's self-reported confidence are
-    recorded as concerns only: neither tells whether the label is right.
+    A Simplified proposal with a novel sentence is sent for review, not
+    relabelled Elaborated: novelty does not prove the sentence explains the
+    concept. Any role the measurements do not support is not stored. A problem
+    Gemma itself reports (a missing fact, a contradiction, another topic) also
+    stops it. FKGL and Gemma's self-reported
+    confidence are recorded as concerns only.
 
-    Measured on 21 labelled pairs, real texts, batched as MAVIA calls Gemma:
-    Gemma's label alone right 10 times; with this check right 17 times and
-    wrongly stored 3 times (18 before any check). It still cannot see a
-    contradiction or a missing fact inside one sentence ("Solids change their
-    shape to fit their container"): that is meaning, and these measurements
-    read overlap.
+    Earlier thresholds were measured on 21 labelled pairs, but those results
+    predate the per-sentence coverage gate and must not be treated as accuracy
+    figures for this rule. Similarity still cannot prove entailment or catch
+    every contradiction inside a matched sentence.
 
-    The returned ``slot`` is the role to store (Gemma's, or the corrected one).
+    The returned ``slot`` remains Gemma's proposal; a rejected one needs review.
     """
     from .content_measures import MeasurementUnavailable, measure_versions
 
@@ -824,7 +867,7 @@ def review_gemma_role(llm, verdict, normal_text=None, candidate_text=None):
     issues, concerns, measures = [], [], None
     problems = (llm.get("evidence") or {}).get("problems") or []
     if problems:
-        (concerns if slot == "EXTRA" else issues).append("gemma_reports_a_problem")
+        issues.append("gemma_reports_a_problem")
     if slot in PRIMARY_SLOTS and normal_text is not None and candidate_text is not None:
         try:
             measures = measure_versions(normal_text, candidate_text)
@@ -833,21 +876,6 @@ def review_gemma_role(llm, verdict, normal_text=None, candidate_text=None):
             # role is kept and the gap is recorded.
             concerns.append("measurements_unavailable")
         if measures:
-            if (
-                slot == "SIMPLIFIED"
-                and measures["facts_kept"]
-                and measures["adds_content"]
-                and not issues
-            ):
-                # The overlap rule, applied from the measurements: a text that
-                # keeps the facts and adds content is Elaborated, however much
-                # it also simplifies. Measured: gemma3:4b called PDF 2's Solid,
-                # Liquid and Gas sections -- which add characteristics and
-                # everyday examples -- "Simplified" when batched. Only this
-                # one direction is corrected; nothing is ever relabelled
-                # Simplified.
-                slot = "ELABORATED"
-                concerns.append("relabelled_simplified_as_elaborated")
             if not measures["facts_kept"]:
                 issues.append("facts_not_kept")
             if slot == "SIMPLIFIED" and measures["adds_content"]:
@@ -886,10 +914,15 @@ def settle_group(group):
     from .variant_generator import fill_missing_bundle_slots
 
     outcome = assign_group_versions(group, use_llm=True)
+    if outcome.get("normal_replacement_needed"):
+        return {
+            **outcome, "generated": [],
+            "errors": [{"learning_object_id": None, "detail": "Choose a replacement Normal PDF before publishing."}],
+        }
     if outcome["representative_id"] is None:
         return {**outcome, "generated": [], "errors": []}
     if not outcome.get("original_selected"):
-        detail = outcome.get("classification_error") or "Gemma did not select an original version."
+        detail = outcome.get("classification_error") or "This concept has no Normal PDF."
         return {
             **outcome,
             "generated": [],
@@ -960,9 +993,8 @@ def release_from_group(learning_object, companions):
     * the leaving object is no longer represented by the old original;
     * its bundle's stored role is dropped when it was the last object that PDF
       contributed to the concept;
-    * if it **was** the original, everyone it represented is released and the
-      concept's stored selection is reset so a new Normal is chosen from those
-      who remain.
+    * if it **was** the Normal lead, a remaining object from the same PDF
+      becomes the lead; otherwise the teacher must choose a replacement PDF.
 
     Generated versions are never deleted here, including ones a teacher edited.
     """
@@ -975,21 +1007,27 @@ def release_from_group(learning_object, companions):
 
     removed = []
     if original_id == learning_object.id:
+        same_pdf = sorted(
+            (item for item in companions if item.material_id == learning_object.material_id),
+            key=lambda item: (item.order, item.id),
+        )
+        new_lead = same_pdf[0] if same_pdf else None
         type(learning_object).objects.filter(
-            pk__in=companion_ids,
-            represented_by=learning_object,
-        ).update(represented_by=None)
+            pk__in=companion_ids, represented_by=learning_object,
+        ).update(represented_by=new_lead)
         if group is not None:
-            selection = group.version_selection or {}
-            # Every role was decided against a baseline that is leaving, so
-            # they all go and the concept chooses a new Normal from the rest.
-            removed = [
-                role for role in (selection.get("bundle_roles") or {}).values()
-                if role in ROLES
-            ]
-            label_locked = bool(selection.get("label_locked"))
-            group.version_selection = {"label_locked": True} if label_locked else {}
-            group.save(update_fields=["version_selection"])
+            if not same_pdf:
+                selection = dict(group.version_selection or {})
+                selection.setdefault("normal_material_id", learning_object.material_id)
+                selection.setdefault("normal_assigned_by", "upload_order")
+                removed = [
+                    role for role in (selection.get("bundle_roles") or {}).values()
+                    if role in ROLES
+                ]
+                selection.pop("roles_signature", None)
+                selection.pop("classification_assignments", None)
+                group.version_selection = selection
+                group.save(update_fields=["version_selection"])
         was_original = True
     else:
         was_original = False

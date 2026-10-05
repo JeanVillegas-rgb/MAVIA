@@ -174,21 +174,30 @@ class VersionEditingTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_payload_exposes_extras_and_row_ids(self):
-        extra = LessonVariant.objects.create(
-            learning_object=self.first,
-            variant="EXTRA",
-            narration="Third PDF wording",
-            origin="source_pdf",
-            source_learning_object=self.second,
-        )
+    def test_payload_exposes_unassigned_source_for_review(self):
         response = self.client.get(
             f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/learning-resources/"
         )
         versions = response.data["learning_object_groups"][0]["versions"]
-        self.assertIn("extras", versions)
-        self.assertEqual(versions["extras"][0]["id"], extra.id)
-        self.assertEqual(versions["extras"][0]["text"], "Third PDF wording")
+        self.assertNotIn("extras", versions)
+        self.assertEqual(versions["needs_confirmation"][0]["learning_object_id"], self.second.id)
+
+    def test_payload_preserves_archived_unassigned_wording(self):
+        material = self.first.material
+        generated = dict(material.generated_json or {})
+        generated["legacy_unassigned_versions"] = [{
+            "old_variant_id": 51,
+            "learning_object_id": self.first.id,
+            "narration": "Teacher's older alternative wording.",
+        }]
+        material.generated_json = generated
+        material.save(update_fields=["generated_json"])
+
+        response = self.client.get(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/learning-resources/"
+        )
+        archived = response.data["learning_object_groups"][0]["versions"]["archived_unassigned"]
+        self.assertEqual(archived[0]["text"], "Teacher's older alternative wording.")
 
     def test_payload_slots_carry_row_ids(self):
         row = self._variant()

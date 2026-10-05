@@ -64,10 +64,16 @@ class BundleQuestionSourceTests(TestCase):
         other = LearningMaterial.objects.create(
             course=self.course, outline_node=self.topic, title="B",
             generated_json={"learning_objects_confirmed": True})
-        LearningObject.objects.create(
+        member = LearningObject.objects.create(
             material=other, group=self.group, title="Solids", order=0,
             represented_by=self.lead,
             content="Solid particles vibrate in place.")
+        self.group.version_selection = {
+            "normal_material_id": self.material.id,
+            "bundle_roles": {str(member.material_id): "ELABORATED"},
+            "bundle_roles_assigned_by": {str(member.material_id): "teacher"},
+        }
+        self.group.save(update_fields=["version_selection"])
         text = concept_source_text(self.lead)
         self.assertIn("A solid keeps its shape.", text)
         self.assertIn("Ice cubes and a rock.", text)
@@ -95,27 +101,16 @@ class BundleQuestionSourceTests(TestCase):
             order=5, content="   ")
         self.assertEqual(concept_source_text(blank), "   ")
 
-    def test_an_unclassified_bundle_is_reported_in_the_log(self):
-        """A bundle with no stored role still feeds the prompt, and may later
-        be classified EXTRA -- text no learner hears. The run trace has to
-        show it, because nothing downstream will."""
+    def test_an_unassigned_bundle_does_not_feed_question_generation(self):
         other = LearningMaterial.objects.create(
             course=self.course, outline_node=self.topic, title="B",
             generated_json={"learning_objects_confirmed": True})
         LearningObject.objects.create(
             material=other, group=self.group, title="Solids", order=0,
             represented_by=self.lead, content="Solid particles vibrate.")
-        with self.assertLogs("question_generation.services.pipeline", "INFO") as logged:
-            concept_source_text(self.lead)
-        self.assertTrue(
-            any("no assigned version role" in line for line in logged.output),
-            logged.output,
-        )
+        self.assertNotIn("Solid particles vibrate.", concept_source_text(self.lead))
 
-    def test_an_extra_bundle_is_not_offered_to_the_generator(self):
-        """EXTRA is excluded from what a learner is served (published.py
-        _versions, course/services.py _build_chunk), so it is not something
-        to write questions about either."""
+    def test_an_unassigned_bundle_is_not_offered_to_the_generator(self):
         extra = LearningMaterial.objects.create(
             course=self.course, outline_node=self.topic, title="C",
             generated_json={"learning_objects_confirmed": True})
@@ -124,7 +119,7 @@ class BundleQuestionSourceTests(TestCase):
             represented_by=self.lead, content="An unrelated aside.")
         self.group.version_selection = {
             "normal_material_id": self.material.id,
-            "bundle_roles": {str(extra.id): "EXTRA"},
+            "bundle_roles": {},
         }
         self.group.save(update_fields=["version_selection"])
         self.assertNotIn("An unrelated aside.", concept_source_text(self.lead))

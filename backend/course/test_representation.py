@@ -100,11 +100,10 @@ class RepresentationTests(TestCase):
         )
 
     @patch("course.variant_generator._request_variants")
-    def test_llm_selects_original_and_only_missing_slot_is_generated(self, request_variants):
+    def test_first_pdf_is_normal_and_only_missing_slot_is_generated(self, request_variants):
         self.classify_group_versions.side_effect = None
         self.classify_group_versions.return_value = {
-            self.first.id: {"slot": "SIMPLIFIED", "confidence": 0.96, "reason": "Clearer."},
-            self.second.id: {"slot": "ORIGINAL", "confidence": 0.94, "reason": "Balanced."},
+            self.second.id: {"slot": "SIMPLIFIED", "confidence": 0.96, "reason": "Clearer."},
         }
         request_variants.return_value = {
             "SIMPLIFIED": "ignored",
@@ -113,12 +112,12 @@ class RepresentationTests(TestCase):
 
         result = settle_group(self.group)
 
-        self.assertEqual(result["representative_id"], self.second.id)
+        self.assertEqual(result["representative_id"], self.first.id)
         self.assertEqual(result["generated"], ["ELABORATED"])
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
-        self.assertEqual(result["bundle_roles"], {self.first.material_id: "SIMPLIFIED"})
+        self.assertEqual(result["bundle_roles"], {self.second.material_id: "SIMPLIFIED"})
         elaborated = LessonVariant.objects.get(
-            learning_object=self.second,
+            learning_object=self.first,
             variant="ELABORATED",
         )
         self.assertEqual(elaborated.origin, "generated")
@@ -193,11 +192,9 @@ class ReleaseFromGroupTests(TestCase):
         self.group.version_selection = {
             "normal_material_id": self.original.material_id,
             "bundle_roles": {
-                str(self.member.material_id): "EXTRA",
                 str(self.other.material_id): "ELABORATED",
             },
             "bundle_roles_assigned_by": {
-                str(self.member.material_id): "teacher",
                 str(self.other.material_id): "teacher",
             },
         }
@@ -222,20 +219,27 @@ class ReleaseFromGroupTests(TestCase):
         # Its own bundle's role leaves with it; the other member's stays.
         self.assertEqual(bundle_roles(self.group), {self.other.material_id: "ELABORATED"})
         self.assertTrue(LessonVariant.objects.filter(pk=self.generated.pk).exists())
-        self.assertEqual(outcome, {"was_original": False, "removed_version_slots": ["extra"]})
+        self.assertEqual(outcome, {"was_original": False, "removed_version_slots": []})
 
     def test_a_leaving_original_releases_everyone_it_represented(self):
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         outcome = release_from_group(self.original, [self.member, self.other])
 
         self.assertTrue(outcome["was_original"])
-        self.assertEqual(outcome["removed_version_slots"], ["elaborated", "extra"])
+        self.assertEqual(outcome["removed_version_slots"], ["elaborated"])
         self.member.refresh_from_db()
         self.other.refresh_from_db()
         self.group.refresh_from_db()
         self.assertIsNone(self.member.represented_by_id)
         self.assertIsNone(self.other.represented_by_id)
-        self.assertEqual(self.group.version_selection, {})
+        self.assertEqual(
+            self.group.version_selection["normal_material_id"], self.original.material_id,
+        )
+        # The stored baseline remains so a move cannot silently promote a
+        # supplementary PDF after the object actually leaves the group.
+        LearningObject.objects.filter(pk=self.original.pk).update(group=None)
+        self.group.refresh_from_db()
+        self.assertTrue(assign_group_versions(self.group)["normal_replacement_needed"])
         # Generated text, including a teacher's edit, is never removed here.
         self.assertTrue(LessonVariant.objects.filter(pk=self.generated.pk).exists())
 

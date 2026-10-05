@@ -199,6 +199,21 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
         outcome = settle_group(group)
         variant_generated.extend(outcome["generated"])
         variant_errors.extend(outcome["errors"])
+        for pending in outcome["needs_confirmation"]:
+            detail = (
+                "A PDF source has no confirmed content-version role. "
+                "Choose Simplified or Elaborated, or separate it from this concept."
+            )
+            error = {
+                "learning_object_id": pending["learning_object_id"],
+                "detail": detail,
+            }
+            variant_errors.append(error)
+            emit(
+                "versions_failed", detail,
+                group_id=group.id,
+                learning_object_id=pending["learning_object_id"],
+            )
         # One named event per problem, so the teacher reads which concept needs
         # attention instead of a generic "resolve the reported errors".
         for error in outcome["errors"]:

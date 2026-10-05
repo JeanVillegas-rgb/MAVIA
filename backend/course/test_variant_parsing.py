@@ -14,9 +14,16 @@ when doing so yields JSON that parses; a reply carrying genuine curly quotes
 inside its text does not parse after the substitution and is still rejected.
 """
 
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
 
-from .variant_generator import VariantGenerationError, _parse_response
+from .variant_generator import (
+    VariantGenerationError,
+    _parse_response,
+    _prompt,
+    check_generated_version,
+)
 
 
 # The first attempt's reply, byte for byte, truncated after the repetition
@@ -69,6 +76,33 @@ class SmartQuoteReplyTests(SimpleTestCase):
     def test_a_reply_that_is_simply_not_json_is_still_refused(self):
         with self.assertRaises(VariantGenerationError):
             _parse_response("I could not write versions of that.", source_word_count=24)
+
+
+class VersionWordingRulesTests(SimpleTestCase):
+    def test_simplified_may_be_clearer_and_longer_than_three_extra_words(self):
+        source_words = 20
+        simplified = " ".join(["clear"] * 27)
+        response = '{"simplified": "' + simplified + '", "elaborated": "A fuller explanation."}'
+
+        self.assertEqual(_parse_response(response, source_word_count=source_words)["SIMPLIFIED"], simplified)
+
+    def test_prompt_and_parser_use_the_same_simplified_limit(self):
+        source = type("Source", (), {"title": "Matter", "content": " ".join(["fact"] * 20)})()
+        self.assertIn("at most 30 words", _prompt(source))
+        response = '{"simplified": "' + " ".join(["clear"] * 31) + '", "elaborated": "A fuller explanation."}'
+
+        with self.assertRaises(VariantGenerationError):
+            _parse_response(response, source_word_count=20)
+
+    @patch("course.content_measures.measure_versions", return_value={"facts_kept": True, "easier": False})
+    def test_elaborated_repeated_sentence_fails_despite_more_words(self, _measure):
+        problems = check_generated_version(
+            "ELABORATED",
+            "A solid keeps its shape.",
+            "A solid keeps its shape. A solid keeps its shape.",
+        )
+
+        self.assertTrue(any("repeats a sentence" in problem for problem in problems))
 
     def test_genuine_curly_quotes_inside_the_text_are_left_alone(self):
         """Repair must not turn a quotation in the wording into a delimiter.

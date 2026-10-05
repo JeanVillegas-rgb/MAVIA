@@ -185,7 +185,7 @@ def _versions(parts, group=None):
 
     if group is not None:
         for role, objects in version_bundles(group).items():
-            if role in ("NORMAL", "EXTRA"):
+            if role == "NORMAL":
                 continue
             versions[role.lower()] = _slot(bundle_segments(objects))
 

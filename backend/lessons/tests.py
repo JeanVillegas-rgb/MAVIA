@@ -79,6 +79,7 @@ from .services.learning_resource_linker import (
     synchronize_detected_questions,
 )
 from .features.pdf_processing.use_cases import (
+    DuplicatePdfUploadError,
     PdfProcessingUseCaseError,
     RejectedLearningMaterialError,
     upload_course_outline,
@@ -119,7 +120,7 @@ class CumulativeCourseOutlineTests(TestCase):
 
     @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
     @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
-    def test_same_outline_bytes_are_reused_without_resetting_approval(
+    def test_same_outline_bytes_are_rejected_without_resetting_approval(
         self,
         _validate_outline,
         build_outline,
@@ -136,20 +137,23 @@ class CumulativeCourseOutlineTests(TestCase):
         saved_outline.is_approved = True
         saved_outline.save(update_fields=["is_approved"])
 
-        _course, second_reused = upload_course_outline(
-            course=course,
-            outline_file=SimpleUploadedFile("renamed-outline.pdf", pdf_bytes),
-        )
+        with self.assertRaisesMessage(
+            DuplicatePdfUploadError,
+            "already been uploaded",
+        ):
+            upload_course_outline(
+                course=course,
+                outline_file=SimpleUploadedFile("renamed-outline.pdf", pdf_bytes),
+            )
 
         self.assertFalse(first_reused)
-        self.assertTrue(second_reused)
         self.assertEqual(course.outlines.count(), 1)
         self.assertTrue(course.outlines.get().is_approved)
         build_outline.assert_called_once()
 
         course.outlines.get().outline_file.delete(save=False)
 
-    def test_reupload_restores_deleted_outline_hierarchy_without_duplicate_pdf(self):
+    def test_reupload_is_rejected_even_when_extracted_hierarchy_was_deleted(self):
         course = CourseGroup.objects.create(title="Science")
         client = authenticated_api_client()
         document = fitz.open()
@@ -180,21 +184,15 @@ class CumulativeCourseOutlineTests(TestCase):
                 self.assertEqual(deleted.data["hierarchy"], [])
                 self.assertEqual(course.outlines.count(), 1)
 
-                restored = client.post(
+                duplicate = client.post(
                     upload_url,
                     {"pdf_file": SimpleUploadedFile("outline.pdf", pdf_bytes, content_type="application/pdf")},
                     format="multipart",
                 )
-                self.assertEqual(restored.status_code, status.HTTP_200_OK)
-                self.assertTrue(restored.data["upload_reused"])
-                self.assertTrue(restored.data["hierarchy_restored"])
+                self.assertEqual(duplicate.status_code, status.HTTP_409_CONFLICT)
+                self.assertIn("already been uploaded", duplicate.data["detail"])
                 self.assertEqual(course.outlines.count(), 1)
-                self.assertEqual(restored.data["hierarchy"][0]["title"], "Matter")
-                self.assertEqual(
-                    [child["title"] for child in restored.data["hierarchy"][0]["children"]],
-                    ["Definition of matter", "States of matter"],
-                )
-                self.assertFalse(course.outlines.get().is_approved)
+                self.assertFalse(course.nodes.exists())
 
     @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
     @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
@@ -217,7 +215,7 @@ class CumulativeCourseOutlineTests(TestCase):
 
     @patch("lessons.features.pdf_processing.use_cases.build_dag_from_outline")
     @patch("lessons.features.pdf_processing.use_cases.validate_course_outline_pdf")
-    def test_identical_outline_can_be_used_in_a_different_course(
+    def test_identical_outline_is_rejected_in_a_different_course(
         self,
         _validate_outline,
         _build_outline,
@@ -230,13 +228,16 @@ class CumulativeCourseOutlineTests(TestCase):
             course=first_course,
             outline_file=SimpleUploadedFile("outline.pdf", pdf_bytes),
         )
-        _course, reused = upload_course_outline(
-            course=second_course,
-            outline_file=SimpleUploadedFile("outline.pdf", pdf_bytes),
-        )
+        with self.assertRaisesMessage(
+            DuplicatePdfUploadError,
+            "already been uploaded",
+        ):
+            upload_course_outline(
+                course=second_course,
+                outline_file=SimpleUploadedFile("outline.pdf", pdf_bytes),
+            )
 
-        self.assertFalse(reused)
-        self.assertEqual(CourseOutline.objects.count(), 2)
+        self.assertEqual(CourseOutline.objects.count(), 1)
 
         for outline in CourseOutline.objects.all():
             outline.outline_file.delete(save=False)
@@ -1562,7 +1563,6 @@ class LearningResourceRelationshipTests(TestCase):
             "representative_id": None,
             "assigned": [],
             "needs_confirmation": [],
-            "extras": 0,
             "generated": ["SIMPLIFIED", "ELABORATED"],
             "errors": [],
         },
@@ -1615,6 +1615,16 @@ class LearningResourceRelationshipTests(TestCase):
         # Publish settles each group in the topic rather than calling the
         # standalone generator once for the node.
         settle_group_mock.assert_called_once()
+
+        settle_group_mock.return_value["needs_confirmation"] = [{
+            "learning_object_id": material.learning_objects.get().id,
+        }]
+        blocked = run_topic_publish(
+            self.course, self.node, set_confirmed=lambda item: None
+        )
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.published)
+        self.assertTrue(blocked["adaptive_variant_errors"])
 
     def test_course_outline_upload_rejects_non_pdf(self):
         client = authenticated_api_client()

@@ -16,7 +16,9 @@ from .testing import without_measurements
 from .models import LessonVariant
 from .version_assignment import (
     assign_group_versions,
+    assign_source_as_representative,
     assign_source_to_slot,
+    bundle_roles,
     clean_group_label,
     set_bundle_role,
     version_bundles,
@@ -75,7 +77,7 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(self.group.label, "Solid")
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_group_uses_cleaned_llm_selected_normal_title(self, classify):
+    def test_group_uses_cleaned_first_pdf_normal_title(self, classify):
         first = self._object(
             self._material("PDF one", 0), SHORT, title="1. Solid (Part 1 of 2)"
         )
@@ -90,7 +92,7 @@ class VersionAssignmentTests(TestCase):
         assign_group_versions(self.group, use_llm=True)
 
         self.group.refresh_from_db()
-        self.assertEqual(self.group.label, "Properties of Solids")
+        self.assertEqual(self.group.label, "Solid")
 
     @patch("course.version_assignment.classify_group_versions")
     def test_teacher_group_label_is_not_overwritten(self, classify):
@@ -162,12 +164,13 @@ class VersionAssignmentTests(TestCase):
             "evidence": {"simplifications": [], "additions": [], "problems": list(problems)},
         }
 
-    def _measures(self, facts_kept=True, adds_content=False, easier=True):
+    def _measures(self, facts_kept=True, adds_content=False, easier=True, weakly_covered_sentences=0):
         return patch(
             "course.content_measures.measure_versions",
             return_value={
                 "facts_kept": facts_kept, "adds_content": adds_content, "easier": easier,
                 "mean_coverage": 0.8, "novel_sentences": int(adds_content), "dale_chall_change": -1.0,
+                "weakly_covered_sentences": weakly_covered_sentences,
             },
         )
 
@@ -188,22 +191,50 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(result["bundle_roles"], {second.material_id: "SIMPLIFIED"})
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_simplified_that_keeps_the_facts_and_adds_content_is_stored_as_elaborated(self, classify):
-        """The observed failure, corrected by the overlap rule: Gemma called PDF 2's
-        Solid section Simplified although it adds characteristics and examples."""
+    def test_simplified_that_keeps_the_facts_and_adds_content_needs_review(self, classify):
+        """A novel sentence is not proof that the text is Elaborated."""
         second, result = self._assign(classify, self._row("SIMPLIFIED"), adds_content=True, easier=False)
 
-        self.assertEqual(result["bundle_roles"], {second.material_id: "ELABORATED"})
-        assigned = result["assigned"][0]
-        self.assertEqual(assigned["llm_slot"], "SIMPLIFIED")
-        self.assertIn("relabelled_simplified_as_elaborated", assigned["review_concerns"])
+        self.assertEqual(result["bundle_roles"], {})
+        reviewed = result["needs_confirmation"][0]
+        self.assertEqual(reviewed["llm_slot"], "SIMPLIFIED")
+        self.assertIn("simplified_but_adds_content", reviewed["review_issues"])
+        self.assertIn("simplified_but_not_easier", reviewed["review_issues"])
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_old_automatic_role_is_hidden_until_reclassified(self, classify):
+        second, _ = self._assign(classify, self._row("ELABORATED"), adds_content=True)
+        self.group.refresh_from_db()
+        self.assertEqual(bundle_roles(self.group), {second.material_id: "ELABORATED"})
+
+        selection = dict(self.group.version_selection)
+        selection["roles_signature"] = "classified-under-old-rules"
+        self.group.version_selection = selection
+        self.group.save(update_fields=["version_selection"])
+
+        self.assertEqual(bundle_roles(self.group), {})
+        self.assertFalse(assign_group_versions(self.group)["classification_complete"])
+
+        set_bundle_role(self.group, second.material_id, "ELABORATED")
+        self.assertEqual(bundle_roles(self.group), {second.material_id: "ELABORATED"})
 
     @patch("course.version_assignment.classify_group_versions")
     def test_simplified_that_adds_content_but_drops_facts_is_not_stored(self, classify):
         second, result = self._assign(classify, self._row("SIMPLIFIED"), facts_kept=False, adds_content=True)
 
         self.assertEqual(result["bundle_roles"], {})
-        self.assertIn("facts_not_kept", result["kept_as_own_step"][0]["review_issues"])
+        self.assertIn("facts_not_kept", result["needs_confirmation"][0]["review_issues"])
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_a_weakly_matched_normal_idea_needs_teacher_review(self, classify):
+        second, result = self._assign(
+            classify, self._row("ELABORATED"), facts_kept=False,
+            adds_content=True, weakly_covered_sentences=1,
+        )
+
+        self.assertEqual(result["bundle_roles"], {})
+        self.assertEqual(result["needs_confirmation"][0]["material_id"], second.material_id)
+        self.assertEqual(result["needs_confirmation"][0]["review_measures"]["weakly_covered_sentences"], 1)
 
     @patch("course.version_assignment.classify_group_versions")
     def test_a_reported_problem_is_never_corrected_into_a_role(self, classify):
@@ -218,14 +249,14 @@ class VersionAssignmentTests(TestCase):
         second, result = self._assign(classify, self._row("ELABORATED"), adds_content=False, easier=True)
 
         self.assertEqual(result["bundle_roles"], {})
-        self.assertEqual(result["kept_as_own_step"][0]["review_issues"], ["elaborated_but_adds_nothing"])
+        self.assertEqual(result["needs_confirmation"][0]["review_issues"], ["elaborated_but_adds_nothing"])
 
     @patch("course.version_assignment.classify_group_versions")
     def test_simplified_that_is_not_easier_is_not_stored(self, classify):
         second, result = self._assign(classify, self._row("SIMPLIFIED"), easier=False)
 
         self.assertEqual(result["bundle_roles"], {})
-        self.assertEqual(result["kept_as_own_step"][0]["review_issues"], ["simplified_but_not_easier"])
+        self.assertEqual(result["needs_confirmation"][0]["review_issues"], ["simplified_but_not_easier"])
 
     @patch("course.version_assignment.classify_group_versions")
     def test_an_elaborated_label_the_measurements_support_is_stored(self, classify):
@@ -238,14 +269,14 @@ class VersionAssignmentTests(TestCase):
         second, result = self._assign(classify, self._row("ELABORATED"), adds_content=False)
 
         self.assertEqual(result["bundle_roles"], {})
-        self.assertEqual(result["kept_as_own_step"][0]["review_issues"], ["elaborated_but_adds_nothing"])
+        self.assertEqual(result["needs_confirmation"][0]["review_issues"], ["elaborated_but_adds_nothing"])
 
     @patch("course.version_assignment.classify_group_versions")
     def test_a_text_that_does_not_keep_the_facts_is_not_stored(self, classify):
         second, result = self._assign(classify, self._row("ELABORATED"), facts_kept=False, adds_content=True)
 
         self.assertEqual(result["bundle_roles"], {})
-        self.assertIn("facts_not_kept", result["kept_as_own_step"][0]["review_issues"])
+        self.assertIn("facts_not_kept", result["needs_confirmation"][0]["review_issues"])
 
     @patch("course.version_assignment.classify_group_versions")
     def test_a_problem_gemma_reports_is_not_stored(self, classify):
@@ -254,15 +285,16 @@ class VersionAssignmentTests(TestCase):
         )
 
         self.assertEqual(result["bundle_roles"], {})
-        self.assertIn("gemma_reports_a_problem", result["kept_as_own_step"][0]["review_issues"])
+        self.assertIn("gemma_reports_a_problem", result["needs_confirmation"][0]["review_issues"])
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_extra_is_left_as_it_was(self, classify):
+    def test_model_can_request_review_without_a_version_role(self, classify):
         second, result = self._assign(
-            classify, self._row("EXTRA", problems=["drops the volume fact"]), facts_kept=False,
+            classify, self._row("NEEDS_REVIEW", problems=["drops the volume fact"]), facts_kept=False,
         )
 
-        self.assertEqual(result["bundle_roles"], {second.material_id: "EXTRA"})
+        self.assertEqual(result["bundle_roles"], {})
+        self.assertEqual(result["needs_confirmation"][0]["material_id"], second.material_id)
 
     @patch("course.version_assignment.classify_group_versions")
     def test_fkgl_and_low_confidence_are_concerns_not_decisions(self, classify):
@@ -300,12 +332,11 @@ class VersionAssignmentTests(TestCase):
             again = assign_group_versions(self.group, use_llm=True)
 
         self.assertEqual(again["bundle_roles"], {})
-        self.assertEqual(again["needs_confirmation"], [])
-        self.assertEqual(len(again["kept_as_own_step"]), 1)
+        self.assertEqual(len(again["needs_confirmation"]), 1)
         self.assertEqual(classify.call_count, 1)
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_grouped_original_is_selected_by_llm_not_upload_order(self, classify):
+    def test_first_relevant_pdf_stays_normal_even_if_llm_prefers_second(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
         classify.return_value = {
@@ -315,25 +346,24 @@ class VersionAssignmentTests(TestCase):
 
         result = assign_group_versions(self.group, use_llm=True)
 
-        self.assertEqual(result["representative_id"], second.id)
-        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
-        self.assertEqual(result["bundle_roles"], {first.material_id: "SIMPLIFIED"})
+        self.assertEqual(result["representative_id"], first.id)
+        self.assertEqual(result["normal_material_id"], first.material_id)
+        classify.assert_called_once()
+        self.assertEqual(classify.call_args.kwargs["representative"].id, first.id)
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_llm_extra_is_stored_automatically(self, classify):
+    def test_llm_review_decision_does_not_create_a_version(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), MIDDLING)
         classify.return_value = {
             first.id: {"slot": "ORIGINAL", "confidence": 0.91, "reason": "Baseline."},
-            second.id: {"slot": "EXTRA", "confidence": 0.72, "reason": "Equivalent wording."},
+            second.id: {"slot": "NEEDS_REVIEW", "confidence": 0.72, "reason": "Equivalent wording."},
         }
 
         result = assign_group_versions(self.group, use_llm=True)
 
-        self.assertEqual(result["needs_confirmation"], [])
-        # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
-        self.assertEqual(result["bundle_roles"], {second.material_id: "EXTRA"})
-        self.assertEqual(result["extras"], 1)
+        self.assertEqual(len(result["needs_confirmation"]), 1)
+        self.assertEqual(result["bundle_roles"], {})
 
     def test_thin_margin_is_routed_to_the_teacher_for_confirmation(self):
         first = self._object(self._material("PDF one", 0), SHORT)
@@ -398,7 +428,7 @@ class VersionAssignmentTests(TestCase):
         classify.return_value = {
             first.id: {"slot": "ORIGINAL", "confidence": 0.9, "reason": "Baseline."},
             second.id: {"slot": "SIMPLIFIED", "confidence": 0.9, "reason": "Plainer."},
-            third.id: {"slot": "EXTRA", "confidence": 0.9, "reason": "Alternative."},
+            third.id: {"slot": "NEEDS_REVIEW", "confidence": 0.9, "reason": "Alternative."},
         }
         assign_group_versions(self.group, use_llm=True)
         self.group.refresh_from_db()
@@ -414,12 +444,9 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(provenance[str(third.material_id)], "teacher")
         # The displaced bundle keeps the provenance it already had, which is
         # the point: it is not restamped as something the teacher ruled on.
-        self.assertEqual(provenance[str(second.material_id)], "llm_validated")
+        self.assertEqual(provenance[str(second.material_id)], "displaced_by_teacher")
 
-        # Still reclassifiable: a teacher-stamped role would stay an extra.
-        # The concept has to actually change for it to be asked again -- a
-        # settled run is not repeated on every load -- so the displaced
-        # bundle's text is edited, which is what moves the roles signature.
+        # The displaced source remains open for an explicit teacher decision.
         second.content = (
             "A solid keeps one shape and one volume. Its particles are locked into a "
             "repeating lattice, so they vibrate in place instead of moving past one another."
@@ -428,14 +455,15 @@ class VersionAssignmentTests(TestCase):
         classify.return_value = {
             first.id: {"slot": "ORIGINAL", "confidence": 0.9, "reason": "Baseline."},
             second.id: {"slot": "ELABORATED", "confidence": 0.9, "reason": "Fuller."},
-            third.id: {"slot": "EXTRA", "confidence": 0.9, "reason": "Alternative."},
+            third.id: {"slot": "NEEDS_REVIEW", "confidence": 0.9, "reason": "Alternative."},
         }
         outcome = assign_group_versions(self.group, use_llm=True)
 
         self.assertEqual(
             outcome["bundle_roles"],
-            {second.material_id: "ELABORATED", third.material_id: "SIMPLIFIED"},
+            {third.material_id: "SIMPLIFIED"},
         )
+        self.assertIn(second.material_id, [item["material_id"] for item in outcome["needs_confirmation"]])
 
     def test_the_newest_teacher_decision_wins_a_contested_slot(self):
         """Two teacher rulings cannot both hold one slot.
@@ -455,7 +483,7 @@ class VersionAssignmentTests(TestCase):
         provenance = self.group.version_selection["bundle_roles_assigned_by"]
         self.assertEqual(roles[str(third.material_id)], "SIMPLIFIED")
         self.assertEqual(provenance[str(third.material_id)], "teacher")
-        self.assertEqual(roles[str(second.material_id)], "EXTRA")
+        self.assertNotIn(str(second.material_id), roles)
         self.assertEqual(provenance[str(second.material_id)], "displaced_by_teacher")
 
     def test_two_teacher_roles_for_one_slot_are_settled_by_recency(self):
@@ -469,14 +497,14 @@ class VersionAssignmentTests(TestCase):
         outcome = assign_group_versions(self.group)
 
         self.assertEqual(outcome["bundle_roles"][third.material_id], "SIMPLIFIED")
-        self.assertEqual(outcome["bundle_roles"][second.material_id], "EXTRA")
+        self.assertNotIn(second.material_id, outcome["bundle_roles"])
         # Changed 2026-09-21: the resolution is re-derived on every call and
         # reported, but a read writes nothing, so the record still holds what
         # the two writes put there. Production cannot reach this state anyway:
         # `assign_source_to_slot` is the only path a teacher role takes, and
         # it displaces the losing claim as it stores the winning one.
         self.assertEqual(
-            outcome["bundle_roles"][second.material_id], "EXTRA",
+            outcome["needs_confirmation"][0]["material_id"], second.material_id,
         )
         self.group.refresh_from_db()
         self.assertEqual(
@@ -556,11 +584,11 @@ class VersionAssignmentTests(TestCase):
         self.assertFalse(self.group.version_selection.get("label_locked"))
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_slot_collision_keeps_the_larger_margin_and_stores_an_extra(self, classify):
+    def test_slot_collision_keeps_the_larger_margin_and_reviews_the_other(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         bigger = self._object(self._material("PDF two", 5), LONG)
         # Also confidently "elaborated", but by a narrower Flesch-Kincaid
-        # margin than LONG, so it loses the slot and becomes an extra.
+        # margin than LONG, so it loses the slot and needs review.
         smaller = self._object(
             self._material("PDF three", 10),
             "A solid keeps a fixed shape at all times. The particles inside it are packed "
@@ -577,9 +605,9 @@ class VersionAssignmentTests(TestCase):
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.assertEqual(
             result["bundle_roles"],
-            {bigger.material_id: "ELABORATED", smaller.material_id: "EXTRA"},
+            {bigger.material_id: "ELABORATED"},
         )
-        self.assertEqual(result["extras"], 1)
+        self.assertIn(smaller.material_id, [item["material_id"] for item in result["needs_confirmation"]])
 
     def test_singleton_group_assigns_nothing(self):
         self._object(self._material("PDF one", 0), SHORT)
@@ -617,18 +645,17 @@ class VersionAssignmentTests(TestCase):
         self.assertTrue(result["assigned"][0]["persisted"])
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_old_singleton_generation_does_not_choose_group_baseline(self, classify):
+    def test_adding_a_second_pdf_does_not_replace_the_existing_normal(self, classify):
         first = self._object(self._material("First PDF", 0), SHORT)
         LessonVariant.objects.create(learning_object=first, variant="SIMPLIFIED", narration="Previously generated.")
         second = self._object(self._material("New PDF", 5), MIDDLING)
         classify.return_value = {
-            first.id: {"slot": "EXTRA", "confidence": 0.9, "reason": "Alternative."},
-            second.id: {"slot": "ORIGINAL", "confidence": 0.9, "reason": "Balanced."},
+            second.id: {"slot": "NEEDS_REVIEW", "confidence": 0.9, "reason": "Alternative."},
         }
         result = assign_group_versions(self.group, use_llm=True)
-        self.assertEqual(result["representative_id"], second.id)
-        self.assertFalse(LessonVariant.objects.filter(learning_object=first).exists())
-        self.assertEqual(assign_group_versions(self.group)["representative_id"], second.id)
+        self.assertEqual(result["representative_id"], first.id)
+        self.assertTrue(LessonVariant.objects.filter(learning_object=first).exists())
+        self.assertEqual(assign_group_versions(self.group)["representative_id"], first.id)
 
 
 class BundleRoleTests(TestCase):
@@ -692,10 +719,23 @@ class BundleRoleTests(TestCase):
     def test_a_teacher_role_change_survives_a_refresh(self):
         assign_group_versions(self.group)
 
-        set_bundle_role(self.group, self.second.id, "EXTRA")
+        set_bundle_role(self.group, self.second.id, "ELABORATED")
         outcome = assign_group_versions(self.group)
 
-        self.assertEqual(outcome["bundle_roles"], {self.second.id: "EXTRA"})
+        self.assertEqual(outcome["bundle_roles"], {self.second.id: "ELABORATED"})
+
+    def test_unassigned_pdf_can_become_normal_without_forcing_old_normal_into_a_slot(self):
+        assign_source_as_representative(self.group, self.simple_lead)
+
+        self.group.refresh_from_db()
+        self.normal.refresh_from_db()
+        self.simple_lead.refresh_from_db()
+        self.assertEqual(self.group.version_selection["normal_material_id"], self.second.id)
+        self.assertEqual(self.group.version_selection["bundle_roles"], {})
+        self.assertIsNone(self.normal.represented_by_id)
+        self.assertIsNone(self.simple_lead.represented_by_id)
+        outcome = assign_group_versions(self.group)
+        self.assertEqual(outcome["needs_confirmation"][0]["material_id"], self.first.id)
 
     def test_the_normal_bundle_is_reported_in_document_order(self):
         extra = LearningObject.objects.create(
@@ -830,6 +870,23 @@ class MeasuredCheckTests(TestCase):
     def test_an_unrelated_text_does_not_keep_the_facts(self):
         result = self.measure("Plants make their own food from sunlight in a process called photosynthesis.")
 
+        self.assertFalse(result["facts_kept"])
+
+    def test_one_omitted_idea_cannot_hide_behind_a_good_average(self):
+        import numpy as np
+
+        from .content_measures import measure_versions
+
+        normal = "Matter has mass. Matter takes up space."
+        candidate = "Matter has mass. Objects have weight."
+        with patch("course.content_measures._similarities", return_value=np.array([
+            [0.95, 0.45],
+            [0.31, 0.30],
+        ])):
+            result = measure_versions(normal, candidate)
+
+        self.assertGreater(result["mean_coverage"], 0.55)
+        self.assertEqual(result["weakly_covered_sentences"], 1)
         self.assertFalse(result["facts_kept"])
 
     def test_short_but_unfamiliar_words_are_not_easier(self):

@@ -670,9 +670,9 @@ def _label_corroborated_decision(
         and (item.material.generated_json or {}).get("learning_objects_confirmed")
         and _singular_label(normalize_learning_object_title(item.title)) == label
     ]
-    # Only the first piece of a split heading may corroborate. Later pieces are
-    # continuations, and joining each of them to the same group would put three
-    # objects from one PDF into one concept.
+    # Only the first piece may independently corroborate a cross-PDF label.
+    # Later pieces are continuations, not additional label matches; the
+    # explicit numbered-part pass joins their groups after matching.
     source_matches = _collapsed_label_rows(
         [item for item in label_objects if item.material_id == source.material_id]
     )

@@ -794,14 +794,7 @@ def _limited_text(text: str, limit: int = 12000) -> str:
 
 
 def _outline_node_similarity_text(node: OutlineNode) -> str:
-    """Build a deterministic retrieval document for an outline node.
 
-    The material-to-outline selection is a lexical-matching task, so the node
-    document must expose the same vocabulary that a teacher would recognize as
-    the topic's title and contextual information. We intentionally keep the
-    surface form simple and explainable rather than injecting a probabilistic
-    semantic model.
-    """
     path = _outline_path(node)
     path_titles = [item.title for item in path]
     related_info = []
@@ -844,6 +837,7 @@ def _rank_outline_nodes_by_tfidf(
         return []
 
     scores = cosine_similarity(matrix[0:1], matrix[1:]).flatten()
+
     return sorted(
         [(node, float(score)) for node, score in zip(nodes, scores)],
         key=lambda item: item[1],
@@ -879,21 +873,7 @@ def _explicit_lesson_heading_node(course: CourseGroup, text: str) -> OutlineNode
 
 
 def _choose_outline_node_by_tfidf(course: CourseGroup, title: str, text: str) -> OutlineNode | None:
-    """Match a learning material to the most similar outline node.
 
-    The algorithm is intentionally unchanged in substance: it represents a
-    single query document and a corpus of outline-node documents as TF-IDF
-    vectors, then measures L2-normalized lexical overlap with cosine similarity.
-
-    The refactor makes the retrieval contract explicit:
-        1. Clean the material text.
-        2. Build a node document for each outline node.
-        3. Learn one vectorizer on the combined corpus.
-        4. Rank the nodes only by cosine similarity.
-        5. Reject matches whose score is lower than the configured confidence
-           floor because a positive but tiny angle similarity is not stable IR
-           evidence.
-    """
     heading_node = _explicit_lesson_heading_node(course, text)
     if heading_node is not None:
         return heading_node
@@ -4416,6 +4396,7 @@ def generate_material_outputs(
         extraction_mode = "deterministic_page_text_fallback" if is_image_only_pdf else "embedded_pdf_text"
         _trace(f"text extracted: {len(text)} chars, {len(extracted_blocks)} blocks, mode={extraction_mode}")
 
+        #Start of TF-IDF
         selected_node = material.outline_node
         _trace("validating PDF against course outline")
         matched_node = validate_outline_node_for_material(

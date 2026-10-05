@@ -63,10 +63,7 @@ class PackageVersionTests(TestCase):
 
         self.assertTrue(chunk["versions_complete"])
 
-    def test_extras_are_not_offered_as_a_version(self):
-        LessonVariant.objects.create(
-            learning_object=self.original, variant="EXTRA", narration="Third wording", origin="source_pdf"
-        )
+    def test_only_three_versions_are_offered(self):
         package = LessonPackageService.build_package(self.node.id)
         chunk = next(c for c in package["chunks"] if c["id"] == self.original.id)
-        self.assertNotIn("extra", chunk["variants"])
+        self.assertEqual(set(chunk["variants"]), {"normal"})

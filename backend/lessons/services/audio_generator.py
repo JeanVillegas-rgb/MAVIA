@@ -259,7 +259,7 @@ def cached_audio(text, directory):
 
 
 def generate_version_audio(material):
-    """Prepare audio for the two active source/generated versions; omit Extras."""
+    """Prepare audio for the two active source/generated versions."""
     from course.models import LessonVariant
     generated = 0
     for row in LessonVariant.objects.filter(
@@ -297,9 +297,8 @@ def bundle_version_objects(material: LearningMaterial) -> list:
             supplying[item.group_id] = {
                 member.id
                 for role, bundle in version_bundles(item.group).items()
-                # Normal is the lesson itself and already has clips; an extra
-                # bundle is not one of the versions a student is offered.
-                if role not in ("NORMAL", "EXTRA")
+                # Normal is the lesson itself and already has clips.
+                if role != "NORMAL"
                 for member in bundle
             }
         if item.id in supplying[item.group_id]:

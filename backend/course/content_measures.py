@@ -2,8 +2,9 @@
 
 A version label is right only when three things are true of the candidate:
 
-* **the facts are kept** -- every Normal sentence is still matched somewhere
-  (meaning coverage);
+* **the facts are kept** -- every Normal sentence has a plausible match
+  somewhere in the candidate (meaning coverage); a strong average cannot
+  hide one weakly matched sentence;
 * **something is added**, or not -- candidate sentences that match nothing in
   Normal (novelty);
 * **it is easier to read**, or not -- the Dale-Chall score, which counts words
@@ -15,10 +16,10 @@ loads; Dale-Chall is a formula over a fixed word list. No LLM is called.
 
 The cut-offs were measured on 21 labelled pairs (the Solid, Liquid and Gas
 PDFs, the observed failures in BUGS.md and written cases): every real
-elaboration had at least one new sentence and every paraphrase none, and a
-mean coverage of 0.55 separated the unrelated and incomplete candidates from
-the valid ones. Novelty's 0.6 was chosen before looking; coverage's 0.55 after,
-so it needs confirming on pairs that were not used to set it.
+elaboration had at least one new sentence and every paraphrase none. Coverage's
+0.55 was originally calibrated for the *mean*, not each sentence; applying it
+per sentence is deliberately conservative and may send good paraphrases to
+teacher review. It needs calibration on additional labelled pairs.
 """
 
 import re
@@ -28,8 +29,9 @@ from pathlib import Path
 # A candidate sentence closer than this to some Normal sentence says the same
 # thing; one further from all of them is new content.
 NOVEL_SENTENCE_SIMILARITY = 0.6
-# Mean, over Normal's sentences, of how well each is matched in the candidate.
-MIN_MEAN_COVERAGE = 0.55
+# Minimum plausible match for each Normal sentence. A failed sentence asks for
+# review rather than automatically assigning a PDF-supplied role.
+MIN_SENTENCE_COVERAGE = 0.55
 # A sentence needs a few words to carry a fact; shorter fragments ("Examples:")
 # are ignored when splitting.
 _MIN_SENTENCE_WORDS = 3
@@ -139,12 +141,15 @@ def measure_versions(normal_text, candidate_text):
     closeness = [float(value) for value in similarity.max(axis=0)]
     novel = sum(value < NOVEL_SENTENCE_SIMILARITY for value in closeness)
     mean_coverage = sum(coverage) / len(coverage)
+    weak_coverage = sum(value < MIN_SENTENCE_COVERAGE for value in coverage)
     dale_chall_change = dale_chall(candidate_text) - dale_chall(normal_text)
     return {
-        "facts_kept": mean_coverage >= MIN_MEAN_COVERAGE,
+        "facts_kept": weak_coverage == 0,
         "adds_content": novel >= 1,
         "easier": dale_chall_change < 0,
         "mean_coverage": round(mean_coverage, 2),
+        "min_coverage": round(min(coverage), 2),
+        "weakly_covered_sentences": weak_coverage,
         "novel_sentences": novel,
         "dale_chall_change": round(dale_chall_change, 2),
     }

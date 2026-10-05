@@ -20,6 +20,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from course.models import LessonVariant
+from course.variant_generator import NORMAL_FALLBACK_GENERATOR
 from course.version_assignment import set_bundle_role
 from lessons.models import (
     CourseGroup,
@@ -139,6 +140,21 @@ class ConceptRolePayloadTests(TestCase):
         )
 
         self.assertIsNone(self._slots().get("elaborated"))
+
+    def test_a_partial_fallback_counts_only_the_unchanged_normal_segments(self):
+        for index, item in enumerate(self.normal):
+            LessonVariant.objects.create(
+                learning_object=item, variant="ELABORATED",
+                narration=item.content if index == 1 else f"Elaborated {item.title}.",
+                origin=LessonVariant.Origin.GENERATED,
+                generator_model=NORMAL_FALLBACK_GENERATOR if index == 1 else "test-model",
+            )
+
+        elaborated = self._slots()["elaborated"]
+
+        self.assertTrue(elaborated["fallback"])
+        self.assertEqual(elaborated["fallback_count"], 1)
+        self.assertEqual(elaborated["segment_count"], 4)
 
     def test_a_supplied_role_still_outranks_a_generated_row(self):
         for item in self.normal:

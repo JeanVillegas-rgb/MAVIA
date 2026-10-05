@@ -162,23 +162,33 @@ class VersionReviewTests(TestCase):
         self.assertEqual(first_response.status_code, 200)
         response = self.client.post(url, {"learning_object_id": third.id, "slot": "SIMPLIFIED"}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["version_assignment"]["moved_to_extra"], self.second.id)
+        self.assertEqual(response.data["version_assignment"]["needs_review"], self.second.id)
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.group.refresh_from_db()
-        # Changed 2026-09-20: the displaced bundle is not erased and is not
-        # stamped as the teacher's choice either -- its role is re-derived, so
-        # it takes the primary slot its wording actually fits.
+        # The displaced source is preserved without an adaptive version role.
         self.assertEqual(
             bundle_roles(self.group),
-            {third.material_id: "SIMPLIFIED", self.second.material_id: "ELABORATED"},
+            {third.material_id: "SIMPLIFIED"},
         )
         response = self.client.post(url, {"learning_object_id": self.second.id, "slot": "SIMPLIFIED"}, format="json")
         self.assertEqual(response.status_code, 200)
         self.group.refresh_from_db()
         self.assertEqual(
             bundle_roles(self.group),
-            {self.second.material_id: "SIMPLIFIED", third.material_id: "ELABORATED"},
+            {self.second.material_id: "SIMPLIFIED"},
         )
+
+    def test_unassigned_source_can_become_normal_and_old_normal_needs_review(self):
+        url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
+        response = self.client.post(
+            url, {"learning_object_id": self.second.id, "slot": "NORMAL"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["version_assignment"]["needs_review"], self.first.id)
+        self.group.refresh_from_db()
+        self.assertEqual(self.group.version_selection["normal_material_id"], self.second.material_id)
+        self.assertEqual(bundle_roles(self.group), {})
 
     def test_object_outside_the_topic_is_rejected(self):
         other_course = CourseGroup.objects.create(title="Other")

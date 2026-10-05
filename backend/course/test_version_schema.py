@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.utils import IntegrityError
 from django.test import TestCase
 
@@ -51,14 +52,23 @@ class VersionSchemaTests(TestCase):
                 learning_object=self.original, variant="SIMPLIFIED", narration="Two", origin="generated"
             )
 
-    def test_extras_are_not_constrained(self):
+    def test_elaborated_slot_is_unique_too(self):
         LessonVariant.objects.create(
-            learning_object=self.original, variant="EXTRA", narration="Third PDF wording", origin="source_pdf"
+            learning_object=self.original, variant="ELABORATED", narration="Third PDF wording", origin="source_pdf"
         )
-        LessonVariant.objects.create(
-            learning_object=self.original, variant="EXTRA", narration="Fourth PDF wording", origin="source_pdf"
-        )
-        self.assertEqual(self.original.variants.filter(variant="EXTRA").count(), 2)
+        with self.assertRaises(IntegrityError):
+            LessonVariant.objects.create(
+                learning_object=self.original, variant="ELABORATED", narration="Fourth PDF wording", origin="source_pdf"
+            )
+
+    def test_unassigned_wording_cannot_be_saved_as_a_version(self):
+        for invalid_role in ("NEEDS_REVIEW", "EXTRA"):
+            with self.subTest(invalid_role=invalid_role), self.assertRaises(IntegrityError), transaction.atomic():
+                LessonVariant.objects.create(
+                    learning_object=self.original,
+                    variant=invalid_role,
+                    narration="Unassigned PDF wording",
+                )
 
     def test_variant_can_be_written_before_the_lesson_package_exists(self):
         # No CourseModule or LessonNode has been created for this material.

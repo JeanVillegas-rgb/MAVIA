@@ -5590,7 +5590,7 @@ button {
 .version-slot.is-original { border-left-color: #4a6da7; }
 .version-slot.is-simplified { border-left-color: #3f8f5f; }
 .version-slot.is-elaborated { border-left-color: #8a6d3b; }
-.version-slot.is-extra { border-left-color: #9aa2b1; background: #fafbfc; }
+.version-slot.is-unassigned { border-left-color: #9aa2b1; background: #fafbfc; }
 
 .version-slot-head {
   display: flex;
@@ -5615,7 +5615,7 @@ button {
 .version-slot-label.is-normal { background: #e6ecf7; color: #29406b; }
 .version-slot-label.is-simplified { background: #e2f2e8; color: #1f5c39; }
 .version-slot-label.is-elaborated { background: #f4ecdc; color: #6a5326; }
-.version-slot-label.is-extra { background: #eceef1; color: #4d545f; }
+.version-slot-label.is-unassigned { background: #eceef1; color: #4d545f; }
 
 .version-slot-origin {
   color: var(--mv-muted);
@@ -5716,19 +5716,13 @@ button {
   line-height: 1.5;
 }
 
-.version-extra-block {
+.version-archived-block {
   margin-top: 1rem;
   padding-top: 0.85rem;
   border-top: 1px dashed var(--line, #dfe3ea);
 }
 
-.version-extra-block h5 {
-  margin: 0 0 0.25rem;
-  font-size: 0.9rem;
-}
-
-.version-extra-block > p {
-  margin: 0 0 0.6rem;
+.version-archived-block > p {
   color: var(--mv-muted);
   font-size: 0.82rem;
 }

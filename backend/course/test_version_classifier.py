@@ -23,35 +23,36 @@ class VersionClassifierTests(SimpleTestCase):
                 }
             ]
         })
-        self.assertEqual(_parse(raw, {2}, require_original=False)[2]["slot"], "SIMPLIFIED")
+        self.assertEqual(_parse(raw, {2})[2]["slot"], "SIMPLIFIED")
         with self.assertRaises(VersionClassificationError):
-            _parse(raw, {2, 3}, require_original=False)
+            _parse(raw, {2, 3})
 
     def test_parser_maps_correct_length_rows_when_model_repeats_ids(self):
         raw = json.dumps({
             "assignments": [
                 {
                     "learning_object_id": 999,
-                    "slot": "ORIGINAL",
+                    "slot": "SIMPLIFIED",
                     "confidence": 0.9,
                     "reason": "Balanced baseline.",
                 },
                 {
                     "learning_object_id": 999,
-                    "slot": "EXTRA",
+                    "slot": "NEEDS_REVIEW",
                     "confidence": 0.8,
                     "reason": "Equivalent alternative.",
                 },
             ]
         })
 
-        result = _parse(raw, [10, 20], require_original=True)
+        result = _parse(raw, [10, 20])
 
-        self.assertEqual(result[10]["slot"], "ORIGINAL")
-        self.assertEqual(result[20]["slot"], "EXTRA")
+        self.assertEqual(result[10]["slot"], "SIMPLIFIED")
+        self.assertEqual(result[20]["slot"], "NEEDS_REVIEW")
 
     @override_settings(
         CONTENT_VERSION_LLM_ENABLED=True,
+        LLM_PROVIDER="ollama",
         CONTENT_VERSION_LLM_MODEL="gemma3:4b",
         CONTENT_VERSION_LLM_TIMEOUT=30,
         OLLAMA_BASE_URL="http://localhost:11434",
@@ -62,12 +63,6 @@ class VersionClassifierTests(SimpleTestCase):
         post.return_value.json.return_value = {
             "response": json.dumps({
                 "assignments": [
-                    {
-                        "learning_object_id": 1,
-                        "slot": "ORIGINAL",
-                        "confidence": 0.92,
-                        "reason": "Balanced baseline.",
-                    },
                     {
                         "learning_object_id": 2,
                         "slot": "ELABORATED",
@@ -84,7 +79,7 @@ class VersionClassifierTests(SimpleTestCase):
             content="A solid keeps its shape because its particles remain closely packed.",
         )
 
-        result = classify_group_versions([representative, candidate])
+        result = classify_group_versions([candidate], representative=representative)
 
         self.assertEqual(result[2]["slot"], "ELABORATED")
         request_json = post.call_args.kwargs["json"]
@@ -93,6 +88,7 @@ class VersionClassifierTests(SimpleTestCase):
 
     @override_settings(
         CONTENT_VERSION_LLM_ENABLED=True,
+        LLM_PROVIDER="ollama",
         CONTENT_VERSION_LLM_MODEL="gemma3:4b",
         CONTENT_VERSION_LLM_TIMEOUT=30,
         OLLAMA_BASE_URL="http://localhost:11434",
@@ -106,22 +102,24 @@ class VersionClassifierTests(SimpleTestCase):
                 "assignments": [
                     {
                         "position": 1,
-                        "slot": "ORIGINAL",
+                        "slot": "SIMPLIFIED",
                         "confidence": 0.9,
                         "reason": "Balanced baseline.",
                     },
                 ]
             })},
         ]
-        member = SimpleNamespace(id=7, title="Matter", content="Matter has mass.")
+        representative = SimpleNamespace(id=1, title="Matter", content="Matter has mass.")
+        member = SimpleNamespace(id=7, title="Matter", content="Matter takes up space.")
 
-        result = classify_group_versions([member])
+        result = classify_group_versions([member], representative=representative)
 
-        self.assertEqual(result[7]["slot"], "ORIGINAL")
+        self.assertEqual(result[7]["slot"], "SIMPLIFIED")
         self.assertEqual(post.call_count, 2)
 
     @override_settings(
         CONTENT_VERSION_LLM_ENABLED=True,
+        LLM_PROVIDER="ollama",
         CONTENT_VERSION_LLM_MODEL="gemma3:4b",
         CONTENT_VERSION_LLM_TIMEOUT=30,
         OLLAMA_BASE_URL="http://localhost:11434",
@@ -154,11 +152,12 @@ class VersionClassifierTests(SimpleTestCase):
 
         request_json = post.call_args.kwargs["json"]
         slots = request_json["format"]["properties"]["assignments"]["items"]["properties"]["slot"]
-        self.assertEqual(slots["enum"], ["ELABORATED", "EXTRA", "SIMPLIFIED"])
+        self.assertEqual(slots["enum"], ["ELABORATED", "NEEDS_REVIEW", "SIMPLIFIED"])
         self.assertNotIn("- ORIGINAL:", request_json["prompt"])
 
     @override_settings(
         CONTENT_VERSION_LLM_ENABLED=True,
+        LLM_PROVIDER="ollama",
         CONTENT_VERSION_LLM_MODEL="gemma3:4b",
         CONTENT_VERSION_LLM_TIMEOUT=30,
         OLLAMA_BASE_URL="http://localhost:11434",
@@ -182,7 +181,7 @@ class VersionClassifierTests(SimpleTestCase):
                 "assignments": [
                     {
                         "position": 1,
-                        "slot": "EXTRA",
+                        "slot": "NEEDS_REVIEW",
                         "confidence": 0.7,
                         "reason": "Equivalent wording.",
                     },
@@ -194,11 +193,11 @@ class VersionClassifierTests(SimpleTestCase):
 
         result = classify_group_versions([candidate], representative=representative)
 
-        self.assertEqual(result[2]["slot"], "EXTRA")
+        self.assertEqual(result[2]["slot"], "NEEDS_REVIEW")
         # The correction has to say which slots are allowed. Repeating only the
         # count and position rules invited the same answer a second time.
         correction = post.call_args.kwargs["json"]["prompt"].rsplit("CANDIDATES TO CLASSIFY:", 1)[1]
-        self.assertIn("Use only these slots: ELABORATED, EXTRA, SIMPLIFIED.", correction)
+        self.assertIn("Use only these slots: ELABORATED, NEEDS_REVIEW, SIMPLIFIED.", correction)
 
 
 class EvidenceParsingTests(SimpleTestCase):
@@ -206,7 +205,7 @@ class EvidenceParsingTests(SimpleTestCase):
 
     def parse(self, **fields):
         row = {"position": 1, "slot": "ELABORATED", "confidence": 0.8, "reason": "r.", **fields}
-        return _parse(json.dumps({"assignments": [row]}), [7], require_original=False)[7]
+        return _parse(json.dumps({"assignments": [row]}), [7])[7]
 
     def test_evidence_lists_are_kept(self):
         row = self.parse(additions=["adds a pencil example"], simplifications=[], problems=[])

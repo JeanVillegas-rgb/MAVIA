@@ -614,6 +614,8 @@ function VersionSlotCard({
   // Normal text at this level. Publishing is not held back; the teacher may
   // write an explanation of their own.
   fallback = false,
+  fallbackCount = 0,
+  segmentCount = 0,
   busyLabel = "",
   onKeep,
   onRegenerate,
@@ -651,12 +653,17 @@ function VersionSlotCard({
 
       {fallback && !stale && !isEditing && (
         <div className="version-slot-stale version-slot-fallback" role="status">
-          <strong>Using the Normal text for now</strong>
+          <strong>{fallbackCount > 0 && fallbackCount < segmentCount
+            ? `${fallbackCount} of ${segmentCount} parts use the Normal text`
+            : "Using the Normal text for now"}</strong>
           <p>
             {slotKey === "simplified"
-              ? "No generated Simplified version passed the quality check (easier to read, keeps every fact), "
-              : "No generated Elaborated version passed the quality check (fuller, keeps every fact), "}
-            so learners at this level hear the Normal text. You can write your own explanation instead.
+              ? "Some Simplified wording did not pass the quality check (easier to read, keeps every fact). "
+              : "Some Elaborated wording did not pass the quality check (fuller, keeps every fact). "}
+            {fallbackCount > 0 && fallbackCount < segmentCount
+              ? "Those parts use their Normal wording; the other parts use generated wording."
+              : "Learners at this level hear the Normal text."}
+            {" You can write your own explanation instead."}
           </p>
           {!readOnly && (
             <div className="version-slot-actions">
@@ -716,7 +723,7 @@ function VersionSlotCard({
 }
 
 function VersionRoleSelect({ sourceId, currentSlot, busy, onAssign }) {
-  const roles = ["NORMAL", "SIMPLIFIED", "ELABORATED", "EXTRA"]
+  const roles = ["NORMAL", "SIMPLIFIED", "ELABORATED"]
     .filter((slot) => slot !== currentSlot);
   return (
     <label className="version-role-select">
@@ -732,7 +739,6 @@ function VersionRoleSelect({ sourceId, currentSlot, busy, onAssign }) {
         {roles.map((slot) => (
           <option value={slot} key={slot}>
             {slot === "NORMAL" ? "Make Normal"
-              : slot === "EXTRA" ? "Keep as Extra"
               : `Move to ${slot === "SIMPLIFIED" ? "Simplified" : "Elaborated"}`}
           </option>
         ))}
@@ -806,7 +812,8 @@ function VersionReviewPanel({
   const representative = chunk?.learning_objects?.find(
     (item) => Number(item.id) === Number(versions?.representative_id),
   );
-  const originalMaterial = materialById.get(Number(representative?.material));
+  const normalEntry = versions?.slots?.normal;
+  const originalMaterial = materialById.get(Number(normalEntry?.material ?? representative?.material));
 
   function materialTitleFor(entry) {
     if (!entry?.source_learning_object_id) return null;
@@ -913,11 +920,32 @@ function VersionReviewPanel({
           <p className="muted-text">
             {chunk.learning_objects.length} grouped PDF variant{chunk.learning_objects.length === 1 ? "" : "s"}
             {versions?.classification_complete === false
-              ? " awaiting Gemma classification"
-              : " classified into Normal, Simplified, Elaborated, or Extra"}.
+              ? " — the first relevant PDF is Normal unless the teacher replaces it; supplementary PDFs await classification"
+              : " — the primary PDF is Normal; supplementary PDFs may supply Simplified or Elaborated"}.
           </p>
 
-          {versions?.classification_complete === false ? (
+          {versions?.normal_replacement_needed && (
+            <div className="version-pending-decision">
+              <p><strong>The previous Normal PDF no longer supplies this concept.</strong> Choose a surviving PDF as the new baseline. MAVIA will not promote one automatically.</p>
+              <div className="version-slot-actions">
+                {(chunk.bundles || []).filter((bundle) => bundle.learning_objects?.length).map((bundle) => {
+                  const material = materialById.get(Number(bundle.material));
+                  return (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      key={bundle.material}
+                      disabled={Boolean(busyAction)}
+                      onClick={() => onAssignSlot(bundle.learning_objects[0].id, "NORMAL")}
+                    >
+                      Use {material?.filename || material?.title || `PDF ${bundle.material}`} as Normal
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {versions?.classification_complete === false && !versions?.normal_replacement_needed ? (
             <div className="review-queue-empty">
               <strong>Existing PDF variants — not generated:</strong>
               <div className="version-slot-grid">
@@ -926,7 +954,7 @@ function VersionReviewPanel({
                   return (
                     <VersionSlotCard
                       key={item.id}
-                      slotKey="extra"
+                      slotKey="unassigned"
                       heading={`PDF variant ${index + 1} · Unclassified`}
                       text={item.content}
                       originLabel={`From ${material?.filename || material?.title || `PDF ${item.material}`}`}
@@ -937,7 +965,7 @@ function VersionReviewPanel({
                 })}
               </div>
               <p>
-                Gemma is assigning these existing texts to roles automatically. Afterward, each missing
+                Gemma is proposing roles for supplementary PDFs. Afterward, each missing
                 Simplified or Elaborated role will have its own Generate button.
               </p>
             </div>
@@ -946,6 +974,13 @@ function VersionReviewPanel({
               (item) => Number(item.id) === Number(pending.learning_object_id),
             );
             if (!candidate) return null;
+            const candidateBundle = chunk.bundles?.find(
+              (bundle) => Number(bundle.material) === Number(pending.material_id),
+            );
+            const candidateText = candidateBundle?.learning_objects
+              ?.map((item) => item.content?.trim())
+              .filter(Boolean)
+              .join("\n") || candidate.content;
             return (
               <div className="version-pending-decision" key={pending.learning_object_id}>
                 <p>
@@ -959,22 +994,32 @@ function VersionReviewPanel({
                     {pending.readability_confident ? "." : " but did not clear the automatic threshold."}
                   </small>
                 )}
-                <blockquote>{candidate.content}</blockquote>
+                {(pending.review_issues || []).length > 0 && (
+                  <p className="muted-text">
+                    {pending.review_measures?.weakly_covered_sentences > 0
+                      ? `${pending.review_measures.weakly_covered_sentences} Normal sentence(s) may be missing or phrased very differently. `
+                      : "The automatic checks disagree with the AI label. "}
+                    Compare this PDF text with Normal before choosing a role.
+                  </p>
+                )}
+                <blockquote>{candidateText}</blockquote>
                 <div className="version-slot-actions">
-                  {["SIMPLIFIED", "ELABORATED", "EXTRA"].map((slot) => (
+                  {["NORMAL", "SIMPLIFIED", "ELABORATED"].map((slot) => (
                     <button
                       type="button"
                       key={slot}
-                      className={slot === "EXTRA" ? "btn btn-secondary btn-small" : "btn btn-primary btn-small"}
+                      className="btn btn-primary btn-small"
                       disabled={Boolean(busyAction)}
                       onClick={() => onAssignSlot(pending.learning_object_id, slot)}
                     >
-                      {slot === "SIMPLIFIED" ? "Use as Simplified"
-                        : slot === "ELABORATED" ? "Use as Elaborated"
-                        : "Keep as extra"}
+                      {slot === "NORMAL" ? "Make Normal"
+                        : slot === "SIMPLIFIED" ? "Use as Simplified" : "Use as Elaborated"}
                     </button>
                   ))}
                 </div>
+                <p className="muted-text">
+                  If neither role fits, leave this source unassigned or return to object pairs to separate it from this concept.
+                </p>
               </div>
             );
           })}
@@ -983,10 +1028,10 @@ function VersionReviewPanel({
             <VersionSlotCard
               slotKey="original"
               heading={versions?.original_selected ? "Normal" : "Normal candidate"}
-              text={representative?.content}
+              text={normalEntry?.text || representative?.content}
               originLabel={versions?.original_selected
-                ? `Selected from ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`
-                : "The Normal version will be selected during source classification"}
+                ? `Primary PDF: ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`
+                : "Choose a replacement Normal PDF before continuing"}
               readOnly
               busy={false}
             />
@@ -1011,6 +1056,8 @@ function VersionReviewPanel({
                   readOnly={Boolean(entry) && !entry.id}
                   stale={Boolean(entry?.stale)}
                   fallback={Boolean(entry?.fallback)}
+                  fallbackCount={entry?.fallback_count || 0}
+                  segmentCount={entry?.segment_count || 0}
                   busyLabel={busyAction === generateKey ? "Regenerating, this takes a few minutes…" : ""}
                   onKeep={() => onKeepVersion(entry.id)}
                   onRegenerate={() => onRegenerateVersion(versions.representative_id, slotKey.toUpperCase())}
@@ -1035,35 +1082,23 @@ function VersionReviewPanel({
             })}
           </div>}
 
-          {versions?.classification_complete !== false && (versions?.extras || []).length > 0 && (
-            <details className="version-extra-block">
-              <summary>Other source versions ({versions.extras.length})</summary>
-              <p>
-                Preserved as alternatives. Select a source below to replace a main version.
-              </p>
-              {versions.extras.map((entry) => (
-                <div key={entry.id ?? `bundle-${entry.material}`}><VersionSlotCard
-                  key={entry.id ?? `bundle-${entry.material}`}
-                  slotKey="extra"
-                  heading="Extra"
-                  entry={entry}
+          {(versions?.archived_unassigned || []).length > 0 && (
+            <details className="version-archived-block">
+              <summary>Archived unassigned wording ({versions.archived_unassigned.length})</summary>
+              <p>This older wording was preserved when the fourth version slot was removed. It is not served to learners.</p>
+              {versions.archived_unassigned.map((entry) => (
+                <VersionSlotCard
+                  key={entry.old_variant_id}
+                  slotKey="unassigned"
+                  heading="Unassigned wording"
                   text={entry.text}
-                  originLabel={versionOriginLabel(entry, materialTitleFor(entry))}
                   readOnly
                   busy={false}
                 />
-                  {entry.source_learning_object_id && (
-                    <VersionRoleSelect
-                      sourceId={entry.source_learning_object_id}
-                      currentSlot="EXTRA"
-                      busy={Boolean(busyAction)}
-                      onAssign={onAssignSlot}
-                    />
-                  )}
-                </div>
               ))}
             </details>
           )}
+
         </>
       )}
 
@@ -1984,7 +2019,7 @@ const REGROUPING_ACTION_LABELS = {
 };
 
 // Teacher-facing names for the stored version slots.
-const VERSION_SLOT_LABELS = { simplified: "Simplified", elaborated: "Elaborated", extra: "Extra" };
+const VERSION_SLOT_LABELS = { simplified: "Simplified", elaborated: "Elaborated" };
 
 // A blocking wait for work with no steps to report: scoring a handful of edited
 // objects, or applying the chosen changes. Same look as the pipeline progress.
@@ -2551,10 +2586,8 @@ function LearningObjectConnections({
       const data = await assignVersionSlot(courseId, topicId, learningObjectId, slot);
       setResources(data);
       onMessage(
-        slot === "EXTRA"
-          ? "Kept as an extra version for the learning path."
-          : `Set as the ${slot.toLowerCase()} version.`
-            + (data.version_assignment?.moved_to_extra ? " The previous source is now under Other source versions." : ""),
+        `Set as the ${slot.toLowerCase()} version.`
+        + (data.version_assignment?.needs_review ? " The previous source now needs review." : ""),
       );
       return true;
     } catch (err) {
@@ -2700,7 +2733,7 @@ function LearningObjectConnections({
           const summary = finished?.data?.summary || {};
           setResources(await fetchLearningResources(courseId, topicId));
           onMessage(
-            `${summary.source_variant_count || 0} PDF variant${summary.source_variant_count === 1 ? " was" : "s were"} classified, including ${summary.extra_count || 0} extra${summary.extra_count === 1 ? "" : "s"}. `
+            `${summary.source_variant_count || 0} PDF variant${summary.source_variant_count === 1 ? " was" : "s were"} classified; ${summary.needs_review_count || 0} need teacher review. `
             + "Use Generate only on any Simplified or Elaborated slot that is still missing."
             + (summary.errors?.length ? ` ${summary.errors.length} concept${summary.errors.length === 1 ? "" : "s"} could not be completed.` : ""),
           );

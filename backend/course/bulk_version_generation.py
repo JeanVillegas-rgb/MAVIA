@@ -25,6 +25,7 @@ def classify_all_source_versions(outline_node, on_event=None):
     seen = set()
     errors = []
     classified_groups = 0
+    needs_review_count = 0
     classification_index = 0
     for group in groups:
         is_connected = group.id in connected_group_ids
@@ -38,6 +39,9 @@ def classify_all_source_versions(outline_node, on_event=None):
                 group_id=group.id,
             )
         state = assign_group_versions(group, use_llm=True)
+        needs_review_count += len(state["needs_confirmation"])
+        if state.get("normal_replacement_needed"):
+            needs_review_count += 1
         representative_id = state["representative_id"]
         if state.get("classification_error"):
             error = {"group_id": group.id, "detail": state["classification_error"]}
@@ -50,7 +54,7 @@ def classify_all_source_versions(outline_node, on_event=None):
                 group_id=group.id,
                 errors=[error],
             )
-        elif is_connected:
+        elif is_connected and not state.get("normal_replacement_needed"):
             classified_groups += 1
             emit(
                 "version_classification_finished",
@@ -59,7 +63,7 @@ def classify_all_source_versions(outline_node, on_event=None):
                 total=len(connected_group_ids),
                 group_id=group.id,
                 assigned=len(state["assigned"]),
-                extras=state["extras"],
+                needs_review=len(state["needs_confirmation"]),
             )
         if (
             representative_id is None
@@ -81,7 +85,7 @@ def classify_all_source_versions(outline_node, on_event=None):
         "grouped_concept_count": len(connected_group_ids),
         "classified_group_count": classified_groups,
         "source_variant_count": len(roles),
-        "extra_count": sum(role == "EXTRA" for role in roles),
+        "needs_review_count": needs_review_count,
         "generated_count": 0,
         "skipped_count": 0,
         "errors": errors,

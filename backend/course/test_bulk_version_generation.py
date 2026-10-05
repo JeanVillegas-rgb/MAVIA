@@ -105,7 +105,7 @@ class BulkVersionGenerationTests(TestCase):
                 "slot": "SIMPLIFIED", "confidence": 0.8, "reason": "Simpler wording."
             },
             third.id: {
-                "slot": "EXTRA", "confidence": 0.8, "reason": "Alternative."
+                "slot": "NEEDS_REVIEW", "confidence": 0.8, "reason": "Alternative."
             },
         }
         request_variants.return_value = {
@@ -117,14 +117,14 @@ class BulkVersionGenerationTests(TestCase):
 
         self.assertEqual(summary["grouped_concept_count"], 1)
         self.assertEqual(summary["classified_group_count"], 1)
-        self.assertEqual(summary["source_variant_count"], 2)
-        self.assertEqual(summary["extra_count"], 1)
+        self.assertEqual(summary["source_variant_count"], 1)
+        self.assertEqual(summary["needs_review_count"], 1)
         self.assertEqual(summary["generated_count"], 0)
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.group.refresh_from_db()
         self.assertEqual(
             bundle_roles(self.group),
-            {second.material_id: "SIMPLIFIED", third.material_id: "EXTRA"},
+            {second.material_id: "SIMPLIFIED"},
         )
         self.assertFalse(LessonVariant.objects.filter(
             learning_object=self.learning_object,

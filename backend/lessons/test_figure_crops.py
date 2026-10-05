@@ -76,3 +76,34 @@ class FigureCropTests(SimpleTestCase):
         self.assertGreater(crop.x0, 300)
         self.assertGreater(crop.y0, 90)
         self.assertNotIn("dog", regions[0]["visible_text"])
+
+    def test_two_aligned_rows_are_one_captioned_figure(self):
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((65, 250), "Learning Objectives: explain the lesson.", fontsize=10)
+        page.insert_text((205, 325), "Techniques for Separating Mixtures", fontsize=11)
+        for index, title in enumerate(("PICKING", "SIEVING", "WINNOWING", "MAGNET")):
+            left = 85 + index * 122
+            page.insert_text((left, 345), title, fontsize=9)
+            page.draw_rect(fitz.Rect(left, 350, left + 74, 417), color=(0, 0, 0))
+        for index, title in enumerate(("DECANTATION", "FILTERING", "EVAPORATION", "SCOOPING")):
+            left = 85 + index * 122
+            page.insert_text((left, 457), title, fontsize=9)
+            page.draw_rect(fitz.Rect(left, 463, left + 74, 530), color=(0, 0, 0))
+        page.insert_text((130, 575), "Figure 1. Each technique uses a property of the mixture.", fontsize=9)
+        page.insert_text((65, 603), "Why Mixtures Can Be Separated", fontsize=11)
+        self.addCleanup(document.close)
+
+        regions = find_captioned_figure_regions(page)
+
+        self.assertEqual(len(regions), 1)
+        crop = fitz.Rect(regions[0]["bbox"])
+        self.assertLess(crop.y0, 345)  # title and first row
+        self.assertGreater(crop.y1, 575)  # second row and caption
+        self.assertGreater(crop.y0, 250)  # not the learning objectives
+        self.assertLess(crop.y1, 590)  # not the next section
+        for title in ("PICKING", "SIEVING", "WINNOWING", "MAGNET",
+                      "DECANTATION", "FILTERING", "EVAPORATION", "SCOOPING"):
+            self.assertIn(title, regions[0]["visible_text"])
+        self.assertNotIn("Learning Objectives", regions[0]["visible_text"])
+        self.assertNotIn("Why Mixtures", regions[0]["visible_text"])

@@ -1065,6 +1065,10 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
             status=LearningObjectMatchSuggestion.Status.PENDING,
         ).delete()
         return
+    # Numbered parts are an explicit authored continuation, not a semantic
+    # guess. Reconcile them even when the semantic models are unavailable.
+    from .unit_matching import reconcile_numbered_parts
+    reconcile_numbered_parts(material.outline_node)
     from . import semantic_grouping
     if semantic_grouping.mode() != "legacy":
         try:

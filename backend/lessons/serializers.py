@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import serializers
 
 from .models import (
@@ -359,7 +360,34 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
         return obj.module_node.title if obj.module_node else None
 
 
-class CourseDetailSerializer(serializers.ModelSerializer):
+class CourseTitleValidationMixin:
+    def validate_title(self, value):
+        normalized_title = " ".join((value or "").split())
+        if not normalized_title:
+            raise serializers.ValidationError("Enter a course name.")
+
+        request = self.context.get("request")
+        creator = getattr(self.instance, "created_by", None)
+        if creator is None and request is not None:
+            creator = request.user
+
+        duplicates = CourseGroup.objects.filter(title__iexact=normalized_title)
+        if creator is not None:
+            # Null covers courses made before creator ownership was introduced.
+            duplicates = duplicates.filter(
+                Q(created_by=creator) | Q(created_by__isnull=True)
+            )
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError(
+                f'You already have a course named "{normalized_title}". '
+                "Open the existing course or choose another name."
+            )
+        return normalized_title
+
+
+class CourseDetailSerializer(CourseTitleValidationMixin, serializers.ModelSerializer):
     outline = serializers.SerializerMethodField()
     hierarchy = serializers.SerializerMethodField()
     materials = LearningMaterialSerializer(many=True, read_only=True)
@@ -409,7 +437,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         return OutlineHierarchyNodeSerializer(roots, many=True, context=self.context).data
 
 
-class CourseCreateSerializer(serializers.ModelSerializer):
+class CourseCreateSerializer(CourseTitleValidationMixin, serializers.ModelSerializer):
     class Meta:
         model = CourseGroup
         fields = ["id", "title", "description"]

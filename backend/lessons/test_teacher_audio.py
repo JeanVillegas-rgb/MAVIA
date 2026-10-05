@@ -10,13 +10,12 @@ from .services.audio_generator import generate_version_audio
 
 
 class TeacherVersionAudioTests(TestCase):
-    def test_active_versions_are_cached_and_extras_are_not_synthesized(self):
+    def test_active_versions_are_cached(self):
         course = CourseGroup.objects.create(title="Science")
         material = LearningMaterial.objects.create(course=course, title="Lesson")
         obj = LearningObject.objects.create(material=material, title="Solid", content="Solid keeps shape.")
         simple = LessonVariant.objects.create(learning_object=obj, variant="SIMPLIFIED", narration="Keeps shape.")
         LessonVariant.objects.create(learning_object=obj, variant="ELABORATED", narration="A solid keeps its own shape.")
-        extra = LessonVariant.objects.create(learning_object=obj, variant="EXTRA", narration="Unused text.")
 
         def synthesize(text, base):
             path = base.with_suffix(".mp3")
@@ -35,5 +34,3 @@ class TeacherVersionAudioTests(TestCase):
             simple.refresh_from_db()
             self.assertNotEqual(simple.audio_url, old_url)
             self.assertEqual(synth.call_count, 3)
-            extra.refresh_from_db()
-            self.assertEqual(extra.audio_url, "")

@@ -7,8 +7,12 @@ other PDF names it, and never merged without the teacher.
 """
 
 import os
+import importlib
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.apps import apps
+from django.db import connection
 from django.test import TestCase
 from django.utils import timezone
 
@@ -24,6 +28,8 @@ from .services.unit_matching import (
     find_units,
     heading_key,
     heading_unit_candidates,
+    numbered_part_series,
+    reconcile_numbered_parts,
     refresh_heading_unit_suggestions,
 )
 from .test_semantic_grouping import FakeRuntime
@@ -90,6 +96,107 @@ class FindUnitTests(UnitFixture):
         units_a = {unit.label: unit.ids for unit in find_units(list(self.a.learning_objects.all()))}
 
         self.assertEqual(units_a["matter"], [self.matter.id, self.solid_a.id, self.liquid_a.id])
+
+
+class NumberedPartTests(UnitFixture):
+    def _parts(self, first="What Is Matter? (Part 1 of 2)", second="What Is Matter? (Part 2 of 2)"):
+        one = self._object(self.a, first, "What Is Matter?", 10)
+        two = self._object(self.a, second, "What Is Matter?", 11)
+        return one, two
+
+    def test_complete_parts_and_existing_supplementary_text_form_one_concept(self):
+        one, two = self._parts()
+        other_one = self._object(self.b, "What is Matter?", "What Is Matter?", 10)
+        other_two = self._object(self.b, "Particle energy", "What Is Matter?", 11)
+        other_one.group = one.group
+        other_one.save(update_fields=["group"])
+        other_two.group = two.group
+        other_two.save(update_fields=["group"])
+        old_group_id = two.group_id
+
+        self.assertEqual(reconcile_numbered_parts(self.topic), 1)
+
+        for item in (one, two, other_one, other_two):
+            item.refresh_from_db()
+            self.assertEqual(item.group_id, one.group_id)
+        self.assertFalse(LearningObjectGroup.objects.filter(pk=old_group_id).exists())
+        self.assertEqual(reconcile_numbered_parts(self.topic), 0)
+
+    def test_different_base_title_or_gap_does_not_join(self):
+        one, two = self._parts(second="Why Matter Moves (Part 2 of 2)")
+        self.assertEqual(numbered_part_series([one, two]), [])
+        self.assertEqual(reconcile_numbered_parts(self.topic), 0)
+        two.title = "What Is Matter? (Part 2 of 2)"
+        two.order = 12
+        self.assertEqual(numbered_part_series([one, two]), [])
+
+    def test_incomplete_or_different_section_does_not_join(self):
+        one, two = self._parts()
+        two.title = "What Is Matter? (Part 2 of 3)"
+        self.assertEqual(numbered_part_series([one, two]), [])
+        two.title = "What Is Matter? (Part 2 of 2)"
+        two.section_title = "Another heading"
+        self.assertEqual(numbered_part_series([one, two]), [])
+
+    def test_teacher_locked_group_stays_separate(self):
+        one, two = self._parts()
+        two.group.version_selection = {"label_locked": True}
+        two.group.save(update_fields=["version_selection"])
+        self.assertEqual(reconcile_numbered_parts(self.topic), 0)
+        two.refresh_from_db()
+        self.assertNotEqual(one.group_id, two.group_id)
+
+    def test_teacher_rejected_connection_stays_separate(self):
+        one, two = self._parts()
+        LearningObjectMatchSuggestion.objects.create(
+            outline_node=self.topic,
+            source_learning_object=one,
+            candidate_learning_object=two,
+            similarity_score=0.0,
+            confidence=LearningObjectMatchSuggestion.Confidence.MEDIUM,
+            status=LearningObjectMatchSuggestion.Status.REJECTED,
+        )
+        self.assertEqual(reconcile_numbered_parts(self.topic), 0)
+
+    def test_parts_from_different_pdfs_are_not_one_series(self):
+        one = self._object(self.a, "What Is Matter? (Part 1 of 2)", "What Is Matter?", 10)
+        two = self._object(self.b, "What Is Matter? (Part 2 of 2)", "What Is Matter?", 11)
+        self.assertEqual(numbered_part_series([one, two]), [])
+        self.assertEqual(reconcile_numbered_parts(self.topic), 0)
+
+    def test_other_normal_object_in_group_prevents_transitive_merge(self):
+        one, two = self._parts()
+        self.matter.group = two.group
+        self.matter.save(update_fields=["group"])
+        self.assertEqual(reconcile_numbered_parts(self.topic), 0)
+
+    def test_repeated_complete_series_remain_two_concepts(self):
+        first_one, first_two = self._parts()
+        second_one = self._object(self.a, "What Is Matter? (Part 1 of 2)", "What Is Matter?", 20)
+        second_two = self._object(self.a, "What Is Matter? (Part 2 of 2)", "What Is Matter?", 21)
+
+        self.assertEqual(reconcile_numbered_parts(self.topic), 2)
+        first_two.refresh_from_db()
+        second_two.refresh_from_db()
+        self.assertEqual(first_one.group_id, first_two.group_id)
+        self.assertEqual(second_one.group_id, second_two.group_id)
+        self.assertNotEqual(first_one.group_id, second_one.group_id)
+
+    def test_existing_course_migration_keeps_pdf_objects_and_order(self):
+        one, two = self._parts()
+        other = self._object(self.b, "Particle behavior", "What Is Matter?", 12)
+        other.group = two.group
+        other.save(update_fields=["group"])
+        old_group_id = two.group_id
+        migration = importlib.import_module("lessons.migrations.0020_reconcile_numbered_concept_parts")
+
+        migration.reconcile_existing_parts(apps, SimpleNamespace(connection=connection))
+
+        self.assertFalse(LearningObjectGroup.objects.filter(pk=old_group_id).exists())
+        self.assertEqual(
+            set(LearningObject.objects.filter(pk__in=[one.pk, two.pk, other.pk]).values_list("group_id", flat=True)),
+            {one.group_id},
+        )
 
 
 class CandidateTests(UnitFixture):

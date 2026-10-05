@@ -65,7 +65,6 @@ class LessonVariant(models.Model):
     VARIANTS = [
         ("ELABORATED", "Elaborated"),
         ("SIMPLIFIED", "Simplified"),
-        ("EXTRA", "Extra"),
     ]
 
     class Origin(models.TextChoices):
@@ -111,11 +110,13 @@ class LessonVariant(models.Model):
         ordering = ["learning_object_id", "variant"]
         constraints = [
             # An object has at most one simplified and one elaborated version.
-            # Extras are unconstrained: a fourth PDF can supply several.
             models.UniqueConstraint(
                 fields=["learning_object", "variant"],
-                condition=~models.Q(variant="EXTRA"),
                 name="unique_primary_variant_slot",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(variant__in=("SIMPLIFIED", "ELABORATED")),
+                name="lessonvariant_active_variant",
             ),
         ]
 

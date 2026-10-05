@@ -355,6 +355,49 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
         visual_bbox = fitz.Rect(visual_cluster[0])
         for rect in visual_cluster[1:]:
             visual_bbox.include_rect(rect)
+
+        # A caption can describe a grid of panels, not just the row nearest
+        # it. Extend upward only through similarly sized, horizontally aligned
+        # panels. A lone wide banner above a one-panel figure must not become
+        # part of the crop merely because it is nearby.
+        def panels(rects):
+            unique = {}
+            for rect in rects:
+                if rect.width < page_rect.width * 0.08 or rect.height < 18:
+                    continue
+                key = tuple(round(value, 1) for value in rect)
+                unique[key] = rect
+            return list(unique.values())
+
+        def aligned(left, right):
+            width_ratio = min(left.width, right.width) / max(left.width, right.width)
+            overlap = min(left.x1, right.x1) - max(left.x0, right.x0)
+            return width_ratio >= 0.7 and overlap / min(left.width, right.width) >= 0.7
+
+        current_row = panels(visual_cluster)
+        while current_row:
+            above = [
+                rect for rect in panels(nearby_visuals)
+                if rect.y1 < visual_bbox.y0
+                and visual_bbox.y0 - rect.y1 <= page_rect.height * 0.08
+            ]
+            if not above:
+                break
+            nearest_upper_bottom = max(rect.y1 for rect in above)
+            upper_row = [
+                rect for rect in above
+                if rect.y1 >= nearest_upper_bottom - cluster_gap
+            ]
+            matched_upper = [
+                rect for rect in upper_row
+                if any(aligned(rect, lower) for lower in current_row)
+            ]
+            required_matches = 2 if len(current_row) > 1 and len(upper_row) > 1 else 1
+            if len(matched_upper) < required_matches:
+                break
+            for rect in matched_upper:
+                visual_bbox.include_rect(rect)
+            current_row = matched_upper
         if visual_bbox.width < page_rect.width * 0.15 or visual_bbox.height < 18:
             continue
 
@@ -368,6 +411,26 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
         ]
         figure_title = max(title_candidates, key=lambda item: item["rect"].width, default=None)
         crop_bbox = fitz.Rect(visual_bbox)
+        # Panel labels may extend beyond their drawn frames. Expand only the
+        # horizontal bounds for text between the title (if any) and caption;
+        # never chase text vertically into the preceding objectives or the
+        # next section.
+        label_top = (
+            figure_title["rect"].y0
+            if figure_title else visual_bbox.y0 - page_rect.height * 0.04
+        )
+        for item in text_blocks:
+            rect = item["rect"]
+            center_x = (rect.x0 + rect.x1) / 2
+            if (
+                item is not caption
+                and label_top <= rect.y0
+                and rect.y1 <= caption_rect.y0 + 2
+                and visual_bbox.x0 - 10 <= center_x <= visual_bbox.x1 + 10
+                and rect.width <= page_rect.width * 0.5
+            ):
+                crop_bbox.x0 = min(crop_bbox.x0, rect.x0)
+                crop_bbox.x1 = max(crop_bbox.x1, rect.x1)
         crop_bbox.include_rect(caption_rect)
         if figure_title:
             crop_bbox.include_rect(figure_title["rect"])
@@ -378,15 +441,15 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
             min(page_rect.y1, crop_bbox.y1 + 5),
         )
 
-        # Labels printed on the figure belong to it. Only text lying inside
-        # the figure itself counts, and the crop never grows to take in more:
-        # growing to each block it touched then took in the next, until the
-        # "figure" was the whole page.
-        figure_area = fitz.Rect(visual_bbox.x0 - 4, visual_bbox.y0 - 4, visual_bbox.x1 + 4, visual_bbox.y1 + 4)
+        # Include the titles and captions *inside* the final fixed crop in
+        # visible text. Do not grow the crop from those text blocks: doing so
+        # once pulled in neighbouring prose until the figure was a whole page.
         contained_items = []
         for item in text_blocks:
+            if item is caption:
+                continue
             center = (item["rect"].x0 + item["rect"].x1) / 2, (item["rect"].y0 + item["rect"].y1) / 2
-            if figure_area.contains(fitz.Point(*center)):
+            if crop_bbox.contains(fitz.Point(*center)):
                 contained_items.append(item)
         crop_bbox = fitz.Rect(
             max(page_rect.x0, crop_bbox.x0 - 4),

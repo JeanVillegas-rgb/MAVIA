@@ -259,10 +259,7 @@ def _generated_versions(objects):
     versions = {}
     for item in objects:
         for row in item.variants.all():
-            # Extras are retained for the interaction pipeline to rule on
-            # later. They are not one of the three versions a student is
-            # offered.
-            if row.variant == "EXTRA":
+            if row.variant not in ("SIMPLIFIED", "ELABORATED"):
                 continue
             version = versions.setdefault(row.variant, {"segments": [], "origin": row.origin})
             version["segments"].append({"text": row.narration, "audio_url": row.audio_url})
@@ -336,9 +333,7 @@ def _build_chunk(learning_object):
     # into a row -- and it outranks anything generated for the same role.
     if learning_object.group_id is not None:
         for role, objects in version_bundles(learning_object.group).items():
-            # Normal is already built above, and an extra bundle is not one
-            # of the three versions a student is offered.
-            if role in ("NORMAL", "EXTRA"):
+            if role == "NORMAL":
                 continue
             variants[role.lower()] = _version_from_segments(
                 bundle_segments(objects), origin=LessonVariant.Origin.SOURCE_PDF
