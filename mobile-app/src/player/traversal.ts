@@ -39,6 +39,9 @@ export type PlayerState = {
   // move on (a missed TF is never asked again).
   awaitingQuestion: boolean;
   trackIndex: number;            // which audio clip of the step is playing
+  // The command said play no reading (play_audio false): back from a detour, the
+  // step already had every reading, so only the spoken lead-in plays before its question.
+  skipReading: boolean;
   // Bumped every time a question is served, including the same question
   // re-served after a miss. Part of QuestionCard's key, so the card always
   // remounts fresh instead of keeping the answered state of the last attempt.
@@ -60,6 +63,7 @@ export const INITIAL_STATE: PlayerState = {
   questionIndex: 0,
   awaitingQuestion: true,
   trackIndex: 0,
+  skipReading: false,
   askCount: 0,
   phase: "audio",
   announcement: null,
@@ -196,7 +200,7 @@ export function afterAudio(state: PlayerState): PlayerState {
   // never treat it as a listen-only step that is done.
   if (!step) return state;
   const ask = state.awaitingQuestion && questionPool(step).length > 0;
-  return { ...state, phase: ask ? "questions" : "continue", announcement: null };
+  return { ...state, phase: ask ? "questions" : "continue", announcement: null, skipReading: false };
 }
 
 /** Follow one command from the engine (after an answer, or after continuing
@@ -217,6 +221,7 @@ export function applyCommand(state: PlayerState, command: ApiCommand): PlayerSta
     awaitingQuestion: command.next_question_id != null,
     askCount: state.askCount + 1,
     announcement: null,
+    skipReading: false,
   };
 
   switch (command.action) {
@@ -228,7 +233,13 @@ export function applyCommand(state: PlayerState, command: ApiCommand): PlayerSta
     case "regress": // detour through a prerequisite
       return { ...next, trackIndex: 0, phase: "audio", announcement: DETOUR_LINE };
     case "resume": // back from the detour
-      return { ...next, trackIndex: 0, phase: "audio", announcement: withReview(command, RESUME_LINE) };
+      return {
+        ...next,
+        trackIndex: 0,
+        phase: "audio",
+        announcement: withReview(command, RESUME_LINE),
+        skipReading: command.play_audio === false,
+      };
     case "advance": // next concept
     default:
       return { ...next, trackIndex: 0, phase: "audio", announcement: withReview(command, ADVANCE_LINE) };

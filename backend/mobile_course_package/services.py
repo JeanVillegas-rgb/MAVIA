@@ -1,7 +1,7 @@
 from learning_path.services import get_published_path
 from lessons.models import OutlineNode
 from .models import StudentResponse, TopicPackage, TopicPackageProgress
-from adaptive.services import grade, decide_after_listening, apply_answer, first_open_question, first_question_on_arrival, askable_questions, segment_review, LEAVES_THE_SEGMENT
+from adaptive.services import grade, decide_after_listening, apply_answer, first_open_question, first_question_on_arrival, askable_questions, open_questions, segment_review, LEAVES_THE_SEGMENT
 from question_generation.models import GeneratedQuestion
 from lessons.services.audio_generator import question_audio_url
 from django.db import transaction
@@ -142,6 +142,7 @@ def apply_command(progress, command):
         progress.current_variant = command["next_variant"]
         
     progress.return_to_position = command["return_to_position"]
+    progress.pending_question_id = command.get("next_question_id")
     progress.save()
 
 
@@ -188,7 +189,7 @@ def continue_after_listening(student, topic, package):
         return None
     command = decide_after_listening(step, package.steps, progress.return_to_position)
     if command["action"] in LEAVES_THE_SEGMENT:
-        command["review"] = segment_review(step, student, topic, package)
+        command["review"] = segment_review(step, student, topic, package, detour_only=command["action"] == "resume")
     # Tell the phone which question waits on the step it moves to (None: listen only),
     # exactly as an answer's command does.
     if command["next_step_position"] is not None:
@@ -200,8 +201,16 @@ def continue_after_listening(student, topic, package):
 
 
 def next_question_on_open(student, topic, package, progress):
-    #when a topic is opened: which question of the current step to ask (None: listen only)
+    #when a topic is opened: which question of the current step to ask (None: listen only).
+    #The one the last command asked for, if it is still open -- reopening resumes exactly
+    #where the engine left off. Otherwise (a new learner, or nothing pending) the same
+    #arrival rules as moving between steps: on a detour a fresh question, and never a
+    #question whose answer was already read out in a review.
     step = next((s for s in package.steps if s["position"] == progress.current_step_position), None)
     if step is None or progress.completed:
         return None
-    return first_open_question(step, student, topic, package)
+    pending = progress.pending_question_id
+    still_open = open_questions(step, student, topic, package) + open_questions(step, student, topic, package, reserve=True)
+    if pending is not None and pending in still_open:
+        return pending
+    return first_question_on_arrival(step, student, topic, package, detour=progress.return_to_position is not None)

@@ -350,6 +350,15 @@ export default function CourseReviewPage() {
                           <div className="mv-muted" style={{ fontSize: ".8rem" }}>
                             {row.student.email}
                           </div>
+                          {row.needs_help?.length > 0 && (
+                            <div
+                              className="mv-pill mv-pill--pending"
+                              style={{ marginTop: 4, display: "inline-block" }}
+                              title="Missed a question at every reading, on the detour, and again on the way back"
+                            >
+                              Needs your help: {row.needs_help.map((item) => item.concept).join(", ")}
+                            </div>
+                          )}
                         </td>
                         <td>
                           {row.started ? (

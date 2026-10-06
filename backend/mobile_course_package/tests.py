@@ -217,11 +217,15 @@ class MobilePackageFlowTests(APITestCase):
                           last_miss.step_already_regressed, last_miss.action_probability), (3, 3, False, False, 1.0))
         self.assertIsNotNone(last_miss.prerequisite_mastery)           # Comparing needs Solids, already met
         self.assertEqual(resumed["next_question_id"], 3)        # the question that sent them on the detour, asked again
+        self.assertFalse(resumed["play_audio"])                  # no reading replayed on the way back
+        self.assertEqual(resumed["next_variant"], "elaborated")  # the step stays on its last reading
         self.assertIsNone(self.progress().return_to_position)
 
-        # Comparing may not regress twice: after the ladder runs out again, the topic completes
-        actions = [self.answer(3, "b").data["next"]["action"] for _ in range(3)]
-        self.assertEqual(actions, ["escalate_variant", "escalate_variant", "complete"])
+        # Back from the detour no reading is used again: Q3 missed once more, nothing else
+        # is left in Comparing, so the topic completes -- with Q3 in the review
+        done = self.answer(3, "b").data["next"]
+        self.assertEqual(done["action"], "complete")
+        self.assertEqual([item["question_id"] for item in done["review"]], [3])
         self.assertTrue(self.progress().completed)
 
     def test_every_answer_is_logged_with_a_decision(self, _path):
@@ -282,6 +286,51 @@ class MobilePackageFlowTests(APITestCase):
         # and the spent TF is never served again, even if asked for directly
         self.assertNotIn(2, [q for q in [self.client.get(
             f"/api/mobile/topics/{self.topic.id}/").data["next_question_id"]]])
+
+    def test_a_detour_asks_a_fresh_reserve_question(self, _path):
+        reserve = [{"id": 9, "text": "Spare?", "format": "MCQ", "choices": ["Right", "Wrong", "Nope", "No"],
+                    "thinking_order": "LOT", "correct_answer": "a", "explanation": "Spare."}]
+        with patch("mobile_course_package.services.reserve_questions_for",
+                   side_effect=lambda concept_id, used: reserve if concept_id == SOLIDS else []):
+            self.reach_solids()
+            self.answer(1, "a")
+            self.answer(2, "True")                               # Solids done -> Comparing
+            for _ in range(2):
+                self.answer(3, "b")
+            detour = self.answer(3, "b").data["next"]
+            # the prerequisite's own questions were answered: a spare it never saw is asked instead
+            self.assertEqual((detour["action"], detour["next_step_position"], detour["next_question_id"]), ("regress", 2, 9))
+            back = self.answer(9, "a").data["next"]
+            self.assertEqual((back["action"], back["next_step_position"], back["next_question_id"]), ("resume", 3, 3))
+            self.assertEqual(back["review"], [])                 # nothing missed on the detour
+            self.assertTrue(Decision.objects.order_by("id").last().on_detour)
+
+    def test_a_missed_detour_question_goes_straight_back(self, _path):
+        reserve = [{"id": 9, "text": "Spare?", "format": "MCQ", "choices": ["Right", "Wrong", "Nope", "No"],
+                    "thinking_order": "LOT", "correct_answer": "a", "explanation": "Spare."}]
+        with patch("mobile_course_package.services.reserve_questions_for",
+                   side_effect=lambda concept_id, used: reserve if concept_id == SOLIDS else []):
+            self.reach_solids()
+            self.answer(1, "a")
+            self.answer(2, "True")
+            for _ in range(3):
+                self.answer(3, "b")                              # -> detour to Solids, fresh Q9
+            back = self.answer(9, "b").data["next"]              # missed: no re-teach on a detour
+            self.assertEqual((back["action"], back["next_step_position"], back["next_question_id"]), ("resume", 3, 3))
+            self.assertEqual([item["question_id"] for item in back["review"]], [9])   # its answer, on the way back
+            # missed again on the way back: the rules ran out, so the teacher is told
+            self.assertEqual(self.answer(3, "b").data["next"]["action"], "complete")
+            self.client.force_authenticate(self.teacher)
+            row = self.client.get(f"/api/adaptive/courses/{self.course.id}/progress/").data["rows"][0]
+            self.assertEqual([item["concept_id"] for item in row["needs_help"]], [COMPARING])
+
+    def test_reopening_asks_the_question_the_engine_left_pending(self, _path):
+        self.reach_solids()
+        self.answer(1, "b")                                      # re-taught in simplified, Solids' last reading
+        nxt = self.answer(1, "b").data["next"]                   # used up, no prerequisite -> Q2 is asked next
+        self.assertEqual(nxt["next_question_id"], 2)
+        # the app is closed and opened again: the same question waits, not the used-up Q1
+        self.assertEqual(self.open_topic().data["next_question_id"], 2)
 
     def test_a_missed_true_false_falls_back_to_a_reserve_question(self, _path):
         reserve = [{"id": 9, "text": "Spare?", "format": "TF", "choices": None, "thinking_order": "LOT",

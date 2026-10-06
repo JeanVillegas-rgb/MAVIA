@@ -82,6 +82,36 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
   // A clip that will not load is read by the device voice instead.
   const clipFailedRef = useRef(false);
 
+  // True while the question itself is being read (its clip, or the device voice
+  // reading it). Answering is ignored meanwhile: an answer's read-back would talk
+  // over the question, and a clip still loading could start playing over it.
+  // Released when the reading ends -- finished, or stopped with the pause key, so
+  // a learner who cuts it short can still answer. Mirrored into a ref because a
+  // keypad can deliver a press before React re-renders.
+  const [questionReading, setQuestionReadingState] = useState(false);
+  const questionReadingRef = useRef(false);
+  // The reading has actually started making sound (a clip still loading has not).
+  const readingStartedRef = useRef(false);
+  const readingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function setQuestionReading(on: boolean) {
+    questionReadingRef.current = on;
+    setQuestionReadingState(on);
+    if (readingTimeoutRef.current) clearTimeout(readingTimeoutRef.current);
+    readingTimeoutRef.current = null;
+    readingStartedRef.current = false;
+    // Safety net: a clip that never starts and never errors must not lock the question.
+    if (on) readingTimeoutRef.current = setTimeout(() => setQuestionReading(false), 90000);
+  }
+  useEffect(() => {
+    if (!questionReadingRef.current) return;
+    if (clip.isPlaying || narration.isSpeaking) readingStartedRef.current = true;
+    else if (readingStartedRef.current) setQuestionReading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clip.isPlaying, narration.isSpeaking]);
+  useEffect(() => () => {
+    if (readingTimeoutRef.current) clearTimeout(readingTimeoutRef.current);
+  }, []);
+
   function say(text: string, options?: { onDone?: () => void }) {
     clip.stop();
     narration.speak(text, options);
@@ -125,9 +155,12 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
     // Only the automatic first read carries the tip. Asking to hear the
     // question again means the question, not the instructions.
     const tip = withTip && !openEnded ? answeringTip.take() : "";
+    if (!openEnded) setQuestionReading(true);
     if (question.audio_url && !clipFailedRef.current) {
       const playClip = () => {
         if (choosingRef.current) return;
+        // The tip has just finished: the clip, not the gap before it loads, is the reading.
+        readingStartedRef.current = false;
         clip.load(resolveMediaUrl(question.audio_url!), true);
       };
       // The tip is not part of the recording: say it, then play the question.
@@ -192,7 +225,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
   inputPausedRef.current = inputPaused || guideBusy;
 
   async function choose(key: string) {
-    if (choosingRef.current || submitting || answered) return;
+    if (choosingRef.current || submitting || answered || questionReadingRef.current) return;
     choosingRef.current = true;
     setSelected(key);
     setSubmitting(true);
@@ -253,7 +286,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
       // that they work the same while a lesson plays as they do on a question.
       // Only an answer key means anything here.
       if (action.kind !== "answer") return;
-      if (inputPausedRef.current) return;
+      if (inputPausedRef.current || questionReadingRef.current) return;
       if (choosingRef.current || answered || submitting) return;
       const option = options.find((o) => o.key === action.letter);
       if (!option) {
@@ -274,7 +307,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
   const tapMode = !openEnded && !screenReaderOn;
   const onQuestionTap = useTapCounter({
     onTap: (count) => {
-      if (inputPausedRef.current || choosingRef.current || answered || submitting) return;
+      if (inputPausedRef.current || questionReadingRef.current || choosingRef.current || answered || submitting) return;
       if (count > options.length) {
         say(
           options.length === 1 ? "There is only one option." : `There are only ${options.length} options.`
@@ -285,7 +318,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
       say(options[count - 1].key.toUpperCase());
     },
     onSettled: (count) => {
-      if (inputPausedRef.current || choosingRef.current || answered || submitting) return;
+      if (inputPausedRef.current || questionReadingRef.current || choosingRef.current || answered || submitting) return;
       const letter = letterForTapCount(count);
       const option = letter ? options.find((o) => o.key === letter) : undefined;
       // Too many taps was already announced; nothing is submitted.
@@ -308,14 +341,14 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
     <>
       {face}
       <Text style={[styles.counter, styles.faceCounter]}>
-        Question {index + 1} of {total} · waiting for your answer
+        Question {index + 1} of {total} · {questionReading ? "listen to the question" : "waiting for your answer"}
       </Text>
       {!tapMode && !openEnded && (
         <View style={styles.letterRow}>
           {options.map((option) => (
             <Pressable
               key={option.key}
-              disabled={answered || submitting || inputPaused}
+              disabled={answered || submitting || inputPaused || questionReading}
               onPress={() => choose(option.key)}
               accessibilityRole="button"
               accessibilityLabel={`${option.key.toUpperCase()}. ${option.label}`}
@@ -374,7 +407,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
             ) : (
               <Pressable
                 key={option.key}
-                disabled={answered || submitting || inputPaused}
+                disabled={answered || submitting || inputPaused || questionReading}
                 onPress={() => choose(option.key)}
                 accessibilityRole="button"
                 style={rowStyle}

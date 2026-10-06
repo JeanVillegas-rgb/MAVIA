@@ -195,6 +195,19 @@ export default function LessonPlayerScreen() {
     pendingAnnouncement.current = null;
 
     let cancelled = false;
+    // Back from a detour: no reading is replayed -- say the lead-in (and the
+    // detour's review, if any), then go straight to the step's question.
+    if (state.skipReading) {
+      const toQuestion = () => {
+        if (!cancelled) setState((prev) => afterAudio(prev));
+      };
+      if (line) speak(line, { onDone: toQuestion });
+      else toQuestion();
+      return () => {
+        cancelled = true;
+        stopNarration();
+      };
+    }
     const startTrack = () => {
       if (cancelled) return;
       if (track?.audio_ready) {
@@ -215,7 +228,7 @@ export default function LessonPlayerScreen() {
       stopNarration();
       stopAudio();
     };
-  }, [guideBusy, phase, loading, step?.position, trackIndex, track?.audio_ready, track?.audio_url, load, speak, stopNarration, stopAudio, topicReplay]);
+  }, [guideBusy, phase, loading, step?.position, trackIndex, track?.audio_ready, track?.audio_url, load, speak, stopNarration, stopAudio, topicReplay, state.skipReading]);
 
   // A clip that fails to load hands on like a missing one: with no skip
   // button, nothing else would move the student past it.

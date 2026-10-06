@@ -33,6 +33,10 @@ class TopicPackageProgress(models.Model):
     return_to_position = models.PositiveIntegerField(null=True, blank=True) #if the student is sent back to a prerequisite concept, this is where they will return to after completing it
     regressed_positions = models.JSONField(default=list, blank=True) #list of positions the student has been sent back to (prerequisites) so we can track how many times they have been sent back and to which concepts
     completed = models.BooleanField(default=False)
+    # The question the last command asked for (None: listen, then continue). Reopening
+    # the topic asks exactly this one, so the app never picks a different question
+    # from the one the engine decided on.
+    pending_question_id = models.PositiveBigIntegerField(null=True, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
