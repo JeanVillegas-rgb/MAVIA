@@ -1,7 +1,7 @@
 """The published path must serve a concept's whole bundle, not just its lead.
 
 Found on the real publish of topic 152 (2026-09-21). The concept "Comparing
-the Three States" holds a Normal bundle of four objects and a Simplified
+the Three States" holds a Standard bundle of four objects and a Simplified
 supplied by the other PDF's two objects. ``get_published_path`` served 77
 characters -- the lead object alone -- and a 66-character *generated*
 Simplified, while the lesson package served 326 and 698. Across the two live
@@ -9,7 +9,7 @@ topics, 15 of 22 concepts were affected.
 
 Two causes, both in ``_versions``:
 
-* Normal was read as ``representative.content``, so every object after the
+* Standard was read as ``representative.content``, so every object after the
   bundle lead was dropped.
 * Simplified and Elaborated were read from ``LessonVariant`` rows only, and a
   version a PDF *supplies* has no such row by design -- its text is its
@@ -84,18 +84,18 @@ class PublishedBundleTests(TestCase):
     def _step(self):
         return get_published_path(self.topic)["steps"][0]
 
-    # ── Normal ────────────────────────────────────────────────────────────
+    # ── Standard ────────────────────────────────────────────────────────────
 
-    def test_normal_is_the_whole_bundle_not_only_its_lead(self):
-        normal = self._step()["versions"]["normal"]["text"]
+    def test_standard_is_the_whole_bundle_not_only_its_lead(self):
+        standard = self._step()["versions"]["standard"]["text"]
 
         for item in (self.lead, self.volume, self.spacing, self.flow):
-            self.assertIn(item.content, normal)
+            self.assertIn(item.content, standard)
 
-    def test_normal_keeps_the_bundle_in_document_order(self):
-        normal = self._step()["versions"]["normal"]["text"]
+    def test_standard_keeps_the_bundle_in_document_order(self):
+        standard = self._step()["versions"]["standard"]["text"]
 
-        positions = [normal.index(item.content) for item in
+        positions = [standard.index(item.content) for item in
                      (self.lead, self.volume, self.spacing, self.flow)]
         self.assertEqual(positions, sorted(positions))
 
@@ -112,7 +112,7 @@ class PublishedBundleTests(TestCase):
 
         step = [s for s in get_published_path(self.topic)["steps"] if s["concept_id"] == solo_group.id][0]
 
-        self.assertEqual(step["versions"]["normal"]["text"], solo.content)
+        self.assertEqual(step["versions"]["standard"]["text"], solo.content)
 
     # ── Versions a PDF supplies ───────────────────────────────────────────
 
@@ -176,8 +176,8 @@ class PublishedBundleTests(TestCase):
     def test_the_documented_keys_still_exist(self):
         versions = self._step()["versions"]
 
-        self.assertEqual(set(versions), {"normal", "simplified", "elaborated"})
-        self.assertLessEqual({"text", "audio_url"}, set(versions["normal"]))
+        self.assertEqual(set(versions), {"standard", "simplified", "elaborated"})
+        self.assertLessEqual({"text", "audio_url"}, set(versions["standard"]))
 
     def test_every_object_of_a_version_is_reachable_as_its_own_segment(self):
         """A single audio_url is only the first clip of a four-object version.
@@ -186,7 +186,7 @@ class PublishedBundleTests(TestCase):
         have no way to know the rest existed -- which for a learner who cannot
         see the page is the version simply being wrong.
         """
-        segments = self._step()["versions"]["normal"]["segments"]
+        segments = self._step()["versions"]["standard"]["segments"]
 
         self.assertEqual(
             [segment["text"] for segment in segments],

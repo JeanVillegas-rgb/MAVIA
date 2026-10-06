@@ -1,44 +1,34 @@
 // Shown after a successful publish: the path a learner will now walk, each
-// concept's Normal narration playable in teaching order. A concept told in
-// several parts plays them back to back, as the learner hears that step.
+// concept's Standard narration playable in teaching order, one player for each
+// learning object the concept is taught as.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchPublishedPath } from "../api";
 import { publishedClips } from "./publishedAudio";
 import "./pathGraph.css";
 
-function ConceptPlayer({ clips, title, onPlay }) {
-  const [index, setIndex] = useState(0);
-  const audio = useRef(null);
-  const continuing = useRef(false);
-
-  useEffect(() => {
-    if (!continuing.current) return;
-    continuing.current = false;
-    audio.current?.play().catch(() => {});
-  }, [index]);
-
-  function next() {
-    if (index < clips.length - 1) {
-      continuing.current = true;
-      setIndex(index + 1);
-    } else {
-      setIndex(0);
-    }
-  }
-
+// One player per learning object of the concept's Standard version, each
+// labelled with the object it narrates, so every part can be played and
+// checked on its own.
+function ConceptPlayers({ parts, title, onPlay }) {
   return (
-    <div className="pub-player">
-      <audio
-        ref={audio}
-        controls
-        preload="none"
-        src={clips[index]}
-        aria-label={`Narration for ${title}`}
-        onPlay={(event) => onPlay(event.currentTarget)}
-        onEnded={next}
-      />
-      {clips.length > 1 && <small>Part {index + 1} of {clips.length}</small>}
+    <div className="pub-parts">
+      {parts.map((part, index) => (
+        <div className="pub-player" key={`${part.url}-${index}`}>
+          {parts.length > 1 && (
+            <small className="pub-part-label">
+              {index + 1}. {part.title || `Part ${index + 1}`}
+            </small>
+          )}
+          <audio
+            controls
+            preload="none"
+            src={part.url}
+            aria-label={`Narration for ${title}${parts.length > 1 ? `, ${part.title || `part ${index + 1}`}` : ""}`}
+            onPlay={(event) => onPlay(event.currentTarget)}
+          />
+        </div>
+      ))}
     </div>
   );
 }
@@ -99,7 +89,7 @@ export default function PublishedDialog({ topicId, topicTitle, onClose }) {
                   <div className="pub-row-main">
                     <strong>{row.title}</strong>
                     {row.clips.length > 0 ? (
-                      <ConceptPlayer clips={row.clips} title={row.title} onPlay={onPlay} />
+                      <ConceptPlayers parts={row.parts} title={row.title} onPlay={onPlay} />
                     ) : (
                       <p className="pub-missing">No audio for this concept.</p>
                     )}

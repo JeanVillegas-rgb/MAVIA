@@ -17,6 +17,7 @@ from typing import Any
 from course.version_assignment import assign_group_versions
 from lessons.services.concept_bundles import bundle_heading, ordered_members
 
+from .concept_text import strip_numbering
 from .text_signals import part_marker, strip_part_suffix
 
 
@@ -31,7 +32,7 @@ class Concept:
     kind: str
     order: int
     # Every member's text, one PDF after another. The criteria read this so a
-    # concept speaks with all its PDFs' wording, not only the Normal version's.
+    # concept speaks with all its PDFs' wording, not only the Standard version's.
     member_text: str = ""
     group: Any = field(repr=False, default=None)
     representative: Any = field(repr=False, default=None)
@@ -124,6 +125,19 @@ def _merge_split_passages(records):
     A run with a gap is not a whole passage, and guessing at the gap would join
     text that may not belong together.
     """
+    joins = []
+    for total, run in _passage_runs(records):
+        if [number for _, number, _ in run] != list(range(1, total + 1)):
+            continue
+        orders = [order for order, _, _ in run]
+        if orders != list(range(orders[0], orders[0] + len(orders))):
+            continue
+        joins.extend((run[0][2], record) for _, _, record in run[1:])
+    return _join_records(records, joins)
+
+
+def _join_records(records, joins):
+    """One record per connected set of ``joins`` (pairs of records), in a union."""
     parent = {id(record): id(record) for record in records}
 
     def find(item):
@@ -132,20 +146,10 @@ def _merge_split_passages(records):
             item = parent[item]
         return item
 
-    def union(left, right):
-        left_root, right_root = find(left), find(right)
+    for left, right in joins:
+        left_root, right_root = find(id(left)), find(id(right))
         if left_root != right_root:
             parent[right_root] = left_root
-
-    for total, run in _passage_runs(records):
-        if [number for _, number, _ in run] != list(range(1, total + 1)):
-            continue
-        orders = [order for order, _, _ in run]
-        if orders != list(range(orders[0], orders[0] + len(orders))):
-            continue
-        ids = [id(record) for _, _, record in run]
-        for other in ids[1:]:
-            union(ids[0], other)
 
     components = {}
     for record in records:
@@ -165,6 +169,65 @@ def _merge_split_passages(records):
             "earliest": primary["earliest"],
         })
     return merged
+
+
+def _name_key(name):
+    """A heading without its list number or "(Part n of m)": "7. Everyday Examples"
+    and "Everyday Examples" are one name."""
+    return " ".join(strip_numbering(strip_part_suffix(name or "")).casefold().split())
+
+
+def _headings(members):
+    return {
+        " ".join((getattr(item, "section_title", "") or "").casefold().split())
+        for item in members
+        if (getattr(item, "section_title", "") or "").strip()
+    }
+
+
+def same_concept(first, second):
+    """True when two units are one concept that grouping kept apart.
+
+    Each unit is ``(name, members)``; members carry ``material_id``, ``order``
+    and ``section_title``. Grouping compares text, so a table whose text is a
+    description of its layout, or a numbered repeat of a heading, can miss the
+    concept it belongs to. The name decides, guarded by position:
+
+    * in a file both appear in, they must sit next to each other -- one file
+      can print the same title over different passages ("Diagram description"
+      under each state of matter), and only adjacency makes them one;
+    * across files, they must not sit under different section headings, so two
+      files' "Example" under different sections stay two concepts.
+    """
+    (first_name, first_members), (second_name, second_members) = first, second
+    key = _name_key(first_name)
+    if not key or key != _name_key(second_name):
+        return False
+    shared = {item.material_id for item in first_members} & {item.material_id for item in second_members}
+    if shared:
+        return any(
+            abs(left.order - right.order) == 1
+            for left in first_members for right in second_members
+            if left.material_id == right.material_id
+        )
+    left, right = _headings(first_members), _headings(second_members)
+    return not (left and right and not (left & right))
+
+
+def _join_same_name(records):
+    """Join the records of one concept that grouping split under one name.
+
+    A path-level join, like the split passages above: grouping is read, not
+    changed, so the Questions and versions steps still show each group.
+    """
+    units = [(record["group"].label, record["members"]) for record in records]
+    joins = [
+        (records[first], records[second])
+        for first in range(len(records))
+        for second in range(first + 1, len(records))
+        if same_concept(units[first], units[second])
+    ]
+    return _join_records(records, joins) if joins else records
 
 
 def _material_positions(records):
@@ -308,6 +371,7 @@ def concepts_for_topic(node):
         })
 
     records = _merge_split_passages(records)
+    records = _join_same_name(records)
     records = _order_records(records, material_rank)
 
     concepts = []
@@ -371,7 +435,7 @@ def concepts_for_topic(node):
                     or group.label
                     or ""
                 ).strip(),
-                # "Normal" is the representative's own text -- unlike Simplified
+                # "Standard" is the representative's own text -- unlike Simplified
                 # and Elaborated it is not a stored slot.
                 content=representative.content or "",
                 section_title=representative.section_title or "",
@@ -390,7 +454,7 @@ def _representative_for(group, members):
     """The member whose text speaks for the concept.
 
     Resolved through ``assign_group_versions`` -- the same call the learning
-    resources payload makes -- so the path shows the very Normal version the
+    resources payload makes -- so the path shows the very Standard version the
     teacher reviewed, rather than a second opinion about which member is
     canonical.
     """

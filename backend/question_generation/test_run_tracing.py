@@ -59,7 +59,22 @@ class RunTracerTests(TestCase):
 
         line = "\n".join(captured.output)
         self.assertIn("Reading the PDF", line)
-        self.assertIn("(3/12)", line)
+        self.assertIn("(3 of 12)", line)
+
+    def test_failures_print_as_warnings(self):
+        with self.assertLogs("question_generation.tracing", level="INFO") as captured:
+            run_tracer(self.run)("audio_failed", "Lesson 1: speech service down")
+
+        self.assertTrue(captured.output[0].startswith("WARNING"))
+
+    def test_an_item_start_stays_out_of_the_terminal_at_info(self):
+        with self.assertLogs("question_generation.tracing", level="INFO") as captured:
+            record = run_tracer(self.run)
+            record("audio_started", "Generating audio for Lesson 1", index=1, total=2)
+            record("audio_finished", "Generated 4 tracks for Lesson 1", index=1, total=2)
+
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("Generated 4 tracks", captured.output[0])
 
     def test_the_terminal_line_names_the_pipeline(self):
         with self.assertLogs("question_generation.tracing", level="INFO") as captured:

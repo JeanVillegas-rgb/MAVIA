@@ -11,6 +11,12 @@
 		},
 		{
 			"path": "../../../../../mavia-jean-latest"
+		},
+		{
+			"path": "../../../../../movie-watchlist"
+		},
+		{
+			"path": "../../../../../mavia-mobile-copy"
 		}
 	],
 	"settings": {}

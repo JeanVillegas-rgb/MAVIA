@@ -17,14 +17,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AnswerLetter } from "@/input/brailleKeypad";
 import {
   DRILLS,
+  drillsForSection,
   MAX_NUDGES,
   NUDGE_AFTER_MS,
   PRACTICE_CLOSING,
   PRACTICE_SKIP,
   PRACTICE_WELCOME,
+  type Drill,
   type ExpectedInput,
   type InputSource,
 } from "./practice";
+import type { GuideSectionId } from "./script";
 import { markGuideHeard } from "./useGuide";
 
 export type PracticeInput =
@@ -74,7 +77,9 @@ export type Practice = {
   /** Hand it an input. Returns true if practice used it -- the caller must
    *  then not act on that input itself. */
   feed: (input: PracticeInput) => boolean;
-  start: () => void;
+  /** With a section, rehearse only the moves that section just described;
+   *  without one, run the whole first-run set. */
+  start: (section?: GuideSectionId) => void;
   /** Abandon the run. The guide still counts as heard: they sat through it. */
   quit: () => void;
 };
@@ -86,6 +91,8 @@ export function useGuidePractice(narration: Narrator): Practice {
   // Same guard as useGuide: a run counter, so a speech callback that fires
   // after the run ended (or was restarted) does nothing instead of advancing
   // a drill that is no longer on screen.
+  // The drills this run walks: one section's, or the whole first-run set.
+  const queueRef = useRef<Drill[]>(DRILLS);
   const runRef = useRef(0);
   const stepRef = useRef(0);
   const nudgesRef = useRef(0);
@@ -121,7 +128,7 @@ export function useGuidePractice(narration: Narrator): Practice {
       clearTimer();
       timerRef.current = setTimeout(() => {
         if (run !== runRef.current || !waitingRef.current) return;
-        const drill = DRILLS[index];
+        const drill = queueRef.current[index];
         if (!drill) return;
         nudgesRef.current += 1;
         if (nudgesRef.current > MAX_NUDGES) {
@@ -156,7 +163,7 @@ export function useGuidePractice(narration: Narrator): Practice {
       setAwaitingTap(false);
       clearTimer();
 
-      const drill = DRILLS[index];
+      const drill = queueRef.current[index];
       if (!drill) {
         trace("all drills done - closing");
         narrationRef.current.speak(PRACTICE_CLOSING, {
@@ -176,7 +183,7 @@ export function useGuidePractice(narration: Narrator): Practice {
         trace("waiting for", drill.id, JSON.stringify(drill.expects));
         armNudge(run, index);
       };
-      trace("drill", index + 1, "of", DRILLS.length, ":", drill.id);
+      trace("drill", index + 1, "of", queueRef.current.length, ":", drill.id);
       narrationRef.current.speak(drill.prompt, { onDone: beginWaiting });
       // Watchdog. onDone is not guaranteed -- a platform can drop it, and
       // anything else calling speak() cancels it outright -- and a drill that
@@ -189,7 +196,8 @@ export function useGuidePractice(narration: Narrator): Practice {
   );
   runStepRef.current = runStep;
 
-  const start = useCallback(() => {
+  const start = useCallback((section?: GuideSectionId) => {
+    queueRef.current = section ? drillsForSection(section) : DRILLS;
     runRef.current += 1;
     const run = runRef.current;
     setRunning(true);
@@ -228,7 +236,7 @@ export function useGuidePractice(narration: Narrator): Practice {
       // than a stray press, so input now falls through to the app instead.
       if (!waitingRef.current) return false;
 
-      const drill = DRILLS[stepRef.current];
+      const drill = queueRef.current[stepRef.current];
       if (!drill) return true;
       if (!matches(drill.expects, input)) {
         trace("wrong input for", drill.id, "- ignored");

@@ -4357,14 +4357,17 @@ def generate_material_outputs(
     *,
     propagate_validation_error: bool = False,
 ) -> LearningMaterial:
-    import time as _time
-    _t0 = _time.monotonic()
+    from time import perf_counter
 
-    def _trace(step):
-        logger.info("[TRACE material %s] %s (+%ss)", material.id, step, int(_time.monotonic() - _t0))
+    from config.console import name, took
+
+    started = perf_counter()
+
+    def _trace(step, level=logging.INFO):
+        logger.log(level, "[Upload] PDF %s  %s  (%s)", material.id, step, took(started))
 
     try:
-        _trace("start: extracting PDF text")
+        _trace(f"started: {name(material.title)}")
         try:
             text = extract_pdf_text(material.pdf_file.path)
         except (fitz.FileDataError, fitz.EmptyFileError) as exc:
@@ -4373,7 +4376,7 @@ def generate_material_outputs(
             ) from exc
         is_image_only_pdf = not _has_enough_embedded_pdf_text(text)
         if is_image_only_pdf:
-            _trace("embedded text is sparse; using deterministic PDF page extraction fallback")
+            _trace("almost no text layer; reading the pages as images instead")
             transcribed_text = transcribe_image_only_pdf_pages(material.pdf_file.path)
             if not transcribed_text.strip():
                 raise LearningMaterialValidationError("No readable text was found in the PDF.")
@@ -4394,11 +4397,13 @@ def generate_material_outputs(
             )
         metadata_text = _limited_text(cleaned_preserved_text)
         extraction_mode = "deterministic_page_text_fallback" if is_image_only_pdf else "embedded_pdf_text"
-        _trace(f"text extracted: {len(text)} chars, {len(extracted_blocks)} blocks, mode={extraction_mode}")
+        _trace(
+            f"text read: {len(text):,} characters in {len(extracted_blocks)} blocks"
+            + (" (from page images)" if is_image_only_pdf else "")
+        )
 
         #Start of TF-IDF
         selected_node = material.outline_node
-        _trace("validating PDF against course outline")
         matched_node = validate_outline_node_for_material(
             material.course,
             selected_node,
@@ -4416,6 +4421,10 @@ def generate_material_outputs(
             )
 
         auto_classified = selected_node is None
+        _trace(
+            f"matches topic {name(matched_node.title)}"
+            + (" (picked automatically)" if auto_classified else "")
+        )
         if auto_classified:
             material.outline_node = matched_node
             if material.module_node_id is None:
@@ -4434,24 +4443,23 @@ def generate_material_outputs(
             image["index"] = image_index
         if images and material.id:
             images = save_extracted_pdf_images(images, material.id)
-        _trace(f"images extracted: {len(images)} ({len(table_images)} tables)")
+        _trace(f"{len(images) - len(table_images)} figures and {len(table_images)} tables found")
 
         outline_context = _outline_context_for_material(material)
 
-        _trace("generating lesson metadata")
         metadata = generate_lesson_metadata_from_text(metadata_text, outline_context=outline_context)
         lesson_title = outline_context.get("topic_title") or metadata.get("lesson_title") or material.title
-        _trace("classifying instructional blocks")
         classified_blocks = classify_instructional_blocks(extracted_blocks)
         document_role = detect_instructional_document_role(classified_blocks)
-        _trace(f"document role detected: {document_role}")
+        _trace(f"blocks sorted; this PDF is {'an assessment (questions only)' if document_role == 'assessment' else 'lesson content'}")
         # Pictures on the cover, credits or answer-key pages are dropped here,
         # before any is narrated: describing them only to discard them cost a
         # model call each.
         set_aside_pages = non_lesson_pages(classified_blocks)
         if set_aside_pages:
             images = [image for image in images if image.get("page_number") not in set_aside_pages]
-        _trace(f"recording {len(images)} images for teacher descriptions")
+        if images:
+            _trace(f"describing {len(images)} figures (about 30s each)")
         # Narrated during upload, so a teacher reviews each figure with the
         # explanation a learner will hear. Publishing retries any the model
         # could not write (Ollama down) or left as only the printed caption.
@@ -4462,7 +4470,6 @@ def generate_material_outputs(
             blocks=extracted_blocks,
             model_limit=figures_narrated_at_upload(),
         )
-        _trace("building learning objects")
         classified_blocks = _mark_figure_descriptions(classified_blocks, image_descriptions)
         image_descriptions = _images_on_lesson_pages(image_descriptions, classified_blocks)
         sections = split_classified_blocks(classified_blocks)
@@ -4543,11 +4550,11 @@ def generate_material_outputs(
         )
 
         _sync_learning_objects(material, generated_json)
-        _trace(f"done: status={material.status}")
+        _trace(f"done: {len(learning_objects)} learning objects ready for review")
     except MaterialDeletedDuringGeneration as exc:
-        _trace(f"stopped: {exc}")
+        _trace(f"stopped, the PDF was deleted: {exc}", logging.WARNING)
     except LearningMaterialValidationError as exc:
-        _trace(f"REJECTED: {exc}")
+        _trace(f"rejected: {exc}", logging.WARNING)
         if propagate_validation_error:
             raise
         material.status = LearningMaterial.Status.FAILED
@@ -4555,14 +4562,14 @@ def generate_material_outputs(
         try:
             _save_material_update(material, ["status", "error_message"])
         except MaterialDeletedDuringGeneration as deleted_exc:
-            _trace(f"stopped while saving rejection state: {deleted_exc}")
+            _trace(f"stopped while saving the rejection, the PDF was deleted: {deleted_exc}", logging.WARNING)
     except Exception as exc:
-        _trace(f"FAILED: {type(exc).__name__}: {exc}")
+        logger.exception("[Upload] PDF %s  failed: %s: %s  (%s)", material.id, type(exc).__name__, exc, took(started))
         material.status = LearningMaterial.Status.FAILED
         material.error_message = str(exc)
         try:
             _save_material_update(material, ["status", "error_message"])
         except MaterialDeletedDuringGeneration as deleted_exc:
-            _trace(f"stopped while saving failure state: {deleted_exc}")
+            _trace(f"stopped while saving the failure, the PDF was deleted: {deleted_exc}", logging.WARNING)
 
     return material

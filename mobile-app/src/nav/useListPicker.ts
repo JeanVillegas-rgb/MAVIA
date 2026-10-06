@@ -5,29 +5,27 @@
 // never has to hold more than four things in mind, and never learns a second
 // set of keys.
 //
-// The one subtlety worth knowing about is why letters are ignored while this
-// is speaking. The microphone hears the phone's own speaker, so reading "A,
-// Science. B, Maths." out loud puts the words "a" and "b" straight into the
-// recognizer -- and a bare letter is a valid command here. Without the guard
-// the list would pick its own first option every time it opened. Letters are
-// therefore only accepted once the prompt has finished and a short settle has
-// passed, which is also roughly when a learner could first have answered.
+// Chosen with the keypad's answer keys (voice commands are switched off for
+// now -- not reliable enough). Every choice is read back before it opens --
+// "A. Opening course: Grade 1 Science" -- so a learner who cannot see the
+// screen hears which key registered and what is about to happen.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "expo-router";
 
 import { useBrailleKeypad } from "@/input/useBrailleKeypad";
-import { useVoiceCommands } from "@/voice/useVoiceCommands";
 import type { AnswerLetter } from "@/input/brailleKeypad";
 import { COMMAND_KEYS } from "@/guide/script";
 
 export const PAGE_SIZE = 4;
 const LETTERS: AnswerLetter[] = ["a", "b", "c", "d"];
 
-// How long after the prompt stops before a spoken letter counts. Long enough
-// for the tail of the recognizer's own reading of the options to land and be
-// discarded; short enough that a learner answering promptly is still heard.
+// How long after the prompt stops before a choice counts (a key press is
+// always taken at once -- see the keypad handler below).
 const ACCEPT_DELAY_MS = 600;
+// The read-back opens the choice when it finishes; this is the longest it may
+// take, so a voice that is cut off can never leave the learner stuck.
+const READ_BACK_MAX_MS = 5000;
 
 type Narrator = {
   speak: (text: string, options?: { onDone?: () => void }) => void;
@@ -59,6 +57,7 @@ export function useListPicker<T extends PickerItem>({
   question,
   narration,
   onPick,
+  readBack,
   enabled = true,
 }: {
   items: T[];
@@ -68,6 +67,9 @@ export function useListPicker<T extends PickerItem>({
   question: string;
   narration: Narrator;
   onPick: (item: T) => void;
+  /** What to say once an item is chosen, before it opens. Default:
+   *  "A. <label>". e.g. (letter, c) => `${letter}. Opening course: ${c.title}` */
+  readBack?: (letter: string, item: T) => string;
   enabled?: boolean;
 }): ListPicker<T> {
   const [pageIndex, setPageIndex] = useState(0);
@@ -104,6 +106,9 @@ export function useListPicker<T extends PickerItem>({
 
   // Set while the prompt is being spoken, and for a moment after. See the note
   // at the top of this file: this is what stops the list picking itself.
+  // Set while handing over to whatever the pick starts, so the unmount
+  // cleanup below knows not to silence it.
+  const pickedRef = useRef(false);
   const acceptingRef = useRef(false);
   const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -113,6 +118,8 @@ export function useListPicker<T extends PickerItem>({
   labelOfRef.current = labelOf;
   const pageCountRef = useRef(pageCount);
   pageCountRef.current = pageCount;
+  const readBackRef = useRef(readBack);
+  readBackRef.current = readBack;
 
   const readPage = useCallback(() => {
     const current = pageRef.current;
@@ -126,7 +133,7 @@ export function useListPicker<T extends PickerItem>({
       .join(" ");
     const more =
       pageCountRef.current > 1
-        ? ` If the one you want is not there, say next four, or press the ${COMMAND_KEYS.next} key.`
+        ? ` If the one you want is not there, press the ${COMMAND_KEYS.next} key for the next four.`
         : "";
 
     narrationRef.current.speak(`${questionRef.current} ${options}${more}`, {
@@ -143,20 +150,42 @@ export function useListPicker<T extends PickerItem>({
   }, []);
 
   const pick = useCallback((letter: AnswerLetter) => {
-    if (!acceptingRef.current) return;
+    if (!acceptingRef.current) {
+      // A letter arriving while the prompt is still being read is dropped on
+      // purpose (the microphone hears the phone's own speaker). Saying so
+      // tells a dropped press apart from a picker that never got the key.
+      if (__DEV__) console.log(`[MAVIA picker] ignored "${letter}": still reading the options`);
+      return;
+    }
     const item = pageRef.current[LETTERS.indexOf(letter)];
     if (!item) {
       narrationRef.current.speak(`There is no option ${letter.toUpperCase()} here.`);
       return;
     }
     acceptingRef.current = false;
-    onPickRef.current(item);
+    pickedRef.current = true;
+
+    // Say the choice, then open it -- once, whichever comes first: the
+    // read-back finishing, or the longest it could take.
+    const upper = letter.toUpperCase();
+    const label = labelOfRef.current(item);
+    const line = readBackRef.current ? readBackRef.current(upper, item) : `${upper}. ${label}.`;
+    let opened = false;
+    const open = () => {
+      if (opened) return;
+      opened = true;
+      clearTimeout(fallback);
+      onPickRef.current(item);
+    };
+    const fallback = setTimeout(open, READ_BACK_MAX_MS);
+    narrationRef.current.speak(line, { onDone: open });
   }, []);
 
   // Read the page whenever it changes, and when the list first arrives.
   const signature = `${safePage}:${page.map((item) => item.id).join(",")}`;
   useEffect(() => {
     if (!live) return;
+    pickedRef.current = false;
     readPage();
     return () => {
       if (settleRef.current) clearTimeout(settleRef.current);
@@ -164,25 +193,36 @@ export function useListPicker<T extends PickerItem>({
       // Silence on the way out. Without this the prompt carried on over
       // whatever screen came next -- speak() only cancels the PREVIOUS
       // utterance, so a picker that is merely unmounted keeps talking.
-      narrationRef.current.stop();
+      //
+      // Unless it was a pick that closed us. Choosing hands straight over to
+      // something that speaks -- a guide section, then its drills -- and that
+      // starts before this cleanup runs, so stopping here cut the section off
+      // mid-word and its onDone never fired, which is what left the drills
+      // never starting. A picker that handed over does not silence what it
+      // handed to.
+      if (!pickedRef.current) narrationRef.current.stop();
     };
   }, [live, signature, readPage]);
 
-  useVoiceCommands(
-    {
-      chooseA: () => pick("a"),
-      chooseB: () => pick("b"),
-      chooseC: () => pick("c"),
-      chooseD: () => pick("d"),
-      nextPage: () => nextPage(),
-      repeatQuestion: () => readPage(),
-      repeatTopic: () => readPage(),
-    },
-    { enabled: live }
-  );
+  const numLockWarnedRef = useRef(false);
 
   useBrailleKeypad(
     (action) => {
+      if (__DEV__) console.log(`[MAVIA picker] key: ${action.kind}`);
+      // With Num Lock off the answer keys send navigation codes, not digits,
+      // so every letter press lands here and nowhere else. QuestionCard said
+      // so; a list did not, which left the keys looking simply dead -- the
+      // guide menu reads out four options and then ignores the key for each
+      // one. Say it here too, once per page so a held arrow is not a loop.
+      if (action.kind === "numLockOff") {
+        if (numLockWarnedRef.current) return;
+        numLockWarnedRef.current = true;
+        narrationRef.current.speak(
+          `Number lock is off. Press Num Lock, then choose with ` +
+            `${LETTERS.map((letter) => letter.toUpperCase()).join(", ")}.`
+        );
+        return;
+      }
       // A key press is deliberate in a way a heard word is not, so it is taken
       // even while the prompt is still being read: pressing a key is how an
       // impatient learner skips the reading.

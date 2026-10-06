@@ -199,11 +199,13 @@ class SplitAndAboveDescriptionTests(SimpleTestCase):
 
         self.assertEqual(described[0]["content"], NARRATION)
 
-    def test_every_score_is_logged(self):
-        with self.assertLogs("lessons.services.image_describer", level="INFO") as logs:
+    def test_every_score_is_logged_at_debug(self):
+        with self.assertLogs("lessons.services.image_describer", level="DEBUG") as logs:
             self._describe([self._image()], [block(2, DESCRIPTION, 348)])
 
-        self.assertTrue(any("Printed-passage check" in line and "score=" in line for line in logs.output))
+        self.assertTrue(any(
+            line.startswith("DEBUG") and "similar (limit" in line for line in logs.output
+        ))
 
 
 class PublishNarrationRepeatsTests(TestCase):

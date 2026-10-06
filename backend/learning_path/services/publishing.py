@@ -283,10 +283,11 @@ def publish_learning_path(node, runtime_instance=None):
     link_counts = refresh_prerequisites(node, concepts, runtime_instance)
     saved = save_learning_path(node, concepts)
     logger.info(
-        "[Learning path topic %s] saved %s steps, %s links shape the order "
-        "(accepted %s, pending %s hidden, teacher-decided %s), %s moved by links",
+        "[Publish] topic %s  learning path saved: %s steps, %s prerequisite links "
+        "(%s accepted automatically, %s set by the teacher, %s suggestions waiting), "
+        "%s concept(s) reordered by links",
         node.id, saved["steps"], saved["links"], link_counts["accepted"],
-        link_counts["pending"], link_counts["teacher_decided"], saved["moved"],
+        link_counts["teacher_decided"], link_counts["pending"], saved["moved"],
     )
     # Cross-topic links follow the topic's new concepts. A failure here must not
     # undo a publish the teacher already sees as done.
@@ -298,6 +299,6 @@ def publish_learning_path(node, runtime_instance=None):
         with transaction.atomic():
             course_counts = course_links.refresh_course_links(node.course)
     except Exception as exc:  # noqa: BLE001 -- logged; the topic path is already saved
-        logger.warning("[Learning path topic %s] course links not refreshed: %s", node.id, exc)
+        logger.warning("[Publish] topic %s  links to other topics were not refreshed: %s", node.id, exc)
         course_counts = None
     return {**saved, **link_counts, "course_links": course_counts}

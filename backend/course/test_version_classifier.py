@@ -129,7 +129,7 @@ class VersionClassifierTests(SimpleTestCase):
     def test_fixed_original_is_not_offered_as_a_choosable_slot(self, post):
         """A role the parser rejects must not be one the model may return.
 
-        With the Normal bundle already chosen, ``ORIGINAL`` is invalid, so
+        With the Standard bundle already chosen, ``ORIGINAL`` is invalid, so
         neither the schema nor the prompt may present it -- offering it is what
         made a concept fail classification on every retry.
         """

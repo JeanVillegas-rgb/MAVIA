@@ -13,8 +13,8 @@ from lessons.models import (
 )
 
 from .testing import without_measurements
-from .models import CourseModule, LessonNode, LessonVariant
-from .services import LessonPackageService, _build_chunk
+from .models import LessonVariant
+from .services import _build_chunk
 from .version_assignment import (
     assign_group_versions,
     bundle_roles,
@@ -100,7 +100,7 @@ class RepresentationTests(TestCase):
         )
 
     @patch("course.variant_generator._request_variants")
-    def test_first_pdf_is_normal_and_only_missing_slot_is_generated(self, request_variants):
+    def test_first_pdf_is_standard_and_only_missing_slot_is_generated(self, request_variants):
         self.classify_group_versions.side_effect = None
         self.classify_group_versions.return_value = {
             self.second.id: {"slot": "SIMPLIFIED", "confidence": 0.96, "reason": "Clearer."},
@@ -124,7 +124,7 @@ class RepresentationTests(TestCase):
 
     @patch("course.variant_generator._request_variants")
     def test_a_bundle_awaiting_confirmation_stays_its_own_teaching_step(self, request_variants):
-        """Only a decided bundle is collapsed into the Normal one.
+        """Only a decided bundle is collapsed into the Standard one.
 
         Removing a bundle nobody has ruled on would drop content rather than
         deduplicate it, so it keeps its place in the lesson.
@@ -190,7 +190,7 @@ class ReleaseFromGroupTests(TestCase):
             represented_by=self.original,
         )
         self.group.version_selection = {
-            "normal_material_id": self.original.material_id,
+            "standard_material_id": self.original.material_id,
             "bundle_roles": {
                 str(self.other.material_id): "ELABORATED",
             },
@@ -233,13 +233,13 @@ class ReleaseFromGroupTests(TestCase):
         self.assertIsNone(self.member.represented_by_id)
         self.assertIsNone(self.other.represented_by_id)
         self.assertEqual(
-            self.group.version_selection["normal_material_id"], self.original.material_id,
+            self.group.version_selection["standard_material_id"], self.original.material_id,
         )
         # The stored baseline remains so a move cannot silently promote a
         # supplementary PDF after the object actually leaves the group.
         LearningObject.objects.filter(pk=self.original.pk).update(group=None)
         self.group.refresh_from_db()
-        self.assertTrue(assign_group_versions(self.group)["normal_replacement_needed"])
+        self.assertTrue(assign_group_versions(self.group)["standard_replacement_needed"])
         # Generated text, including a teacher's edit, is never removed here.
         self.assertTrue(LessonVariant.objects.filter(pk=self.generated.pk).exists())
 
@@ -307,11 +307,11 @@ class BundleChunkTests(TestCase):
         self.second = LearningMaterial.objects.create(
             course=self.course, outline_node=self.topic, title="B", generated_json=dict(confirmed))
         self.group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Solid")
-        self.normal = LearningObject.objects.create(
+        self.standard = LearningObject.objects.create(
             material=self.first, group=self.group, title="Solid", order=0,
             content="A solid keeps its shape.",
         )
-        self.normal_tail = LearningObject.objects.create(
+        self.standard_tail = LearningObject.objects.create(
             material=self.first, group=self.group, title="Particle diagram", order=1,
             section_title="Solid", content="Particles sit in a grid.",
         )
@@ -330,14 +330,14 @@ class BundleChunkTests(TestCase):
         self.group.refresh_from_db()
 
     def test_a_versions_segments_follow_bundle_order(self):
-        chunk = _build_chunk(self.normal)
+        chunk = _build_chunk(self.standard)
 
         self.assertEqual(
-            [segment["text"] for segment in chunk["variants"]["normal"]["segments"]],
+            [segment["text"] for segment in chunk["variants"]["standard"]["segments"]],
             ["A solid keeps its shape.", "Particles sit in a grid."],
         )
         self.assertEqual(
-            chunk["variants"]["normal"]["text"],
+            chunk["variants"]["standard"]["text"],
             "A solid keeps its shape.\nParticles sit in a grid.",
         )
         self.assertEqual(
@@ -345,17 +345,17 @@ class BundleChunkTests(TestCase):
             ["Packed tight.", "Ice cubes."],
         )
 
-    def test_a_generated_versions_segments_follow_the_normal_bundle(self):
+    def test_a_generated_versions_segments_follow_the_standard_bundle(self):
         for item, text in (
-            (self.normal, "Solids hold their shape at length."),
-            (self.normal_tail, "The grid of particles barely moves."),
+            (self.standard, "Solids hold their shape at length."),
+            (self.standard_tail, "The grid of particles barely moves."),
         ):
             LessonVariant.objects.create(
                 learning_object=item, variant="ELABORATED", narration=text,
                 origin=LessonVariant.Origin.GENERATED,
             )
 
-        elaborated = _build_chunk(self.normal)["variants"]["elaborated"]
+        elaborated = _build_chunk(self.standard)["variants"]["elaborated"]
 
         self.assertEqual(
             [segment["text"] for segment in elaborated["segments"]],
@@ -373,23 +373,15 @@ class BundleChunkTests(TestCase):
         # who cannot see the page; omitted, it is simply a version still
         # missing, which the publish gate and the review screen already show.
         LessonVariant.objects.create(
-            learning_object=self.normal, variant="ELABORATED",
+            learning_object=self.standard, variant="ELABORATED",
             narration="Solids hold their shape at length.",
             origin=LessonVariant.Origin.GENERATED,
         )
 
-        chunk = _build_chunk(self.normal)
+        chunk = _build_chunk(self.standard)
 
         self.assertNotIn("elaborated", chunk["variants"])
         self.assertFalse(chunk["versions_complete"])
-
-    def test_the_package_serves_one_chunk_per_concept(self):
-        module = CourseModule.objects.create(source=self.topic)
-        node = LessonNode.objects.create(module=module, source=self.first)
-
-        package = LessonPackageService.build_package(node.id)
-
-        self.assertEqual([chunk["id"] for chunk in package["chunks"]], [self.normal.id])
 
     def test_a_versions_text_is_exactly_its_segments_joined(self):
         # Narration is TTS-adapted wording, so it differs from the source
@@ -408,7 +400,7 @@ class BundleChunkTests(TestCase):
         }
         self.second.save(update_fields=["generated_json"])
 
-        simplified = _build_chunk(self.normal)["variants"]["simplified"]
+        simplified = _build_chunk(self.standard)["variants"]["simplified"]
 
         self.assertEqual(
             [segment["text"] for segment in simplified["segments"]],

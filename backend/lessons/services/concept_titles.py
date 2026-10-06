@@ -35,7 +35,7 @@ def _caption_name(members):
 
 # A name this long is a sentence. A passage with no heading is titled by its
 # first sentence ("Matter is anything that has mass and takes up space"), and
-# when its PDF is the concept's Normal that sentence names the whole concept
+# when its PDF is the concept's Standard that sentence names the whole concept
 # -- even though another PDF headed the same passage "Matter".
 _MAX_NAME_WORDS = 6
 

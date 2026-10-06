@@ -4,9 +4,18 @@
 // dropping the tunnel, e.g. after a device reconnect or `expo run:android`
 // reinstall, is what actually causes "Unable to load script"), and starts
 // Expo. Ctrl+C stops all of it. Run with `npm run dev` from mobile-app/.
+//
+// `npm run dev:wifi` (--wifi) is the no-cable version: the phone reaches this
+// PC over the same Wi-Fi -- or the laptop joins the phone's own hotspot, which
+// also gets around school/venue Wi-Fi that blocks devices from seeing each
+// other. It finds this PC's LAN address, lets Django answer on it, points the
+// app's API at it and starts Expo in LAN mode. No adb, no .env edits: both
+// Django (python-dotenv) and Expo leave variables already set in the
+// environment alone, so the address is simply passed in.
 
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
@@ -17,6 +26,23 @@ const BACKEND_DIR = join(MOBILE_APP_DIR, "..", "backend");
 const REVERSE_PORTS = [8081, 8000];
 const REVERSE_INTERVAL_MS = 5000;
 const WIN = process.platform === "win32";
+const WIFI = process.argv.includes("--wifi");
+
+// This PC's address on the local network: the Wi-Fi adapter first, skipping
+// virtual adapters (WSL / Hyper-V / VPN) the phone can never reach.
+function lanAddress() {
+  const candidates = [];
+  for (const [name, addresses] of Object.entries(networkInterfaces())) {
+    if (/vEthernet|WSL|Hyper-V|VirtualBox|VMware|Loopback|Tailscale|ZeroTier/i.test(name)) continue;
+    for (const address of addresses ?? []) {
+      if (address.family !== "IPv4" || address.internal) continue;
+      if (!/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address.address)) continue;
+      candidates.push({ name, ip: address.address, wifi: /wi-?fi|wireless|wlan/i.test(name) });
+    }
+  }
+  candidates.sort((a, b) => Number(b.wifi) - Number(a.wifi));
+  return candidates[0] ?? null;
+}
 
 function resolveAdb() {
   const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
@@ -160,13 +186,51 @@ log("dev", "clearing any leftover Django dev servers...");
 killStaleBackends();
 
 const backendPython = resolveBackendPython();
-log("dev", `starting Django backend (${backendPython})...`);
-spawnSupervised("backend", backendPython, ["manage.py", "runserver", "0.0.0.0:8000"], { cwd: BACKEND_DIR });
 
-const adb = resolveAdb();
-log("dev", `keeping adb reverse alive for ports ${REVERSE_PORTS.join(", ")}...`);
-setupReverse(adb, { announce: true });
-reverseTimer = setInterval(() => setupReverse(adb), REVERSE_INTERVAL_MS);
+if (WIFI) {
+  const lan = lanAddress();
+  if (!lan) {
+    log("dev", "No Wi-Fi / LAN address found. Connect this PC to Wi-Fi (or the phone's hotspot) and try again.");
+    process.exit(1);
+  }
+  const api = `http://${lan.ip}:8000/api`;
+  log("dev", `Wi-Fi mode: this PC is ${lan.ip} on "${lan.name}".`);
+  log("dev", `the app will call the API at ${api}`);
+  log("dev", "the phone must be on the SAME Wi-Fi (or this PC on the phone's hotspot).");
+  log("dev", "if Windows asks whether Python / Node may use the network, allow PRIVATE networks.");
 
-log("dev", "starting Expo...");
-spawnSupervised("expo", "npx", ["expo", "start"], { cwd: MOBILE_APP_DIR, shell: WIN });
+  log("dev", `starting Django backend on 0.0.0.0:8000 (${backendPython})...`);
+  spawnSupervised("backend", backendPython, ["manage.py", "runserver", "0.0.0.0:8000"], {
+    cwd: BACKEND_DIR,
+    env: {
+      ...process.env,
+      DJANGO_ALLOWED_HOSTS: `localhost,127.0.0.1,10.0.2.2,${lan.ip}`,
+      CORS_ALLOWED_ORIGINS: `http://localhost:5173,http://127.0.0.1:5173,http://${lan.ip}:5173`,
+    },
+  });
+
+  // --clear: EXPO_PUBLIC_* values are baked into the bundle, so a bundle
+  // cached from a USB session would still call localhost.
+  log("dev", "starting Expo in LAN mode -- scan the QR code / open the app on the phone...");
+  spawnSupervised("expo", "npx", ["expo", "start", "--lan", "--clear"], {
+    cwd: MOBILE_APP_DIR,
+    shell: WIN,
+    env: {
+      ...process.env,
+      EXPO_PUBLIC_API_BASE_URL: api,
+      EXPO_PUBLIC_WEB_APP_URL: `http://${lan.ip}:5173`,
+      REACT_NATIVE_PACKAGER_HOSTNAME: lan.ip,
+    },
+  });
+} else {
+  log("dev", `starting Django backend (${backendPython})...`);
+  spawnSupervised("backend", backendPython, ["manage.py", "runserver", "0.0.0.0:8000"], { cwd: BACKEND_DIR });
+
+  const adb = resolveAdb();
+  log("dev", `keeping adb reverse alive for ports ${REVERSE_PORTS.join(", ")}...`);
+  setupReverse(adb, { announce: true });
+  reverseTimer = setInterval(() => setupReverse(adb), REVERSE_INTERVAL_MS);
+
+  log("dev", "starting Expo...");
+  spawnSupervised("expo", "npx", ["expo", "start"], { cwd: MOBILE_APP_DIR, shell: WIN });
+}

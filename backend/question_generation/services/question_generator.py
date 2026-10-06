@@ -13,7 +13,10 @@ logger = logging.getLogger(__name__)
 
 QUESTION_GENERATOR_VERSION = 2
 QUESTION_TEMPERATURE = 0.7
-QUESTION_NUM_PREDICT = 2048
+# Room for five questions with explanations per call, plus the reasoning
+# gpt-oss spends from the same budget: a reply cut off mid-question is
+# broken JSON.
+QUESTION_NUM_PREDICT = 3072
 # How many parseable-but-unusable replies to accept before giving up on a
 # call. See the comment in generate_questions: the third attempt almost never
 # rescues one, and each is a full LLM round trip.
@@ -59,8 +62,17 @@ _GROUNDING_RULE = (
     "Every choice must use words and ideas from the content. A wrong choice "
     "must be wrong because the content says otherwise, not because it names "
     "something the lesson never mentions.\n"
-    "For the question stem and correct answer, reuse the lesson's own content "
-    "words. Avoid introducing synonyms or extra scientific terms.\n"
+    "Write the question and the correct answer using only words that appear in "
+    "the content below, plus simple question words (what, which, who, why, how, "
+    "when, where). Do not frame the question with phrases the content does not "
+    "use, such as 'according to', 'mentioned' or 'which statement best describes'; "
+    "ask about the content directly.\n"
+    # Learners hear a figure's description; they never see its layout. A
+    # question about which row or column holds what tests the picture, not the
+    # lesson -- and the extracted text has lost the layout, so it cannot be
+    # verified either.
+    "Do not ask about the visual layout of a figure or table, such as rows, "
+    "columns, positions or labels. Ask about what it teaches.\n"
 )
 
 PROMPT_TEMPLATES = {
@@ -102,19 +114,27 @@ PROMPT_TEMPLATES = {
 
 # ── Few-shot style examples — small local models drift far less when shown
 # the target cognitive level instead of only being told about it ──
+# Patterns, not questions on a subject: bracketed parts stand for the
+# content's own words, so the examples fit any lesson and pull no topic in.
+# Outside the brackets they use only words the grounding gate never asks the
+# lesson to contain (what, which, why, how, when, more, than ...); an example
+# framed with "explanation best justifies" taught exactly the wording the gate
+# rejects.
 FEW_SHOT_EXAMPLES = {
     "LOT": (
-        "Examples of the style (different topic — do NOT reuse these):\n"
-        "- What is evaporation?\n"
-        "- Why does a puddle shrink on a sunny day?\n"
-        "- A pot of water is left boiling. Which process is turning the water into steam?"
+        "Examples of the style (patterns only -- fill the brackets with the content's own words):\n"
+        "- What is [a term the content defines]?\n"
+        "- Which [kind of thing the content lists] has [a property the content states]?\n"
+        "- What does [something the content describes] do when [a situation the content states]?"
     ),
     "HOT": (
-        "Examples of the style (different topic — do NOT reuse these):\n"
-        "- How does evaporation differ from condensation in the water cycle?\n"
-        "- A farmer waters crops daily but they still die. Which explanation best "
-        "justifies why too much water can harm plants?\n"
-        "- Which process matters more for forming clouds: evaporation or condensation? Why?"
+        "Examples of the style (patterns only -- fill the brackets with the content's own words):\n"
+        "- Why does [something the content describes] [an action the content states] "
+        "when [a condition the content states]?\n"
+        "- Which is more [a quality the content states]: [one thing the content describes] "
+        "or [another thing it describes]? Why?\n"
+        "- If [a condition the content states] were true, what would [something the "
+        "content describes] do?"
     ),
 }
 
@@ -488,7 +508,7 @@ def _parse_llm_response(response_text):
         recovered = _extract_question_objects(match.group())
         if not recovered:
             raise
-        print(f"  Recovered {len(recovered)} question(s) from malformed JSON response")
+        logger.debug("[Questions] recovered %s question(s) from a malformed model reply", len(recovered))
         return recovered
 
     if "questions" in parsed:
@@ -520,6 +540,9 @@ def _ollama_generate(prompt, schema=None, on_metrics=None, format_split=None, on
             max_tokens=QUESTION_NUM_PREDICT,
             timeout=settings.OLLAMA_TIMEOUT,
             on_rate_limit_wait=on_rate_limit_wait,
+            # Every item is validated per format after this, so a batch Groq
+            # rejected over one item's shape is checked here, not discarded.
+            use_failed_generation=True,
         )
         if on_metrics:
             on_metrics(metrics)
@@ -699,20 +722,25 @@ def generate_questions(
                 return validated
 
             unusable_replies += 1
+            logger.warning(
+                "[Questions] model reply had no usable questions (attempt %s of %s)",
+                attempt + 1, max_retries,
+            )
             if on_error:
                 on_error(attempt + 1, "The model returned no structurally usable questions.")
             if unusable_replies >= MAX_UNUSABLE_REPLIES:
                 break
 
         except GroqRateLimitError as e:
+            logger.warning("[Questions] stopped this batch, Groq rate limit: %s", e)
             if on_error:
                 on_error(attempt + 1, str(e))
             break
         except (json.JSONDecodeError, ValueError) as e:
             if on_error:
                 on_error(attempt + 1, str(e))
-            print(f"  Attempt {attempt + 1}/{max_retries} failed: {e}")
+            logger.warning("[Questions] model reply unusable (attempt %s of %s): %s", attempt + 1, max_retries, e)
             continue
 
-    print(f"  WARNING: Failed to generate after {max_retries} attempts")
+    logger.warning("[Questions] gave up: no usable questions after %s attempts", max_retries)
     return []

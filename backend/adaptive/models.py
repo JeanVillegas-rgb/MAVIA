@@ -1,249 +1,102 @@
 from django.conf import settings
 from django.db import models
-from django.utils import timezone
+from lessons.models import CourseGroup
 
-from lessons.models import CourseGroup, LearningObject, OutlineNode, Question
-from question_generation.models import GeneratedQuestion
+VARIANTS = [("standard", "Standard"), ("simplified", "Simplified"), ("elaborated", "Elaborated")]
 
-
+#Enrollment first cuz if no enroll then no see package okay?
 class Enrollment(models.Model):
-    """A student's membership in a course. Teachers manage the roster from the
-    web app; the per-student progress report is scoped to these rows."""
-
-    student = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="enrollments",
-        limit_choices_to={"role": "STUDENT"},
-    )
-    course = models.ForeignKey(
-        CourseGroup,
-        on_delete=models.CASCADE,
-        related_name="enrollments",
-    )
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="enrollments", limit_choices_to={"role":"STUDENT"})
+    course = models.ForeignKey(CourseGroup, on_delete=models.CASCADE, related_name="enrollments")
+    created_by= models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="+", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
 
     class Meta:
         unique_together = ("student", "course")
-        ordering = ["-created_at", "id"]
+        ordering = ["created_at", "id"]
+
 
     def __str__(self):
-        return f"{self.student} in {self.course}"
+        return f'Student: {self.student} in Course {self.course}.'
 
 
-class LearningState(models.Model):
-    """One row per (student, course): where the learner currently is and how
-    well they're doing. The web review player never writes this — only the
-    student-facing adaptive endpoints do."""
+#the BKT mastery estimate for how well a student knows a concept--used later to determine which variant of a step to show the student 
+#this is forda callibration phase where--the scores of the student for each question is computed and logged BUT is not used to gate anything
+#we do not score gate sa calibration phase because we are handling the cold start--where the environment needs to learn the student and their current knowedlge or capability first 
+class ConceptMastery(models.Model):
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="concept_mastery")    
+    concept_id = models.PositiveIntegerField() #step[concept_id] from topic_package.steps
+    mastery_score = models.FloatField() #starts from the student's baseline L0 (+ prerequisites), set by the engine
+    updated_at = models.DateTimeField(auto_now=True)
 
-    student = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="learning_states",
-    )
-    course = models.ForeignKey(
-        CourseGroup,
-        on_delete=models.CASCADE,
-        related_name="learning_states",
-    )
-    # Top-level outline node (module) and the child topic being worked on.
-    current_module = models.ForeignKey(
-        OutlineNode,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
-    current_lesson_node = models.ForeignKey(
-        OutlineNode,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
-    current_question = models.ForeignKey(
-        Question,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
-    # --- Learning-path mode -------------------------------------------------
-    # Set together, in place of current_question, once current_lesson_node has
-    # a published learning path (learning_path.services.get_published_path).
-    # A topic without one still runs the plain PDF-order walk above; the two
-    # never populate for the same state at once. See adaptive/PATH_MODE.md.
-    current_step_position = models.PositiveIntegerField(
-        null=True, blank=True,
-        help_text="Position (1-based) of the learning-path step the learner is on.",
-    )
-    current_generated_question = models.ForeignKey(
-        GeneratedQuestion,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
-    # Stack of steps to resume, nearest (next to pop) last: pushed on every
-    # detour into a prerequisite, popped once that prerequisite step is fully
-    # answered. Bounded by adaptive.services.MAX_REMEDIATION_DEPTH — a learner
-    # is never routed more than that many prerequisites deep before the engine
-    # falls back to an alternate chunk or gives up rerouting. Each entry is
-    # {"position": <step position>, "chunk_id": <LearningObject id or None>} --
-    # "chunk_id" records which learning object (representative vs. an
-    # alternate PDF's own telling of the concept) the resumed step was showing
-    # at the moment it detoured, so resuming knows whether an unused alternate
-    # is still available or whether it's already down to its last escalated
-    # variant. See adaptive/PATH_MODE.md.
-    remediation_stack = models.JSONField(default=list, blank=True)
-    # Step positions that have already spent their one prerequisite detour in
-    # the current topic. remediation_stack alone cannot carry this: it is
-    # *popped* when a detour is resumed, so without a separate record a step
-    # that fails again right after being resumed is free to detour into the
-    # same prerequisite a second time, and a learner who keeps missing walks
-    # that loop forever (position N -> prerequisite -> back to N -> ...).
-    # MAX_REMEDIATION_DEPTH bounds how deep the stack goes at once; this
-    # bounds how many times any one step may reach for the remedy at all.
-    # Reset when the learner moves to another topic, since positions are
-    # numbered per topic. See adaptive/PATH_MODE.md.
-    remediated_positions = models.JSONField(default=list, blank=True)
-    # Which learning object supplies the current step's content/questions.
-    # None means the step's representative (the default, and the only option
-    # before chunk-switching existed). Set to an alternate's id when the
-    # representative's own ladder (normal/simplified/elaborated) has been
-    # exhausted and another uploaded PDF's version of the same concept exists.
-    current_chunk = models.ForeignKey(
-        LearningObject,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
-    current_variant = models.CharField(
-        max_length=10,
-        choices=[("normal", "Normal"), ("simplified", "Simplified"), ("elaborated", "Elaborated")],
-        default="normal",
-    )
-    # -------------------------------------------------------------------------
-    # Attempts spent on current_question, so the engine can move a learner on
-    # after repeated wrong answers rather than stranding them.
-    current_question_attempts = models.PositiveIntegerField(default=0)
-    # When the current run at the current topic began. StudentResponse rows
-    # are kept forever (the teacher report reads them), but only those from
-    # the current attempt count as "already cleared" -- otherwise a student
-    # who finished a topic and opened it again would be advanced straight
-    # back past every step they had ever answered, arriving at the end
-    # without being taught anything. See services._step_answered_ids.
-    attempt_started_at = models.DateTimeField(default=timezone.now)
-    # Knowledge per concept, alongside the single course-wide `mastery` above
-    # (which is unchanged and still what reports read). Same BKT update, applied
-    # only to what the answered question was about. Keys are namespaced because
-    # the two modes count different things and their ids can collide:
-    #   "concept:<LearningObjectGroup id>" -- path mode, one learning-path concept
-    #   "topic:<OutlineNode id>"           -- legacy mode, one flat topic
-    # A key is absent until its first answer; its prior is the configured
-    # starting mastery.
-    concept_mastery = models.JSONField(default=dict, blank=True)
-    mastery = models.FloatField(default=0.30)
-    attempts = models.PositiveIntegerField(default=0)
-    completed = models.BooleanField(default=False)
-    started_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        unique_together = ("student", "concept_id")
+
+    def __str__(self):
+        return f"Mastery score of {self.student.username} on concept {self.concept_id}: {self.mastery_score}, updated at {self.updated_at}"
+
+
+
+#the baseline will show HOW the student performs overall in a course -- starts on population weights(which are the default weights we use por everywan that are decided on initial design but can be recalibrated appropriately)
+class StudentBaseline(models.Model):
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="baselines")    
+    course = models.ForeignKey(CourseGroup, on_delete=models.CASCADE, related_name="+")
+    total_responses_count= models.PositiveIntegerField(default=0)
+    total_correct_count = models.PositiveIntegerField(default=0)
+    first_attempts_count = models.PositiveIntegerField(default=0) #how many concepts the student has answered so far--the "n" for estimating starting knowledgez
+    first_attempts_correct_count = models.PositiveIntegerField(default=0) #how many of those first answers were correct
+    estimated_ability = models.FloatField() #how often they asnwer corerectly (total correct count / total responses count)
+    estimated_l0 = models.FloatField() #L-zero (L0): what they know of a concept after the first run
+    calibrated = models.BooleanField(default=False) #trot once the 95% margin of error is within .15--flags if the baseline is trustworthy naw or not
+    calibrated_at = models.DateTimeField(null=True, blank=True) #tells us later when the students calibrated after how many answers over how many minutes 
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = ("student", "course")
-        ordering = ["-updated_at", "id"]
 
     def __str__(self):
-        return f"{self.student} · {self.course} · mastery {self.mastery:.2f}"
+        state = "Calibrated" if self.calibrated else f"Calibrating ({self.total_responses_count} responses so far.)"
+        return f"Student {self.student.username} baseline for course {self.course.title}: {state}. Estimated ability: {self.estimated_ability:.2f}, L0: {self.estimated_l0:.2f}, Updated at: {self.updated_at}"
 
 
-class StudentResponse(models.Model):
+#the student and app interaction saved and logged for the engine later to learn from
+class Decision(models.Model):
     class Action(models.TextChoices):
-        # Correct, and the concept still has a question left to ask.
         NEXT_QUESTION = "next_question", "Next question in the concept"
-        # Moved on to the next concept or topic.
-        ADVANCE = "advance", "Advanced"
-        # Returned to the concept a prerequisite detour left from.
-        RESUME = "resume", "Resumed after a detour"
-        COMPLETE = "complete", "Completed the course"
-        ESCALATE_VARIANT = "escalate_variant", "Re-taught one explanation level along"
-        DETOUR_PREREQUISITE = "detour_prerequisite", "Detoured through a prerequisite"
-        SWITCH_SOURCE = "switch_source", "Switched to another source's explanation"
-        SECOND_PASS = "second_pass", "Taught the concept again from the top"
-        # Legacy mode: missed, same question again.
         RETRY = "retry", "Asked again"
+        ESCALATE_VARIANT = "escalate_variant", "Re-taught with another explanation type"
+        REGRESS = "regress", "Sent back through a prerequisite concept"
+        RESUME = "resume", "Resumed the topic after the prerequisite"
+        ADVANCE = "advance", "Moved on to the next concept"
+        COMPLETE = "complete", "Completed the topic"
 
-    learning_state = models.ForeignKey(
-        LearningState,
-        on_delete=models.CASCADE,
-        related_name="responses",
-    )
-    # Exactly one of these is set: `question` for the plain PDF-order walk,
-    # `generated_question` for a learning-path step (see LearningState above).
-    question = models.ForeignKey(
-        Question, on_delete=models.CASCADE, related_name="+", null=True, blank=True,
-    )
-    generated_question = models.ForeignKey(
-        GeneratedQuestion, on_delete=models.CASCADE, related_name="+", null=True, blank=True,
-    )
-    selected_answer = models.CharField(max_length=255)
-    is_correct = models.BooleanField()
+    response = models.OneToOneField("mobile_course_package.StudentResponse", on_delete=models.CASCADE, related_name="decision")
+
+    #the state the engine saw
+    predicted_correct = models.FloatField() #BKT's P(correct) BEFORE the answer -- checks the model's accuracy later
+    mastery_before = models.FloatField()
+    mastery_after = models.FloatField()
+    p_guess_used = models.FloatField() #depends on the question format (TF / MCQ)
+    baseline_ability = models.FloatField() #the student's baseline at that moment
+    baseline_calibrated = models.BooleanField()
+
+    #where the student was when the engine decided -- saved as it was then, since progress gets
+    #overwritten on the next answer. Logging only: nothing reads these yet (phase 2 learns from them)
+    step_position = models.PositiveIntegerField(null=True, blank=True)
+    attempt_number = models.PositiveIntegerField(default=1) #which try at this question
+    misses_on_question = models.PositiveIntegerField(default=0) #wrong answers on this question so far, this one included
+    questions_left_in_step = models.PositiveIntegerField(null=True, blank=True) #still worth asking in the step after this answer
+    prerequisite_mastery = models.FloatField(null=True, blank=True) #average mastery of the step's prerequisites met so far (None: none)
+    on_detour = models.BooleanField(default=False) #answered while reviewing a prerequisite
+    step_already_regressed = models.BooleanField(default=False) #this step already used its one detour
+    action_probability = models.FloatField(default=1.0) #how likely the policy was to pick this action -- the rules always do: 1.0
+
+    #what it decided
+    action = models.CharField(max_length=24, choices=Action.choices)
+    next_step_position = models.PositiveIntegerField(null=True, blank=True) #None once completed
+    next_variant = models.CharField(max_length=10, choices=VARIANTS, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # --- decision log -------------------------------------------------------
-    # One row is one full transition: where the learner was and what they were
-    # shown when they answered, what the engine decided, and where that left
-    # them. Everything below is nullable so rows from before logging existed
-    # stay valid. Written by SubmitResponseView; nothing reads it back yet.
-    #
-    # Before the answer:
-    step_position = models.PositiveIntegerField(null=True, blank=True)
-    variant = models.CharField(max_length=10, blank=True)
-    chunk = models.ForeignKey(
-        LearningObject, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
-    )
-    # Attempts at this question within the current try, this one included.
-    # Resets when the learner leaves the question (a detour, a new concept).
-    # A second attempt at a True/False question right after a miss has only one
-    # option left, so anything scoring answers should weigh attempt 1 apart.
-    attempt_number = models.PositiveIntegerField(null=True, blank=True)
-    # How many prerequisite detours were open.
-    remediation_depth = models.PositiveSmallIntegerField(null=True, blank=True)
-    # The concept (or legacy topic) the question was about -- see
-    # LearningState.concept_mastery for the key format -- and its mastery
-    # either side of this answer.
-    concept_key = models.CharField(max_length=40, blank=True)
-    concept_mastery_before = models.FloatField(null=True, blank=True)
-    concept_mastery_after = models.FloatField(null=True, blank=True)
-    # What the engine did about it.
-    action = models.CharField(max_length=24, choices=Action.choices, blank=True)
-    # After the answer:
-    next_step_position = models.PositiveIntegerField(null=True, blank=True)
-    next_variant = models.CharField(max_length=10, blank=True)
-    next_chunk = models.ForeignKey(
-        LearningObject, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
-    )
-
-    class Meta:
-        ordering = ["created_at", "id"]
-        constraints = [
-            models.CheckConstraint(
-                condition=(
-                    models.Q(question__isnull=False, generated_question__isnull=True)
-                    | models.Q(question__isnull=True, generated_question__isnull=False)
-                ),
-                name="student_response_exactly_one_question_type",
-            ),
-        ]
-
     def __str__(self):
-        qid = self.question_id or self.generated_question_id
-        return f"Q{qid} {'✓' if self.is_correct else '✗'}"
+        return f"{self.response.student} Q{self.response.question_id} -> {self.action} (mastery {self.mastery_before:.2f} -> {self.mastery_after:.2f})"
+

@@ -63,8 +63,6 @@
 .pg-label {
   font-size: 0.78rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--muted, #5c6b7c);
 }
 
@@ -119,6 +117,21 @@
 }
 .pg-dialog h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
 .pg-dialog-error { color: var(--danger, #c0392b); }
+.pg-order { display: grid; gap: 0.25rem; margin: 0.25rem 0 0.75rem; }
+.pg-order-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1.5px solid #c9d1e0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.pg-order-row small { color: var(--muted, #5c6b7c); font-size: 0.78rem; font-weight: 600; }
+.pg-order-row strong { font-size: 0.92rem; }
+.pg-order-arrow { justify-self: start; margin-left: 7.2rem; color: #6b7a8c; font-size: 1.1rem; line-height: 1; }
+.pg-edit-hint { margin: 0 0 0.5rem; font-size: 0.86rem; color: var(--muted, #5c6b7c); }
 .pg-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
 
 .pg-undo {
@@ -171,22 +184,11 @@
   display: grid;
   gap: 0.3rem;
   padding: 0.6rem 0.65rem;
-  border: 1px solid #f0d58a;
-  border-left: 4px solid #f6c343;
+  border: 1.5px solid #f6c343;
   border-radius: 8px;
   background: #fffbea;
 }
 .pg-pending-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
-.pg-pending-label {
-  padding: 0 0.4rem;
-  border-radius: 999px;
-  background: #f6c343;
-  color: #3d2c00;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
 .pg-pending small { color: #5c4400; }
 .pg-pending-actions { display: flex; gap: 0.4rem; }
 
@@ -249,3 +251,35 @@
 .pub-player audio { width: 100%; height: 36px; }
 .pub-player small, .pub-missing { margin: 0; font-size: 0.8rem; color: var(--muted, #5c6b7c); }
 .pub-foot { display: flex; justify-content: flex-end; padding: 0.8rem 1.25rem; border-top: 1px solid var(--border, #dde5ee); }
+
+/* One band per tier, drawn behind its concepts. Alternate bands are tinted so
+   the rows read apart without lines between them. */
+.pg-tier {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+}
+.pg-tier.is-alt { background: rgba(226, 232, 240, 0.55); }
+.pg-tier-name {
+  display: grid;
+  gap: 2px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #44515f;
+}
+.pg-tier-name small {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted, #5c6b7c);
+}
+
+/* The side connection points exist only to anchor lane links. */
+.pg-node .pg-lane-handle { opacity: 0; pointer-events: none; }
+.pg-spacer { width: 1px; height: 1px; }
+
+/* Published dialog: one labelled player per learning object of a concept. */
+.pub-parts { display: grid; gap: 0.5rem; }
+.pub-part-label { display: block; margin-bottom: 0.2rem; font-weight: 600; color: var(--muted, #5c6b7c); }

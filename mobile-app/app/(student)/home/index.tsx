@@ -85,6 +85,7 @@ export default function CourseListScreen() {
   useListPicker<Course>({
     items: filtered,
     labelOf: (course) => course.title,
+    readBack: (letter, course) => `${letter}. Opening course: ${course.title}.`,
     question: "Which course would you like?",
     narration,
     onPick: openCourse,

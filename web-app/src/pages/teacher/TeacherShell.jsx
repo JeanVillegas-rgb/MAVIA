@@ -9,8 +9,12 @@ const TEACHER_NAV = [
   { to: "/review", label: "Review", icon: "♪" },
   { to: "/teacher/resources", label: "Resources", icon: "❐" },
   { to: "/teacher/settings", label: "Settings", icon: "⚙" },
-  // Preview of the guardian view, which has no role or backend of its own yet.
-  { to: "/guardian", label: "Guardian view", icon: "☍" },
+  // The guardian view is not offered here. It has no GUARDIAN role and no
+  // endpoints of its own yet, and a teacher following the link lands on
+  // placeholder figures that look like a real learner's. Its screens live on
+  // under pages/guardian/, reachable only by typing the address, and its
+  // requests are stubbed in pages/guardian/api/guardianApi.js ready for the
+  // day the backend lands.
 ];
 
 export default function TeacherShell({ children }) {

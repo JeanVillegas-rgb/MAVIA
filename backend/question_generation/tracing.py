@@ -43,8 +43,9 @@ def run_tracer(run, *, label=None):
             message=message,
             data=data or None,
         )
-        logger.info(
-            "[%s run %s] %s%s",
+        logger.log(
+            _level(event_type, data),
+            "[%s] run %s  %s%s",
             prefix,
             run.id,
             message or event_type,
@@ -53,6 +54,20 @@ def run_tracer(run, *, label=None):
         return seq["n"]
 
     return record
+
+
+def _level(event_type, data):
+    """Problems as warnings; the start of each item only at DEBUG.
+
+    A per-item "started" line is followed by its "finished" line, which says
+    the same thing plus the result, so printing both doubles the terminal for
+    nothing. The run's own start (no position) is kept.
+    """
+    if event_type == "error" or event_type.endswith("_failed"):
+        return logging.WARNING
+    if event_type.endswith("_started") and data.get("index") is not None:
+        return logging.DEBUG
+    return logging.INFO
 
 
 def _progress_suffix(data):
@@ -64,4 +79,4 @@ def _progress_suffix(data):
     index, total = data.get("index"), data.get("total")
     if index is None or total is None:
         return ""
-    return f"  ({index}/{total})"
+    return f"  ({index} of {total})"

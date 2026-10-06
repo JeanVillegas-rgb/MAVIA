@@ -78,6 +78,10 @@ class ConceptText:
     name: tuple
     spelling: dict = field(default_factory=dict)
     vectors: object = None
+    # ``(title, stems)`` for each learning object inside the concept whose title is
+    # a name of its own: "Pollination" inside "How Flowering Plants Reproduce".
+    part_names: tuple = ()
+    materials: frozenset = frozenset()
 
     @property
     def id(self):
@@ -86,6 +90,22 @@ class ConceptText:
 
 def _members(concept):
     return getattr(concept, "members", None) or (concept,)
+
+
+def part_names(concept, name):
+    """The members' titles a concept can also be named by, other than ``name`` itself.
+
+    The extractor keeps a term in its learning object's title and the explanation
+    in its content, so "Pollination" is never written in Pollination's own text.
+    """
+    found, seen = [], {frozenset(name)}
+    for member in _members(concept):
+        title = getattr(member, "title", "") or ""
+        stems = name_terms(title)
+        if stems and frozenset(stems) not in seen:
+            seen.add(frozenset(stems))
+            found.append((strip_numbering(strip_part_suffix(title)), stems))
+    return tuple(found)
 
 
 def prepare(concepts, embed=None):
@@ -101,14 +121,20 @@ def prepare(concepts, embed=None):
             for sentence in split_sentences(content):
                 sentences.append(sentence)
                 pdfs.append(getattr(member, "material_id", None))
+        name = name_terms(concept.title)
         texts.append(ConceptText(
             concept=concept,
             sentences=sentences,
             pdfs=pdfs,
             sentence_terms=[terms(sentence) for sentence in sentences],
             passages=passages,
-            name=name_terms(concept.title),
+            name=name,
             spelling=spelling,
+            part_names=part_names(concept, name),
+            materials=frozenset(
+                member.material_id for member in _members(concept)
+                if getattr(member, "material_id", None) is not None
+            ),
         ))
     if embed is not None:
         vectors = np.asarray(embed([sentence for text in texts for sentence in text.sentences]))

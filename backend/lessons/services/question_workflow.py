@@ -1,12 +1,14 @@
 """Shared intake, validation, classification and adaptive-bank synchronization."""
 
-from functools import lru_cache
 import hashlib
+import logging
 import re
 
 from django.db import models, transaction
 
 from lessons.models import Question, QuestionLearningObjectLink
+
+logger = logging.getLogger(__name__)
 
 
 def normalized_question_text(text: str) -> str:
@@ -19,14 +21,11 @@ def question_fingerprint(text: str) -> str:
     return hashlib.sha256(normalized_question_text(text).encode("utf-8")).hexdigest()
 
 
-@lru_cache(maxsize=1)
-def _bloom_classifier():
-    from question_generation.services.bloom_classifier import BloomClassifier
-    return BloomClassifier()
-
-
 def classify_question(text: str) -> dict:
-    return _bloom_classifier().classify(text)
+    # The generation pipeline's instance: a second copy of RoBERTa here was
+    # loaded again by the same Questions step.
+    from question_generation.services.pipeline import _get_classifier
+    return _get_classifier().classify(text)
 
 
 def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
@@ -104,9 +103,21 @@ def validation_issues(question_type: str, choices, correct_answer: str) -> list[
     return issues
 
 
-def enriched_question_values(prompt, question_type, choices, correct_answer) -> dict:
+LABEL_FIELDS = ("bloom_level", "thinking_order", "category")
+
+
+def enriched_question_values(prompt, question_type, choices, correct_answer, *, classify=True) -> dict:
+    """Database-ready values for one question.
+
+    ``classify=False`` leaves the Bloom level, LOTS/HOTS and category blank:
+    questions printed in a PDF are stored at upload and labelled in the
+    Questions step, where every question-related process happens.
+    """
     prompt = (prompt or "").strip()
-    classification = classify_question(prompt)
+    classification = (
+        classify_question(prompt) if classify
+        else {"bloom_level": "", "thinking_order": "", "category": ""}
+    )
     issues = validation_issues(question_type, choices, correct_answer)
     return {
         "prompt": prompt,
@@ -161,10 +172,96 @@ def question_is_approved(question: Question) -> bool:
     ).exists()
 
 
+TIERS = ("LOT", "HOT")
+
+
+def counts_toward_minimum(question: Question, link: QuestionLearningObjectLink) -> bool:
+    """Whether ``question``, paired to a concept by ``link``, fills its minimum.
+
+    A generated question counts once paired. A teacher's own question counts
+    once the teacher pairs it. A printed one counts only after the teacher has
+    both edited it and confirmed its pairing: it arrives as extraction left it,
+    and the matcher's confidence is not the teacher's.
+    """
+    if (
+        question.thinking_order not in TIERS
+        or question.validation_status != Question.ValidationStatus.READY
+        or not link.is_primary
+    ):
+        return False
+    status = link.review_status
+    if question.source_type == Question.SourceType.GENERATED:
+        return status in (
+            QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
+            QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
+        )
+    if status != QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED:
+        return False
+    return question.source_type == Question.SourceType.MANUAL or question.teacher_edited
+
+
+def concept_tier_counts(learning_object) -> dict:
+    """LOTS and HOTS questions counting toward the minimum of the concept
+    ``learning_object`` belongs to (just the object, when it has none)."""
+    scope = (
+        models.Q(learning_object__group_id=learning_object.group_id)
+        if learning_object.group_id
+        else models.Q(learning_object=learning_object)
+    )
+    links = QuestionLearningObjectLink.objects.filter(
+        scope,
+        learning_object__material__generated_json__learning_objects_confirmed=True,
+    ).select_related("question")
+    counted = {link.question for link in links if counts_toward_minimum(link.question, link)}
+    return {tier: sum(question.thinking_order == tier for question in counted) for tier in TIERS}
+
+
 @transaction.atomic
+def is_given_to_learners(question: Question) -> bool:
+    """Labelled, and at a level the learner quiz has a tier for.
+
+    A question not labelled yet waits for the Questions step. One labelled
+    "create" has no LOTS/HOTS tier, so it stays in the teacher's bank only --
+    the same as generated "create" questions, which are never kept at all.
+    """
+    return bool(question.bloom_level and question.thinking_order)
+
+
+def label_printed_questions(outline_node) -> int:
+    """Label every printed question in the topic that is not labelled yet.
+
+    Returns how many were labelled. Each one reaches the learners' bank once
+    labelled, if its pairing and level allow it.
+    """
+    pending = list(
+        Question.objects.filter(
+            material__outline_node=outline_node,
+            source_type=Question.SourceType.PDF,
+            bloom_level="",
+        ).order_by("material_id", "order", "id")
+    )
+    for question in pending:
+        classification = classify_question(question.prompt)
+        question.bloom_level = classification["bloom_level"]
+        question.thinking_order = classification["thinking_order"] or ""
+        question.category = classification["category"]
+        question.save(update_fields=list(LABEL_FIELDS))
+        sync_question_to_adaptive(question)
+    if pending:
+        logger.info(
+            "[Questions] topic %s  labelled %s printed question(s) with Bloom level, LOTS/HOTS and category",
+            outline_node.id, len(pending),
+        )
+    return len(pending)
+
+
 def sync_question_to_adaptive(question: Question):
     """Create/update the learner-facing row only for valid, approved questions."""
-    if question.validation_status != Question.ValidationStatus.READY or not question_is_approved(question):
+    if (
+        question.validation_status != Question.ValidationStatus.READY
+        or not question_is_approved(question)
+        or not is_given_to_learners(question)
+    ):
         if question.adaptive_question_id:
             adaptive_id = question.adaptive_question_id
             question.adaptive_question = None

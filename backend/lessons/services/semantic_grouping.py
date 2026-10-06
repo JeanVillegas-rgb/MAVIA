@@ -860,11 +860,7 @@ def semantic_decision(
             "confidence": "high" if high else "medium" if review else None,
         }
         if high and kind != IMAGE_KIND:
-            logger.info(
-                "Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
-                material.id, source_object_id, best["candidate"].id,
-                evidence["score"], high, evidence["elapsed_ms"],
-            )
+            _log_scored(source_object_id, normal_decision, allow_grouped_source)
             return normal_decision
 
     corroborated = _label_corroborated_decision(
@@ -937,10 +933,22 @@ def semantic_decision(
 
     decision = corroborated or normal_decision
     if decision:
-        evidence = decision["evidence"]
-        logger.info(
-            "Semantic grouping: material=%s source=%s candidate=%s score=%.4f auto=%s elapsed_ms=%s",
-            material.id, source_object_id, decision["candidate"].id,
-            evidence["score"], decision["confidence"] == "high", evidence["elapsed_ms"],
-        )
+        _log_scored(source_object_id, decision, allow_grouped_source)
     return decision
+
+
+def _log_scored(source_object_id, decision, reverse_check):
+    """The raw score behind a grouping decision, for DEBUG runs only.
+
+    The line a teacher-facing reader wants -- what actually happened to the
+    object -- is printed by the linker once the reverse check has run. This one
+    also fires for that reverse check, so it says which kind of call it was.
+    """
+    evidence = decision["evidence"]
+    logger.debug(
+        "[Grouping] scored%s: object %s -> %s  %.4f (confidence %s, margin over runner-up %.4f, %.1fs)",
+        " (reverse check)" if reverse_check else "",
+        source_object_id, decision["candidate"].id, evidence["score"],
+        decision["confidence"] or "too low", evidence.get("winner_margin", 0.0),
+        (evidence.get("elapsed_ms") or 0) / 1000,
+    )

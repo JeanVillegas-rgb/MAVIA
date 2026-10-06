@@ -120,7 +120,7 @@ class VersionReviewTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_teacher_can_swap_a_pdf_source_into_normal(self):
+    def test_teacher_can_swap_a_pdf_source_into_standard(self):
         url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
         self.client.post(
             url,
@@ -130,13 +130,13 @@ class VersionReviewTests(TestCase):
         LessonVariant.objects.create(
             learning_object=self.first,
             variant="ELABORATED",
-            narration="Generated from the old Normal.",
+            narration="Generated from the old Standard.",
             origin=LessonVariant.Origin.GENERATED,
         )
 
         response = self.client.post(
             url,
-            {"learning_object_id": self.second.id, "slot": "NORMAL"},
+            {"learning_object_id": self.second.id, "slot": "STANDARD"},
             format="json",
         )
 
@@ -150,7 +150,7 @@ class VersionReviewTests(TestCase):
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.group.refresh_from_db()
         self.assertEqual(bundle_roles(self.group), {self.first.material_id: "SIMPLIFIED"})
-        # Wording generated against the old Normal cannot survive the swap.
+        # Wording generated against the old Standard cannot survive the swap.
         self.assertFalse(
             LessonVariant.objects.filter(variant="ELABORATED").exists()
         )
@@ -178,16 +178,16 @@ class VersionReviewTests(TestCase):
             {self.second.material_id: "SIMPLIFIED"},
         )
 
-    def test_unassigned_source_can_become_normal_and_old_normal_needs_review(self):
+    def test_unassigned_source_can_become_standard_and_old_standard_needs_review(self):
         url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
         response = self.client.post(
-            url, {"learning_object_id": self.second.id, "slot": "NORMAL"}, format="json"
+            url, {"learning_object_id": self.second.id, "slot": "STANDARD"}, format="json"
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["version_assignment"]["needs_review"], self.first.id)
         self.group.refresh_from_db()
-        self.assertEqual(self.group.version_selection["normal_material_id"], self.second.material_id)
+        self.assertEqual(self.group.version_selection["standard_material_id"], self.second.material_id)
         self.assertEqual(bundle_roles(self.group), {})
 
     def test_object_outside_the_topic_is_rejected(self):

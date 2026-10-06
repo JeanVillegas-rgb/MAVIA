@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -10,6 +10,7 @@ import ListRow from "@/components/ListRow";
 import EmptyState from "@/components/EmptyState";
 import { Course, Lesson, fetchCourse, fetchLessons } from "@/data/library";
 import { useNarration } from "@/hooks/useNarration";
+import { takeFinishedTopic } from "@/nav/finishedTopic";
 import { useListPicker } from "@/nav/useListPicker";
 import { useGuideBusy } from "@/guide/GuideActivity";
 import { colors, gradients, radii, shadow, spacing } from "@/theme";
@@ -48,6 +49,22 @@ export default function CourseDetailScreen() {
     [router, courseId]
   );
 
+  // A lesson that has just been finished sends its name here, so the prompt
+  // names it before offering what to do next. Taken once (see
+  // nav/finishedTopic.ts) and cleared on the way out, so coming back to this
+  // list later asks the plain question again.
+  //
+  // Declared ABOVE useListPicker on purpose: both run on the same focus, in
+  // hook order, so this one's state is already set by the time the picker
+  // decides what to read.
+  const [finished, setFinished] = useState<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      setFinished(takeFinishedTopic());
+      return () => setFinished(null);
+    }, [])
+  );
+
   // The same four-at-a-time reading as the course list, so the two steps of
   // "which course, then which lesson" feel like one flow with one set of keys.
   const narration = useNarration();
@@ -55,7 +72,10 @@ export default function CourseDetailScreen() {
   useListPicker<Lesson>({
     items: lessons,
     labelOf: (lesson) => lesson.title,
-    question: `Which lesson in ${title}?`,
+    readBack: (letter, lesson) => `${letter}. Opening topic: ${lesson.title}.`,
+    question: finished
+      ? `You have finished ${finished}. Which topic should we start next?`
+      : `Which lesson in ${title}?`,
     narration,
     onPick: openLesson,
     enabled: !loading && lessons.length > 0 && !guideBusy,

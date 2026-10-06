@@ -66,7 +66,7 @@ Defaults chosen by the implementation:
 
 3. **Each proposed change shows what it affects:**
    - whether you grouped the object yourself (unticked by default),
-   - whether it is the concept's **Normal** version (that concept will need a new original),
+   - whether it is the concept's **Standard** version (that concept will need a new original),
    - which version text it supplied that will be removed,
    - how many linked questions move with it.
 
@@ -133,7 +133,7 @@ objects exactly as before.
 - **The proposals are recomputed on the server.** Object IDs the review did not propose are ignored, so a stale page can't move anything it shouldn't.
 - For each **ticked** change:
   - **Version text is cleaned up.**
-    - If the object was the group's **Normal** version: text it held for its old companions is removed, their "represented by" link is cleared, and the old group's version selection is reset so it picks a new original.
+    - If the object was the group's **Standard** version: text it held for its old companions is removed, their "represented by" link is cleared, and the old group's version selection is reset so it picks a new original.
     - Otherwise: text this object supplied to its old group's original is removed.
     - **Generated versions are never deleted,** including any a teacher edited.
   - **The object moves** to its new group, or to a new group of its own.
@@ -208,7 +208,7 @@ Each proposal contains:
 - `lessons/test_regrouping.py` (**new**, 27 tests). The AI text model is replaced with a fake, so the tests are fast and give the same result every time.
   - **Detection:** unedited objects, real edits, whitespace-only edits, standalone objects, unconfirmed files, and fingerprints carried across re-extraction.
   - **Preview:** stays, move, stand alone, the current group never being the destination, teacher groups unticked, and the preview changing nothing.
-  - **Apply:** chosen moves, the decision recorded as the teacher's, unticked changes settled but not applied, IDs that weren't proposed ignored, empty groups removed, unpublish and no-unpublish, and version cleanup both when the object was the Normal version and when it wasn't.
+  - **Apply:** chosen moves, the decision recorded as the teacher's, unticked changes settled but not applied, IDs that weren't proposed ignored, empty groups removed, unpublish and no-unpublish, and version cleanup both when the object was the Standard version and when it wasn't.
   - **Fingerprint updates** after Connect and Separate, plus all three endpoints.
 
 Full backend suite: **586 tests pass.** Frontend build: clean.

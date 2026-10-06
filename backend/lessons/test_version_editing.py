@@ -208,11 +208,11 @@ class VersionEditingTests(TestCase):
         self.assertEqual(versions["slots"]["simplified"]["id"], row.id)
 
     def _fallback_variant(self):
-        from course.variant_generator import NORMAL_FALLBACK_GENERATOR
+        from course.variant_generator import STANDARD_FALLBACK_GENERATOR
 
         return LessonVariant.objects.create(
             learning_object=self.first, variant="SIMPLIFIED", narration=SHORT,
-            origin="generated", generator_model=NORMAL_FALLBACK_GENERATOR,
+            origin="generated", generator_model=STANDARD_FALLBACK_GENERATOR,
         )
 
     def _slots(self):
@@ -221,7 +221,7 @@ class VersionEditingTests(TestCase):
         )
         return response.data["learning_object_groups"][0]["versions"]["slots"]
 
-    def test_a_level_holding_the_normal_text_carries_a_warning(self):
+    def test_a_level_holding_the_standard_text_carries_a_warning(self):
         """BUG-002: no generated version passed the check."""
         self._fallback_variant()
 

@@ -392,3 +392,33 @@ class SameMaterialEligibilityTests(TestCase):
 
         self.assertIsNotNone(decision)
         self.assertEqual(decision["candidate"].group_id, self.group.id)
+
+
+class GroupingOutcomeLineTests(SimpleTestCase):
+    """The terminal says, per learning object, what it matched and what happened."""
+
+    def _line(self, result, decision):
+        from .services.learning_resource_linker import _log_grouping_outcome
+
+        source = SimpleNamespace(id=196, title="Particles in solids")
+        with self.assertLogs("lessons.services.learning_resource_linker", "INFO") as logs:
+            _log_grouping_outcome(source, result, decision)
+        return logs.output[0]
+
+    def test_a_review_match_names_both_objects_score_and_outcome(self):
+        decision = {
+            "candidate": SimpleNamespace(id=241, title="States of matter"),
+            "evidence": {"score": 0.4897, "elapsed_ms": 3047.2},
+            "confidence": "medium",
+        }
+
+        line = self._line("review", decision)
+
+        self.assertIn('"Particles in solids" -> "States of matter"', line)
+        self.assertIn("49% similar -> sent to teacher review", line)
+        self.assertIn("(object 196 -> 241, 3.0s)", line)
+
+    def test_no_candidate_says_it_stays_separate(self):
+        line = self._line("separate", None)
+
+        self.assertIn("no similar concept in the other PDFs -> stays its own concept", line)

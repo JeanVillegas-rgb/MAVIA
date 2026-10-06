@@ -205,10 +205,32 @@ export function deleteLearningObject(courseId, materialId, objectId) {
   );
 }
 
-export function confirmLearningObjects(courseId, materialId) {
+// `keep` answers a reconfirm review: the ids of approved learning objects to
+// leave where they are. Without it, a reconfirm that would move objects of
+// the approved PDFs comes back as { approved_changes } and confirms nothing.
+// Labels (Bloom level, LOTS/HOTS, category) the printed questions in a topic
+// that upload stored without them. Run when the Questions step opens.
+export function labelTopicQuestions(courseId, nodeId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/label-questions/`, { method: "POST" });
+}
+
+// "Keep as is" for a concept whose text changed after its questions were
+// written: the questions stay; only the check moves forward.
+export function keepQuestionBank(courseId, nodeId, groupId) {
+  return request(
+    `/courses/${courseId}/outline-nodes/${nodeId}/concepts/${groupId}/keep-questions/`,
+    { method: "POST" }
+  );
+}
+
+export function confirmLearningObjects(courseId, materialId, keep = null) {
   return request(
     `/courses/${courseId}/materials/${materialId}/confirm-learning-objects/`,
-    { method: "POST" }
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(keep === null ? {} : { keep }),
+    }
   );
 }
 
@@ -525,18 +547,27 @@ export function keepVersionText(courseId, nodeId, variantId) {
   });
 }
 
-export function regenerateImageNarrations(courseId, materialId) {
-  return request(
-    `/courses/${courseId}/materials/${materialId}/regenerate-image-narrations/`,
-    { method: "POST" }
-  );
-}
-
+// Regenerates: the concept's untouched questions are replaced.
 export function startQuestionGeneration(materialId, learningObjectId = null) {
   const path = learningObjectId
     ? `/generation/materials/${materialId}/nodes/${learningObjectId}/start/`
     : `/generation/materials/${materialId}/start/`;
-  return request(path, { method: "POST" });
+  return request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
+// The Questions step's Generate button: one run for the whole topic. The
+// server tops up every concept short of its minimum, in rounds, adding to
+// the questions already there.
+export function startTopicQuestionGeneration(topicId) {
+  return request(`/generation/topics/${topicId}/start/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }
 
 export function updateTopicQuestion(courseId, nodeId, questionId, data) {

@@ -27,6 +27,7 @@ from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
+from config.console import name, percent
 from config.groq_client import generate as groq_generate
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ def _cached_description(key: str) -> str | None:
             ).fetchone()
         return row[0] if row else None
     except (OSError, sqlite3.Error) as exc:
-        logger.warning("figure description cache read failed: %s", exc)
+        logger.warning("[Figures] description cache could not be read: %s", exc)
         return None
 
 
@@ -158,7 +159,7 @@ def _store_cached_description(key: str, value: str) -> None:
                 (key, value),
             )
     except (OSError, sqlite3.Error) as exc:
-        logger.warning("figure description cache write failed: %s", exc)
+        logger.warning("[Figures] description cache could not be written: %s", exc)
 
 
 def reset_reachability_cache() -> None:
@@ -452,11 +453,12 @@ def redundant_printed_passages(blocks, *, page_number, bbox, narration):
         if len(text.split()) < _MIN_PRINTED_DESCRIPTION_WORDS:
             continue
         score = _adjacent_learning_object_similarity({"content": narration}, {"content": text})
-        # Logged every time so a change of vision model that drifts the
-        # scores towards the threshold shows up before descriptions are missed.
-        logger.info(
-            "Printed-passage check: page=%s where=%s words=%s score=%.3f threshold=%.2f",
-            page_number, where, len(text.split()), score, _PRINTED_DESCRIPTION_SIMILARITY,
+        # One line per passage beside every figure, so DEBUG only. Run with
+        # MAVIA_LOG_LEVEL=DEBUG after changing the vision model, to see whether
+        # its scores drift towards the threshold before descriptions are missed.
+        logger.debug(
+            "[Figures] page %s: narration vs the %s-word passage %s it  %s similar (limit %s)",
+            page_number, len(text.split()), where, percent(score), percent(_PRINTED_DESCRIPTION_SIMILARITY),
         )
         if score >= _PRINTED_DESCRIPTION_SIMILARITY:
             found.append({"where": where, "blocks": passage, "text": text, "score": score})
@@ -816,7 +818,7 @@ def describe_image_for_lesson(
             text = (response.json().get("response") or "").strip()
     except (requests.RequestException, ValueError) as exc:
         logger.warning(
-            "figure description failed (%s): %s",
+            "[Figures] the model could not describe a figure (%s): %s",
             payload["model"],
             exc,
         )
@@ -985,7 +987,8 @@ def populate_missing_image_descriptions(material) -> dict:
         kind=LearningObject.Kind.IMAGE,
     ).order_by("order", "id")
         if not (item.content or "").strip() or _still_the_extracted_caption(item, captions, stand_ins)]
-    logger.info("Image narration retry: material=%s blank_images=%s", material.id, len(images))
+    if images:
+        logger.info("[Figures] PDF %s  narrating %s figures still without a description", material.id, len(images))
     generated_ids = []
     errors = []
     for learning_object in images:
@@ -1033,15 +1036,15 @@ def populate_missing_image_descriptions(material) -> dict:
                 captions.get(learning_object.image_url, ""), learning_object.title,
             )
             logger.info(
-                "Image narration dropped: material=%s learning_object=%s repeats the %s passage (score %.3f)",
-                material.id, learning_object.id, explained_by["where"], explained_by["score"],
+                "[Figures] %s  narration dropped: it repeats the printed text %s it (%s similar)  (object %s)",
+                name(learning_object.title), explained_by["where"], percent(explained_by["score"]), learning_object.id,
             )
         learning_object.content = description
         learning_object.save(update_fields=["content"])
         generated_ids.append(learning_object.id)
         logger.info(
-            "Image narration generated: material=%s learning_object=%s model=%s",
-            material.id,
+            "[Figures] %s  narrated  (object %s, %s)",
+            name(learning_object.title),
             learning_object.id,
             _cfg("IMAGE_DESCRIPTION_MODEL", "gemma3:4b"),
         )

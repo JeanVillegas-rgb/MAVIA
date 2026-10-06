@@ -1,8 +1,11 @@
 # question_generation/services/bloom_classifier.py
 
+import logging
 import os
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Bloom's taxonomy describes the KIND of thinking a question demands, not how
 # hard it is. A `difficulty` (easy/medium/hard) axis derived from bloom_level
@@ -70,18 +73,26 @@ class BloomClassifier:
             except Exception as e:
                 if backend == "roberta":
                     raise
-                print(f"[BloomClassifier] RoBERTa unavailable ({e}), falling back to SVM")
+                logger.warning("[Questions] RoBERTa classifier unavailable (%s); using the SVM classifier", e)
 
         if self.backend is None:
             self._load_svm()
             self.backend = "svm"
 
-        print(f"[BloomClassifier] Using backend: {self.backend}")
+        logger.info(
+            "[Questions] LOTS/HOTS classifier loaded (%s); it stays loaded until the server restarts",
+            self.backend,
+        )
 
     # ── RoBERTa ──
     def _load_roberta(self):
         import torch
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        from transformers.utils import logging as transformers_logging
+
+        # The library draws its own "Loading weights" bar, which breaks up the
+        # terminal's one-line-per-step format. The line below says it instead.
+        transformers_logging.disable_progress_bar()
 
         roberta_path = os.path.join(MODEL_DIR, "roberta_blooms_final")
         self.tokenizer = AutoTokenizer.from_pretrained(roberta_path)

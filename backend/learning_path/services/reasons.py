@@ -75,6 +75,15 @@ _CONTRADICTION_SENTENCES = {
 }
 
 
+def _naming(names, a, b):
+    """"B names A", or which of A's parts B names when that is how it refers to A (6.2)."""
+    parts = names.get("parts") or []
+    if not parts:
+        return f"{b} names {a}."
+    listed = " and ".join(parts) if len(parts) <= 2 else f"{', '.join(parts[:2])} and {len(parts) - 2} more"
+    return f"{b} names {listed}, {'part' if len(parts) == 1 else 'parts'} of {a}."
+
+
 def _reference_order_reason(evidence, a, b):
     """``records`` are oriented prerequisite-first, so every sentence reads from them.
 
@@ -91,7 +100,7 @@ def _reference_order_reason(evidence, a, b):
     if votes.get("heading") == 1:
         parts.append(f"{b} sits under a heading naming {a}.")
     if names.get("use", 0) > 0:
-        parts.append(f"{b} names {a}.")
+        parts.append(_naming(names, a, b))
     if terms.get("use", 0) > 0:
         owned = terms.get("owned") or []
         listed = f" ({', '.join(owned[:3])})" if owned else ""

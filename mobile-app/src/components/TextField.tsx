@@ -1,6 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
 
+import { liveRegion } from "@/hooks/useAnnouncement";
 import { colors, radii, spacing } from "@/theme";
 
 type Props = TextInputProps & {
@@ -11,13 +12,18 @@ type Props = TextInputProps & {
 export default function TextField({ label, error, style, ...rest }: Props) {
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      {/* The input carries the label for screen readers; reading it here too would say it twice. */}
+      <Text style={styles.label} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        {label}
+      </Text>
       <TextInput
+        accessibilityLabel={label}
+        accessibilityHint={error}
         placeholderTextColor={colors.faint}
         style={[styles.input, error ? styles.inputError : null, style]}
         {...rest}
       />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={styles.error} {...liveRegion}>{error}</Text> : null}
     </View>
   );
 }

@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from config.console import name
 from config.groq_client import generate as groq_generate
 from lessons.models import LearningObject
 
@@ -125,9 +126,9 @@ def _parse_response(raw_text, source_word_count=None):
 
 
 VARIANT_REQUEST_ATTEMPTS = 3
-# Recorded as the generator of a level that kept the Normal text because no
+# Recorded as the generator of a level that kept the Standard text because no
 # attempt passed the checks (see _request_variants).
-NORMAL_FALLBACK_GENERATOR = "normal-text-fallback"
+STANDARD_FALLBACK_GENERATOR = "standard-text-fallback"
 # Unfamiliar words a version may use that its source never does.
 MAX_OUTSIDE_TERMS = 1
 
@@ -199,7 +200,7 @@ def _feedback(failures):
 
 class CheckedVariants(dict):
     """``{slot: text}`` as before, plus ``fallback``: ``{slot: problems}`` for
-    levels that kept the Normal text because no attempt passed the check."""
+    levels that kept the Standard text because no attempt passed the check."""
 
     def __init__(self, texts, fallback=None):
         super().__init__(texts)
@@ -212,12 +213,12 @@ def _fallback_slots(variants):
 
 def _request_variants(learning_object, model):
     """``CheckedVariants``: ``{slot: text}``, with ``.fallback`` naming the levels
-    that kept the Normal text.
+    that kept the Standard text.
 
     Each version is checked (``check_generated_version``). A failing one is
     written again, with Gemma told why; a version that passes is kept from
     whichever attempt produced it. A level no attempt got right keeps the
-    Normal text (``fallback``): the learner hears the teacher's own wording at
+    Standard text (``fallback``): the learner hears the teacher's own wording at
     that level rather than a version that is harder than it should be or
     leaves facts out, and publishing is not held back for a teacher to fix it.
 
@@ -236,8 +237,8 @@ def _request_variants(learning_object, model):
             if attempt == VARIANT_REQUEST_ATTEMPTS and not produced_any:
                 raise
             logger.warning(
-                'Retrying variants for "%s" (attempt %s of %s): %s',
-                learning_object.title, attempt + 1, VARIANT_REQUEST_ATTEMPTS, exc,
+                "[Versions] %s  writing versions failed, retrying (attempt %s of %s): %s",
+                name(learning_object.title), attempt + 1, VARIANT_REQUEST_ATTEMPTS, exc,
             )
             continue
         produced_any = True
@@ -253,15 +254,16 @@ def _request_variants(learning_object, model):
         if not failures:
             break
         logger.info(
-            'Generated versions for "%s" failed the check (attempt %s of %s): %s',
-            learning_object.title, attempt, VARIANT_REQUEST_ATTEMPTS, failures,
+            "[Versions] %s  written versions failed the check (attempt %s of %s): %s",
+            name(learning_object.title), attempt, VARIANT_REQUEST_ATTEMPTS,
+            "; ".join(f"{slot.lower()}: {', '.join(map(str, problems))}" for slot, problems in failures.items()),
         )
         feedback = _feedback(failures)
     fallback = {slot: problems for slot, problems in failures.items() if slot not in accepted}
     for slot in fallback:
         logger.warning(
-            'No generated %s version of "%s" passed the check; the Normal text is used: %s',
-            slot, learning_object.title, fallback[slot],
+            "[Versions] %s  no written %s version passed the check, so learners hear the Standard text: %s",
+            name(learning_object.title), slot.lower(), ", ".join(map(str, fallback[slot])),
         )
     texts = {**accepted, **{slot: learning_object.content.strip() for slot in fallback}}
     return CheckedVariants(texts, fallback)
@@ -392,10 +394,11 @@ def generate_standalone_variants(outline_node):
         outcome = outcomes[learning_object.id]
         if isinstance(outcome, VariantGenerationError):
             logger.warning(
-                "Adaptive variant generation failed: learning_object=%s model=%s error=%s",
-                learning_object.id,
+                "[Versions] %s  writing versions failed (%s): %s  (object %s)",
+                name(learning_object.title),
                 model,
                 outcome,
+                learning_object.id,
             )
             errors.append({"learning_object_id": learning_object.id, "detail": str(outcome)})
             continue
@@ -410,7 +413,7 @@ def generate_standalone_variants(outline_node):
                         "audio_url": "",
                         "source_fingerprint": fingerprint,
                         "generator_model": (
-                            NORMAL_FALLBACK_GENERATOR if variant in _fallback_slots(outcome) else model
+                            STANDARD_FALLBACK_GENERATOR if variant in _fallback_slots(outcome) else model
                         ),
                         "generated_at": timezone.now(),
                     },
@@ -451,7 +454,7 @@ def _request_variants_bulk(learning_objects, model, concurrency):
 
 
 STALE_VERSION_DETAIL = (
-    "The Normal text changed after this version was written. "
+    "The Standard text changed after this version was written. "
     "Check it in Content versions: keep it as is, edit it, or regenerate it."
 )
 
@@ -459,7 +462,7 @@ STALE_VERSION_DETAIL = (
 def stale_generated_versions(learning_object, slots=("SIMPLIFIED", "ELABORATED")):
     """Generated versions written from different text than the object has now.
 
-    A generated version is a rewrite of the Normal text at the moment it was
+    A generated version is a rewrite of the Standard text at the moment it was
     written. Once the title or text changes, it may no longer match, so it must
     be checked before students see it. Text taken from another PDF carries no
     fingerprint and is never considered stale -- it was not derived from this
@@ -515,10 +518,11 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
         variants = _request_variants(learning_object, model)
     except VariantGenerationError as exc:
         logger.warning(
-            "Adaptive variant generation failed: learning_object=%s model=%s error=%s",
-            learning_object.id,
+            "[Versions] %s  writing versions failed (%s): %s  (object %s)",
+            name(learning_object.title),
             model,
             exc,
+            learning_object.id,
         )
         return {
             "generated": [],
@@ -536,10 +540,10 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
                     "narration": variants[slot],
                     "audio_url": "",
                     "source_fingerprint": fingerprint,
-                    # A level no attempt got right keeps the Normal text, and
+                    # A level no attempt got right keeps the Standard text, and
                     # says so, so Content versions shows why it reads the same.
                     "generator_model": (
-                        NORMAL_FALLBACK_GENERATOR if slot in _fallback_slots(variants) else model
+                        STANDARD_FALLBACK_GENERATOR if slot in _fallback_slots(variants) else model
                     ),
                     "generated_at": timezone.now(),
                     "origin": LessonVariant.Origin.GENERATED,
@@ -552,7 +556,7 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
 
 
 def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
-    """Write the versions no PDF supplies, one object of the Normal bundle at a time.
+    """Write the versions no PDF supplies, one object of the Standard bundle at a time.
 
     Generating a whole bundle in one call is where the local model starts
     returning invalid JSON, and a failure would cost the concept every version
@@ -561,24 +565,33 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
     A role is only "supplied" when its bundle's role is actually settled. A
     bundle still awaiting teacher confirmation is stored under a role already
     (so a re-run does not keep re-proposing it), but nothing has decided that
-    text belongs there yet -- generating the same slot from the Normal text
+    text belongs there yet -- generating the same slot from the Standard text
     would otherwise be silently suppressed until a teacher confirms, leaving
     the concept with no Simplified (or Elaborated) at all in the meantime.
     """
-    from .version_assignment import assign_group_versions, bundle_roles, version_bundles
+    from .version_assignment import (
+        assign_group_versions,
+        bundle_roles,
+        served_version_bundles,
+        version_bundles,
+    )
 
     bundles = version_bundles(group)
-    normal = bundles.get("NORMAL") or []
+    standard = bundles.get("STANDARD") or []
     outcome = assign_group_versions(group)
-    if outcome.get("normal_replacement_needed"):
+    if outcome.get("standard_replacement_needed"):
         return {
             "generated": [], "skipped": [],
-            "errors": [{"learning_object_id": None, "detail": "Choose a replacement Normal PDF before generating versions."}],
+            "errors": [{"learning_object_id": None, "detail": "Choose a replacement Standard PDF before generating versions."}],
         }
     pending_ids = {entry["material_id"] for entry in outcome["needs_confirmation"]}
+    # Covered only by a PDF version learners are actually given; a flagged or
+    # unconfirmed one is not, so the written version is still needed.
+    served = served_version_bundles(group)
     supplied = {
         role for material_id, role in bundle_roles(group).items()
         if role in ("SIMPLIFIED", "ELABORATED") and material_id not in pending_ids
+        and role in served
     }
     requested = [
         slot for slot in (target_slots or ("SIMPLIFIED", "ELABORATED"))
@@ -587,7 +600,7 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
     generated, skipped, errors = [], [], []
     if not requested:
         return {"generated": generated, "skipped": sorted(supplied), "errors": errors}
-    for learning_object in normal:
+    for learning_object in standard:
         outcome = fill_missing_slots(
             learning_object, requested, replace_stale=replace_stale,
         )

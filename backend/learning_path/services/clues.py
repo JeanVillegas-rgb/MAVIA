@@ -27,12 +27,36 @@ def _sign(difference):
     return (difference > 0) - (difference < 0)
 
 
+def _usable_part_names(holder, target):
+    """The target's part names, when the holder shares a file with it.
+
+    Across files the direction is only the merged order's guess, and there a part's
+    name made "The Digestive System" a prerequisite of every concept mentioning the
+    stomach, the module's introduction among them.
+    """
+    if holder.materials & target.materials:
+        return target.part_names
+    return ()
+
+
 def name_use(holder, target):
-    """Share of the holder's sentences containing every stem of the target's name."""
-    if not target.name or not holder.sentence_terms:
+    """Share of the holder's sentences naming the target: its title, or one of its parts' titles."""
+    names = [set(stems) for _, stems in _usable_part_names(holder, target)]
+    if target.name:
+        names.insert(0, set(target.name))
+    if not names or not holder.sentence_terms:
         return 0.0
-    needed = set(target.name)
-    return sum(1 for stems in holder.sentence_terms if needed <= set(stems)) / len(holder.sentence_terms)
+    return sum(
+        1 for stems in holder.sentence_terms if any(needed <= set(stems) for needed in names)
+    ) / len(holder.sentence_terms)
+
+
+def named_parts(holder, target):
+    """Titles of the target's parts that the holder's sentences name, for the stored evidence."""
+    return [
+        title for title, stems in _usable_part_names(holder, target)
+        if any(set(stems) <= set(sentence) for sentence in holder.sentence_terms)
+    ]
 
 
 def name_vote(prerequisite, dependent):
@@ -40,7 +64,11 @@ def name_vote(prerequisite, dependent):
         # One title on two concepts (a split the grouping made) names neither over the other.
         return 0, {"use": 0.0, "use_back": 0.0}
     use, use_back = name_use(dependent, prerequisite), name_use(prerequisite, dependent)
-    return _sign(use - use_back), {"use": round(use, 3), "use_back": round(use_back, 3)}
+    record = {"use": round(use, 3), "use_back": round(use_back, 3)}
+    parts = named_parts(dependent, prerequisite)
+    if parts:
+        record["parts"] = parts
+    return _sign(use - use_back), record
 
 
 def log_likelihood(count_inside, total_inside, count_outside, total_outside):

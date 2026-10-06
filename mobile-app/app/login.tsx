@@ -6,6 +6,7 @@ import ScreenContainer from "@/components/ScreenContainer";
 import TextField from "@/components/TextField";
 import Button from "@/components/Button";
 import { useAuth } from "@/auth/AuthContext";
+import { liveRegion, useAnnouncement } from "@/hooks/useAnnouncement";
 import { colors, spacing } from "@/theme";
 
 export default function LoginScreen() {
@@ -16,6 +17,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  useAnnouncement(error);
 
   // Already signed in -> let the index route re-decide where to send them.
   if (!loading && user) {
@@ -62,7 +64,7 @@ export default function LoginScreen() {
         />
 
         {error ? (
-          <View style={styles.alert}>
+          <View style={styles.alert} {...liveRegion}>
             <Text style={styles.alertText}>{error}</Text>
           </View>
         ) : null}

@@ -81,7 +81,7 @@ class LearningPathStep(models.Model):
     Saved when a topic publishes successfully and replaced wholesale on the
     next successful publish, so students always follow the path that matches
     the content they can see. Everything a step teaches hangs off its concept:
-    the Normal, Simplified and Elaborated versions and the generated questions
+    the Standard, Simplified and Elaborated versions and the generated questions
     all belong to the concept's representative learning object.
     """
 

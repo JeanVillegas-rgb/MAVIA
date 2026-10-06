@@ -119,7 +119,10 @@ export type GuideController = {
   /** Play the whole guide from the top. Safe to call while already playing. */
   play: () => void;
   /** Play one section on its own -- what the minus-key menu hands back. */
-  playSection: (id: string) => void;
+  /** `onDone` runs when the section has finished being read, and not at
+   *  all if the guide was stopped first -- the menu uses it to follow a
+   *  section with the drills that rehearse it. */
+  playSection: (id: string, options?: { onDone?: () => void }) => void;
   /** Stop immediately, wherever it is. */
   stop: () => void;
   playing: boolean;
@@ -163,7 +166,7 @@ export function useGuide(narration: Narrator): GuideController {
 
   // One section, for the replay menu. Marks the guide heard too: a learner
   // who is picking sections by letter has plainly already been through it.
-  const playSection = useCallback((id: string) => {
+  const playSection = useCallback((id: string, options?: { onDone?: () => void }) => {
     const section = guideSection(id);
     if (!section) return;
     runRef.current += 1;
@@ -173,6 +176,7 @@ export function useGuide(narration: Narrator): GuideController {
       onDone: () => {
         if (run !== runRef.current) return;
         setPlaying(false);
+        options?.onDone?.();
       },
     });
     void markGuideHeard();

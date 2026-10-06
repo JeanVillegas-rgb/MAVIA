@@ -294,6 +294,49 @@ class ConceptUnitTests(TestCase):
         self.assertEqual(concepts[0].id, liquid.id)
         self.assertEqual(len(concepts[0].members), 4)
 
+    def _sectioned(self, material, order, label, section):
+        group = self._group(label)
+        LearningObject.objects.create(
+            material=material, group=group, title=label, content="Some text.",
+            order=order, section_title=section,
+        )
+        return group
+
+    def test_a_numbered_repeat_of_a_heading_joins_its_concept(self):
+        """Extraction can keep "7. Everyday Examples" apart from the "Everyday
+        Examples" right before it; side by side in one file they are one concept."""
+        plain = self._group("Everyday Examples")
+        self._object(self.first, 9, "Everyday Examples", "Ice is a solid.", plain)
+        numbered = self._group("7. Everyday Examples")
+        self._object(self.first, 10, "7. Everyday Examples", "The table lists solids.", numbered)
+
+        concepts = concepts_for_topic(self.topic)
+
+        self.assertEqual(len(concepts), 1)
+        self.assertEqual(concepts[0].id, plain.id)
+        self.assertEqual(len(concepts[0].members), 2)
+
+    def test_one_title_over_separate_passages_stays_apart(self):
+        """One file can print the same title over different passages; only
+        adjacency makes them one."""
+        self._object(self.first, 2, "Example", "An ice cube melts.", self._group("Example"))
+        self._object(self.first, 6, "Example", "Water vapour condenses.", self._group("Example"))
+
+        self.assertEqual(len(concepts_for_topic(self.topic)), 2)
+
+    def test_across_files_one_name_is_one_concept(self):
+        self._sectioned(self.first, 3, "Everyday Examples", "Examples")
+        self._sectioned(self.second, 7, "Everyday Examples", "")
+
+        self.assertEqual(len(concepts_for_topic(self.topic)), 1)
+
+    def test_across_files_different_sections_keep_one_name_apart(self):
+        """Two files' "Example" under different sections are two concepts."""
+        self._sectioned(self.first, 3, "Example", "Solids")
+        self._sectioned(self.second, 3, "Example", "Changing state")
+
+        self.assertEqual(len(concepts_for_topic(self.topic)), 2)
+
     def test_a_group_with_no_members_is_skipped(self):
         self._group("Empty")
         kept = self._group("Kept")

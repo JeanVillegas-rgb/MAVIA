@@ -1,6 +1,6 @@
 """Versions written from text that has since changed.
 
-A Simplified or Elaborated version is generated from the concept's Normal text.
+A Simplified or Elaborated version is generated from the concept's Standard text.
 When that text (or its title) is edited afterwards, publishing refuses to go
 ahead until a teacher checks the version. These tests pin the three ways that
 check is surfaced and resolved: the flag on the review payload, "Keep as is",
@@ -48,7 +48,7 @@ class StaleVersionTests(TestCase):
         self.client_api = authenticated_api_client()
         self.base = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}"
 
-    def _edit_normal_text(self):
+    def _edit_standard_text(self):
         self.solid.title = "Solids"
         self.solid.save()
 
@@ -63,8 +63,8 @@ class StaleVersionTests(TestCase):
         self.assertFalse(slots["simplified"]["stale"])
         self.assertFalse(slots["elaborated"]["stale"])
 
-    def test_editing_the_normal_text_flags_both_generated_versions(self):
-        self._edit_normal_text()
+    def test_editing_the_standard_text_flags_both_generated_versions(self):
+        self._edit_standard_text()
 
         slots = self._slots()
 
@@ -77,12 +77,12 @@ class StaleVersionTests(TestCase):
         self.simplified.origin = LessonVariant.Origin.SOURCE_PDF
         self.simplified.source_fingerprint = ""
         self.simplified.save()
-        self._edit_normal_text()
+        self._edit_standard_text()
 
         self.assertFalse(self._slots()["simplified"]["stale"])
 
     def test_keep_as_is_clears_the_flag_without_changing_the_wording(self):
-        self._edit_normal_text()
+        self._edit_standard_text()
 
         response = self.client_api.post(f"{self.base}/versions/{self.simplified.id}/keep/")
 
@@ -95,7 +95,7 @@ class StaleVersionTests(TestCase):
         self.assertTrue(self._slots()["elaborated"]["stale"])
 
     def test_keeping_both_lets_publishing_settle_the_concept(self):
-        self._edit_normal_text()
+        self._edit_standard_text()
         self.assertTrue(fill_missing_slots(self.solid)["errors"])
 
         for variant in (self.simplified, self.elaborated):
@@ -107,7 +107,7 @@ class StaleVersionTests(TestCase):
     @patch("course.variant_generator._request_variants")
     def test_regenerate_replaces_only_the_chosen_version(self, request_variants):
         request_variants.return_value = {"SIMPLIFIED": "A solid stays the same shape.", "ELABORATED": "unused"}
-        self._edit_normal_text()
+        self._edit_standard_text()
 
         response = self.client_api.post(
             f"{self.base}/learning-objects/{self.solid.id}/generate-versions/",
@@ -124,7 +124,7 @@ class StaleVersionTests(TestCase):
         self.assertEqual(self.elaborated.narration, "A solid keeps a fixed shape and volume.")
 
     def test_plain_generate_still_refuses_to_overwrite_an_out_of_date_version(self):
-        self._edit_normal_text()
+        self._edit_standard_text()
 
         response = self.client_api.post(
             f"{self.base}/learning-objects/{self.solid.id}/generate-versions/",
@@ -140,7 +140,7 @@ class StaleVersionTests(TestCase):
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions", return_value={"generated_count": 0, "errors": []})
     @patch("lessons.services.topic_publish.generate_material_audio_playlist", return_value={"generated_count": 0})
     def test_publish_names_the_concept_that_needs_checking(self, audio, images, version_audio):
-        self._edit_normal_text()
+        self._edit_standard_text()
         events = []
 
         summary = run_topic_publish(

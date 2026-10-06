@@ -1,7 +1,8 @@
 """Similarity cutoffs and clue agreement, learned once and stored for the whole group.
 
 Weights are not recomputed when a screen opens, so a new upload never quietly
-changes another topic's links. ``calibrate_learning_path`` writes the file.
+changes another topic's links. The stored file dates from 2026-09-30; its cutoffs
+only fill the recorded relatedness and meaning numbers, never a verdict.
 """
 
 import copy
@@ -42,7 +43,7 @@ def load_calibration(path=CALIBRATION):
     except FileNotFoundError:
         return copy.deepcopy(DEFAULTS)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        logger.warning("Ignoring learning-path calibration %s: %s", path, exc)
+        logger.warning("[Learning path] calibration file %s ignored, using defaults: %s", path, exc)
         return copy.deepcopy(DEFAULTS)
 
 

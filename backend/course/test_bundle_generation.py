@@ -33,14 +33,14 @@ class BundleGenerationTests(TestCase):
         self.second = LearningMaterial.objects.create(
             course=self.course, outline_node=self.topic, title="B", generated_json=dict(confirmed))
         self.group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Solid")
-        self.normal = LearningObject.objects.create(
+        self.standard = LearningObject.objects.create(
             material=self.first, group=self.group, title="Solid", order=0,
             content=(
                 "A solid has a definite shape and a definite volume because its constituent "
                 "particles occupy fixed positions within a rigid lattice arrangement."
             ),
         )
-        self.normal_tail = LearningObject.objects.create(
+        self.standard_tail = LearningObject.objects.create(
             material=self.first, group=self.group, title="Particle diagram", order=1,
             section_title="Solid", content="Particles sit in a grid and vibrate in place.",
         )
@@ -54,26 +54,26 @@ class BundleGenerationTests(TestCase):
         # only caller of `fill_missing_bundle_slots`, does before calling it.
         with patch("course.version_assignment.classify_group_versions") as classify:
             classify.return_value = {
-                self.normal.id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
+                self.standard.id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
                 self.simple.id: {"slot": "SIMPLIFIED", "confidence": 0.9, "reason": "Plainer."},
             }
             assign_group_versions(self.group, use_llm=True)
 
-    def test_each_normal_object_gets_its_own_generated_row(self):
+    def test_each_standard_object_gets_its_own_generated_row(self):
         with patch("course.variant_generator._request_variants") as request:
             request.return_value = {"SIMPLIFIED": "Short.", "ELABORATED": "Longer text."}
             outcome = fill_missing_bundle_slots(self.group)
 
         self.assertEqual(request.call_count, 2)
         rows = LessonVariant.objects.filter(
-            learning_object__in=[self.normal, self.normal_tail], variant="ELABORATED",
+            learning_object__in=[self.standard, self.standard_tail], variant="ELABORATED",
         ).order_by("learning_object__order")
-        self.assertEqual([row.learning_object_id for row in rows], [self.normal.id, self.normal_tail.id])
+        self.assertEqual([row.learning_object_id for row in rows], [self.standard.id, self.standard_tail.id])
         self.assertEqual(outcome["errors"], [])
 
     def test_a_failure_on_one_object_leaves_the_others(self):
         def flaky(learning_object, model):
-            if learning_object.id == self.normal.id:
+            if learning_object.id == self.standard.id:
                 raise VariantGenerationError("Gemma did not return valid JSON.")
             return {"SIMPLIFIED": "Short.", "ELABORATED": "Longer text."}
 
@@ -82,7 +82,7 @@ class BundleGenerationTests(TestCase):
 
         self.assertEqual(len(outcome["errors"]), 1)
         self.assertTrue(
-            LessonVariant.objects.filter(learning_object=self.normal_tail, variant="ELABORATED").exists()
+            LessonVariant.objects.filter(learning_object=self.standard_tail, variant="ELABORATED").exists()
         )
 
     def test_a_role_supplied_by_a_pdf_is_never_generated(self):
@@ -92,7 +92,7 @@ class BundleGenerationTests(TestCase):
 
         self.assertFalse(
             LessonVariant.objects.filter(
-                learning_object__in=[self.normal, self.normal_tail], variant="SIMPLIFIED",
+                learning_object__in=[self.standard, self.standard_tail], variant="SIMPLIFIED",
             ).exists()
         )
 
@@ -119,7 +119,7 @@ class PendingBundleDoesNotSuppressGenerationTests(TestCase):
         self.group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Solid")
         # A thin readability margin (see readability.compare) leaves the
         # second bundle's role unconfirmed rather than assigned outright.
-        self.normal = LearningObject.objects.create(
+        self.standard = LearningObject.objects.create(
             material=self.first, group=self.group, title="Solid", order=0,
             content="A solid keeps its shape. The particles are packed closely. It will not flow away.",
         )
@@ -141,5 +141,5 @@ class PendingBundleDoesNotSuppressGenerationTests(TestCase):
 
         self.assertIn("SIMPLIFIED", outcome["generated"])
         self.assertTrue(
-            LessonVariant.objects.filter(learning_object=self.normal, variant="SIMPLIFIED").exists()
+            LessonVariant.objects.filter(learning_object=self.standard, variant="SIMPLIFIED").exists()
         )

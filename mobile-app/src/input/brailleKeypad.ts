@@ -24,10 +24,13 @@ export type KeypadAction =
   // Leave whatever is open and go back one level -- player to lesson list,
   // list to course list, course list to home.
   | { kind: "back" }
+  // Pause the lesson audio, or play it again from where it stopped.
+  | { kind: "pause" }
   // Page to the next four items in a list. Only means anything on a screen
   // that is reading a list out; elsewhere it is ignored.
   | { kind: "next" }
-  // Play the whole spoken guide again from the beginning.
+  // Play the spoken guide. (The guide is unplugged for now; the key is bound
+  // so it is ready when the guide is slotted back in.)
   | { kind: "guide" }
   // Num Lock is off: the numpad is sending navigation keys, not digits.
   | { kind: "numLockOff" };
@@ -60,10 +63,12 @@ const KEYCODE = {
   NUMPAD_MULTIPLY: 155,
   NUMPAD_SUBTRACT: 156,
   NUMPAD_ADD: 157,
+  NUMPAD_DOT: 158,
   SLASH: 76,
   STAR: 17,
   MINUS: 69,
   PLUS: 81,
+  PERIOD: 56,
   // What numpad 7 / 8 / 4 send when Num Lock is off. Numpad 5 is left out
   // because it has no navigation key: in this state it sends nothing, so a
   // press of it cannot be told apart from no press at all. One of the other
@@ -85,10 +90,11 @@ const KEYCODE = {
 // The command keys sit apart from the answer block so they can never be hit
 // by accident while answering:
 //
-//   /  -> back        *  -> say it again
-//   -  -> the guide   +  -> next four
+//   /  -> pause / play     *  -> say it again (asks: the topic or the question?)
+//   -  -> back             +  -> next four
+//   .  -> the guide
 //
-// "Say it again" and "back" are the two a learner needs most while a lesson is
+// Pause and "say it again" are the two a learner needs most while a lesson is
 // playing, so they take the two keys nearest the answer block.
 //
 // A and B are also True and False: a True/False question is keyed to the same
@@ -101,8 +107,9 @@ export const KEYPAD_BINDINGS: Binding[] = [
   { label: "4", keycodes: [KEYCODE.NUMPAD_4, KEYCODE.DIGIT_4], characters: ["4"], action: { kind: "answer", letter: "c" } },
   { label: "5", keycodes: [KEYCODE.NUMPAD_5, KEYCODE.DIGIT_5], characters: ["5"], action: { kind: "answer", letter: "d" } },
   { label: "*", keycodes: [KEYCODE.NUMPAD_MULTIPLY, KEYCODE.STAR], characters: ["*"], action: { kind: "repeat" } },
-  { label: "/", keycodes: [KEYCODE.NUMPAD_DIVIDE, KEYCODE.SLASH], characters: ["/"], action: { kind: "back" } },
-  { label: "-", keycodes: [KEYCODE.NUMPAD_SUBTRACT, KEYCODE.MINUS], characters: ["-"], action: { kind: "guide" } },
+  { label: "/", keycodes: [KEYCODE.NUMPAD_DIVIDE, KEYCODE.SLASH], characters: ["/"], action: { kind: "pause" } },
+  { label: "-", keycodes: [KEYCODE.NUMPAD_SUBTRACT, KEYCODE.MINUS], characters: ["-"], action: { kind: "back" } },
+  { label: ".", keycodes: [KEYCODE.NUMPAD_DOT, KEYCODE.PERIOD], characters: ["."], action: { kind: "guide" } },
   { label: "+", keycodes: [KEYCODE.NUMPAD_ADD, KEYCODE.PLUS], characters: ["+"], action: { kind: "next" } },
   // Never an answer: on a full keyboard these are real navigation keys. Only
   // used to tell the learner why their keypad presses are doing nothing.

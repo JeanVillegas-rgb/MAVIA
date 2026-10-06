@@ -359,19 +359,3 @@ class ClosestRuleLinksTests(CourseFixture):
         self._refresh_closest()
 
         self.assertEqual(CourseConceptLink.objects.get().status, "rejected")
-
-
-class CoursePairSnapshotTests(CourseFixture):
-    def test_the_snapshot_gives_each_concept_its_id(self):
-        import tempfile
-        from pathlib import Path
-
-        from django.core.management import call_command
-
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "snapshot.md"
-            call_command("export_course_pairs", self.flowers.id, self.reproduction.id, snapshot=str(path))
-            text = path.read_text(encoding="utf-8")
-
-        self.assertIn(f"1. Stamen (concept {self.groups['Stamen'].id})", text)
-        self.assertIn(f"1. Pollination (concept {self.groups['Pollination'].id})", text)

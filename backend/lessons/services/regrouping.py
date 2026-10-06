@@ -27,6 +27,7 @@ from collections import Counter
 from django.db import transaction
 from django.db.models import Q
 
+from config.console import name
 from course.version_assignment import (
     bundle_roles,
     group_original_id,
@@ -61,7 +62,7 @@ class RegroupingUnavailable(Exception):
 
 
 def _trace(node, message, *args):
-    logger.info("[Regrouping topic %s] " + message, node.id, *args)
+    logger.info("[Regrouping] topic %s  " + message, node.id, *args)
 
 
 def changed_learning_objects(node):
@@ -281,7 +282,7 @@ def propose_regrouping(node):
     except semantic.SemanticUnavailable as exc:
         raise RegroupingUnavailable(str(exc)) from exc
 
-    _trace(node, "Checking %s edited learning object(s)", len(changed))
+    _trace(node, "checking %s edited learning object(s) against their concepts", len(changed))
     proposals = []
     for index, learning_object in enumerate(changed, start=1):
         proposal = _propose(learning_object, config)
@@ -289,8 +290,9 @@ def propose_regrouping(node):
         # A teacher's own grouping wins unless they explicitly overrule it.
         proposal["default_selected"] = proposal["selectable"] and not proposal["teacher_made"]
         _trace(
-            node, '(%s/%s) "%s" -> %s: %s',
-            index, len(changed), learning_object.title[:60], proposal["action"], proposal["reason"],
+            node, "(%s/%s) %s -> %s: %s  (object %s)",
+            index, len(changed), name(learning_object.title), proposal["action"], proposal["reason"],
+            learning_object.id,
         )
         proposals.append(proposal)
     return proposals
@@ -372,7 +374,7 @@ def apply_regrouping(node, learning_object_ids):
             unpublished = True
 
     _trace(
-        node, "Applied %s of %s proposal(s)%s",
+        node, "applied %s of %s change(s)%s",
         len(applied), len(proposals), "; topic unpublished" if unpublished else "",
     )
     return {

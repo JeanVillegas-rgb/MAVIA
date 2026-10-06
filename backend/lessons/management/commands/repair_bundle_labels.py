@@ -19,7 +19,7 @@ from django.db import transaction
 
 from course.version_assignment import (
     _eligible_bundles,
-    _normal_id,
+    _standard_id,
     clean_group_label,
 )
 from lessons.models import OutlineNode
@@ -85,11 +85,11 @@ class Command(BaseCommand):
                     continue
 
                 bundles = _eligible_bundles(group)
-                normal_id = _normal_id(group, bundles)
-                bundle = bundles.get(normal_id)
+                standard_id = _standard_id(group, bundles)
+                bundle = bundles.get(standard_id)
                 if not bundle:
                     # No bundle is eligible -- an unconfirmed file, say. There
-                    # is no Normal to name the concept after, and falling back
+                    # is no Standard to name the concept after, and falling back
                     # to every PDF's objects at once would hand a multi-object
                     # list to the heading rule, which is exactly what this
                     # command exists to undo. Leave it to the pipeline.
@@ -107,7 +107,7 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.WARNING(
                         f"  [fix]     #{group.id} {current!r} -> {label!r} "
-                        f"(Normal bundle holds {size} object{'' if size == 1 else 's'})"
+                        f"(Standard bundle holds {size} object{'' if size == 1 else 's'})"
                     )
                 )
                 if dry_run:

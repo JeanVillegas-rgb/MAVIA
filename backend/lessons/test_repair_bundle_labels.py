@@ -97,7 +97,7 @@ class RepairBundleLabelsTests(TestCase):
         self.assertIn("[teacher]", output)
 
     def test_a_concept_with_no_eligible_bundle_is_skipped_not_guessed(self):
-        """No Normal bundle means no answer -- never a fallback to every PDF.
+        """No Standard bundle means no answer -- never a fallback to every PDF.
 
         Falling back to all of the concept's members at once hands a
         multi-object list to the heading rule, which is the very thing this

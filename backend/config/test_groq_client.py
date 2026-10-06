@@ -164,6 +164,38 @@ class GroqClientTests(SimpleTestCase):
         self.assertEqual(raw, "{}")
         self.assertEqual(post.call_count, 2)
 
+    @override_settings(GROQ_API_KEY="test-key", GROQ_ADDITIONAL_API_KEYS="", GROQ_BASE_URL="https://api.groq.com/openai/v1")
+    @patch("config.groq_client.requests.post")
+    def test_a_rejected_reply_can_be_checked_by_the_caller_instead(self, post):
+        reply = '{"questions": [{"question": "Ice is a solid.", "format": "TF", "correct_answer": "True"}]}'
+        rejected = type("Response", (), {
+            "ok": False,
+            "status_code": 400,
+            "json": lambda self: {"error": {"code": "json_validate_failed", "failed_generation": reply}},
+        })()
+        post.side_effect = [rejected]
+
+        raw, _metrics = generate(
+            "prompt", model="openai/gpt-oss-20b", timeout=30, use_failed_generation=True,
+        )
+
+        self.assertEqual(raw, reply)
+        self.assertEqual(post.call_count, 1)
+
+    @override_settings(GROQ_API_KEY="test-key", GROQ_ADDITIONAL_API_KEYS="", GROQ_BASE_URL="https://api.groq.com/openai/v1")
+    @patch("config.groq_client.requests.post")
+    def test_without_opting_in_a_rejected_reply_is_still_retried(self, post):
+        rejected = type("Response", (), {
+            "ok": False,
+            "status_code": 400,
+            "json": lambda self: {"error": {"code": "json_validate_failed", "failed_generation": "{}"}},
+        })()
+        post.side_effect = [rejected] * 4
+
+        with self.assertRaises(ValueError):
+            generate("prompt", model="openai/gpt-oss-20b", timeout=30)
+        self.assertEqual(post.call_count, 4)
+
     def test_nested_question_schema_is_closed_for_strict_mode(self):
         schema = _strict_schema(question_generator.build_response_schema({"MCQ": 1, "TF": 1}))
         self.assertFalse(schema["additionalProperties"])
@@ -204,7 +236,7 @@ class GroqClientTests(SimpleTestCase):
         self.assertTrue(response_format["json_schema"]["strict"])
         self.assertFalse(response_format["json_schema"]["schema"]["additionalProperties"])
 
-    @override_settings(GROQ_API_KEY="")
+    @override_settings(GROQ_API_KEY="", GROQ_ADDITIONAL_API_KEYS="")
     def test_missing_key_stops_before_request(self):
         with patch("config.groq_client.requests.post") as post:
             with self.assertRaisesRegex(ValueError, "GROQ_API_KEY"):
@@ -248,9 +280,9 @@ class GroqRoutingTests(SimpleTestCase):
             }]}),
             {},
         )
-        normal = SimpleNamespace(id=1, title="Matter", content="Matter has mass.")
+        standard = SimpleNamespace(id=1, title="Matter", content="Matter has mass.")
         item = SimpleNamespace(id=2, title="Matter", content="Matter has mass.")
-        self.assertEqual(classify_group_versions([item], representative=normal)[2]["slot"], "SIMPLIFIED")
+        self.assertEqual(classify_group_versions([item], representative=standard)[2]["slot"], "SIMPLIFIED")
         post.assert_not_called()
 
     @override_settings(LLM_PROVIDER="groq", QUESTION_LLM_MODEL="openai/gpt-oss-20b")

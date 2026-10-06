@@ -3,11 +3,8 @@
 import json
 import math
 import tempfile
-from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
 
-from django.core.management import call_command
 from django.test import SimpleTestCase
 
 from .services.calibration import DEFAULTS, load_calibration
@@ -15,8 +12,6 @@ from .services.fusion import (
     ACCEPTED, DECIDING_CLUES, DISAGREE, NONE_SHARED, PARALLEL, PENDING,
     Decision, PairFacts, confidence, learn_weights, reference_verdict,
 )
-from .testing import word_vectors
-
 
 
 def votes(name=0, terms=0, meaning=0, heading=0, order=0, parallel=False):
@@ -158,18 +153,6 @@ class CalibrationFileTests(SimpleTestCase):
         load_calibration(self.path)["weights"]["name"] = 0.0
 
         self.assertEqual(DEFAULTS["weights"]["name"], 1.0)
-
-    def test_the_command_writes_a_readable_file(self):
-        with patch("learning_path.management.commands.calibrate_learning_path.embed", word_vectors):
-            call_command(
-                "calibrate_learning_path", "--topics", "62", "79", "--unrelated", "62:79",
-                "--out", str(self.path), stdout=StringIO(),
-            )
-
-        stored = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(stored["topics"], [62, 79])
-        self.assertEqual(set(stored["weights"]), {"name", "terms", "meaning", "heading", "order"})
-        self.assertEqual(load_calibration(self.path)["source"], str(self.path))
 
 
 class CleanerEdgeVerdictTests(SimpleTestCase):

@@ -203,9 +203,10 @@ class DistributionConfigTests(SimpleTestCase):
         See HotFormatMixTests for the mix it keeps."""
         self.assertEqual(set(QUESTION_DISTRIBUTION["HOT"]["format_split"]), {"MCQ", "TF"})
 
-    def test_counts_default_to_three(self):
-        self.assertEqual(QUESTION_DISTRIBUTION["LOT"]["count"], 3)
-        self.assertEqual(QUESTION_DISTRIBUTION["HOT"]["count"], 3)
+    def test_counts_default_to_five(self):
+        # Above the teacher's minimum of 3 per tier, for headroom.
+        self.assertEqual(QUESTION_DISTRIBUTION["LOT"]["count"], 5)
+        self.assertEqual(QUESTION_DISTRIBUTION["HOT"]["count"], 5)
 
     def test_split_sums_to_the_target_count(self):
         for order, config in QUESTION_DISTRIBUTION.items():
@@ -406,3 +407,15 @@ class DistractorInstructionTests(SimpleTestCase):
         it is what put "plasma" beside solid, liquid and gas."""
         instruction = " ".join(qg.FORMAT_INSTRUCTIONS["MCQ"].split())
         self.assertIn("misconception", instruction)
+
+
+class WordingRuleTests(SimpleTestCase):
+    """The prompt states the rule the grounding gate enforces, in general terms."""
+
+    def test_every_tier_is_told_to_use_only_the_contents_words(self):
+        from .services.question_generator import PROMPT_TEMPLATES
+
+        for order, template in PROMPT_TEMPLATES.items():
+            self.assertIn("using only words that appear in the content below", template, msg=order)
+            self.assertIn("'according to'", template, msg=order)
+            self.assertIn("Do not ask about the visual layout of a figure or table", template, msg=order)

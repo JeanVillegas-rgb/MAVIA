@@ -1,29 +1,22 @@
 // The lesson player's traversal, as pure functions.
 //
-// Everything here is the *app's* half of the adaptive ruling: given where the
-// student is and what the engine just replied, decide what they see and hear
-// next. It deliberately holds no React, no audio and no network so it can be
-// driven straight from a test harness against real recorded API payloads --
-// see scripts/traversal-check.mjs, which replays whole courses through it.
-//
-// The engine's half lives in backend/adaptive/services.py (AdaptiveEngine);
-// backend/adaptive/PATH_MODE.md is the ruling both halves mirror.
+// The engine (backend/adaptive/services.py) makes every decision on the
+// server and answers each graded question with one command: next_question,
+// retry, escalate_variant, regress, resume, advance or complete. This module
+// is the app's half: given where the student is and that command, decide what
+// they hear and see next. It holds no React, no audio and no network, so it
+// can be driven straight from a script against the live API -- see
+// scripts/check-traversal.mjs.
 
-import {
-  ApiLesson,
-  ApiStartResult,
-  ApiStep,
-  ApiStepQuestion,
-  ApiStepVersions,
-  ApiSubmitResult,
-  ApiTrack,
-  Variant,
-} from "@/api/client";
+import type { ApiCommand, ApiPackageStep, ApiReviewItem, ApiTopicPackage, ApiTrack, Variant } from "@/api/types";
 
-export type Phase = "audio" | "questions" | "done";
+// "continue" = a listen-only step (no questions) has been heard; the screen
+// asks the server to move on (POST /mobile/topics/<id>/continue/).
+export type Phase = "audio" | "questions" | "continue" | "done";
 
 // Structurally identical to QuestionCard's `Question`, redeclared here so this
-// module stays free of anything that imports React.
+// module stays free of anything that imports React. The correct answer never
+// reaches the phone, so it is always "".
 export type PlayerQuestion = {
   id: number;
   order: number;
@@ -31,297 +24,224 @@ export type PlayerQuestion = {
   question_type: string;
   choices: string[];
   correct_answer: string;
+  audio_url: string;             // the question's recorded clip; "" when it has none
 };
 
 export type PlayerState = {
-  lesson: ApiLesson | null;
-  pathStep: ApiStep | null;
-  variant: Variant;
-  currentChunk: number | null;
-  remediationTarget: number | null;
-  questionIndex: number;
-  trackIndex: number;
-  // Bumped every time a question is served, including the same question id
-  // re-served after a miss. It is part of QuestionCard's key, so the card
-  // always remounts fresh (re-enabled, re-narrated) instead of keeping the
-  // answered/disabled state left behind by the attempt that just failed.
+  topic: { id: number; title: string } | null;
+  steps: ApiPackageStep[];
+  position: number;              // the step (concept) being taught
+  variant: Variant;              // which explanation type is playing
+  returnTo: number | null;       // set while detoured through a prerequisite
+  questionIndex: number;         // which of the step's questions is asked next
+  // Whether the step has a question to ask after this listening. False after
+  // a missed True/False with nothing fair left to ask: hear the re-teach, then
+  // move on (a missed TF is never asked again).
+  awaitingQuestion: boolean;
+  trackIndex: number;            // which audio clip of the step is playing
+  // The command said play no reading (play_audio false): back from a detour, the
+  // step already had every reading, so only the spoken lead-in plays before its question.
+  skipReading: boolean;
+  // Bumped every time a question is served, including the same question
+  // re-served after a miss. Part of QuestionCard's key, so the card always
+  // remounts fresh instead of keeping the answered state of the last attempt.
   askCount: number;
   phase: Phase;
-  // Spoken hand-off to play on entering the audio phase, before the narration
-  // it introduces. Null when there is nothing to explain.
+  // Spoken hand-off played before the narration it introduces (the student
+  // may not see the screen). Null when there is nothing to explain.
   announcement: string | null;
+  // The topic was already finished before it was opened this time.
+  finishedBefore: boolean;
 };
 
-// --- learning-path ("path mode") adapters -----------------------------------
-// A concept step is content-shaped like one track (one narration, one
-// audio_url per variant) with 2 questions (1 LOT + 1 HOT) attached, rather
-// than a lesson's whole playlist. These adapt it to the two shapes the player
-// already knows how to render, so nothing downstream needs a second render
-// path -- only where a step transitions to the next one differs.
+export const INITIAL_STATE: PlayerState = {
+  topic: null,
+  steps: [],
+  position: 1,
+  variant: "standard",
+  returnTo: null,
+  questionIndex: 0,
+  awaitingQuestion: true,
+  trackIndex: 0,
+  skipReading: false,
+  askCount: 0,
+  phase: "audio",
+  announcement: null,
+  finishedBefore: false,
+};
 
-// Which chunk's content/questions a step is currently showing: the
-// representative (chunkId == null, the default) or one of its alternates --
-// another uploaded PDF's own telling of the same concept, switched to by the
-// engine once the representative's own ladder (normal/simplified/elaborated)
-// is exhausted. Falls back to the representative if chunkId doesn't match
-// any alternate, mirroring the backend's own _chunk_content fallback.
-export function stepChunk(
-  step: ApiStep,
-  chunkId: number | null
-): { versions: ApiStepVersions; questions: ApiStepQuestion[] } {
-  if (chunkId != null) {
-    const alt = step.alternates.find((a) => a.learning_object_id === chunkId);
-    if (alt) return { versions: alt.versions, questions: alt.questions };
-  }
-  return { versions: step.versions, questions: step.questions };
+// --- reading the package ----------------------------------------------------
+
+export function currentStep(state: PlayerState): ApiPackageStep | null {
+  return state.steps.find((step) => step.position === state.position) ?? null;
 }
 
-// One track per part of the concept's passage, in reading order. A concept
-// the chunker split into "(Part 1 of 2)" pieces used to reach the player as
-// its first piece only -- the rest of the narration was never heard. The
-// player already walks a multi-track playlist and moves to the questions after
-// the last track, so a split concept needs nothing more than its parts.
-export function stepTracks(step: ApiStep, variant: Variant, chunkId: number | null): ApiTrack[] {
-  const { versions } = stepChunk(step, chunkId);
-  const version = versions[variant] ?? versions.normal;
-  const parts = version?.parts?.length
-    ? version.parts
-    : [{ text: version?.text ?? "", audio_url: version?.audio_url ?? "" }];
-  return parts.map((part, index) => ({
-    id: `step-${step.position}-${chunkId ?? "representative"}-${variant}-${index}`,
+/** "Concept 3 of 13": the package carries no titles, only audio. */
+export function stepLabel(state: PlayerState): string {
+  const index = state.steps.findIndex((step) => step.position === state.position);
+  return `Concept ${index + 1} of ${state.steps.length}`;
+}
+
+/** The clips to play for this step, in the current explanation type --
+ *  falling back to Standard if that type has no audio. */
+export function tracksFor(state: PlayerState): ApiTrack[] {
+  const step = currentStep(state);
+  if (!step) return [];
+  const urls = step.versions[state.variant] ?? step.versions.standard ?? Object.values(step.versions)[0] ?? [];
+  const label = stepLabel(state);
+  return urls.map((url, index) => ({
+    id: `step-${step.position}-${state.variant}-${index}`,
     order: index,
-    title: parts.length > 1 ? `${step.title} (part ${index + 1} of ${parts.length})` : step.title,
+    title: urls.length > 1 ? `${label} (part ${index + 1} of ${urls.length})` : label,
     type: "lesson_content",
-    audio_url: part.audio_url ?? "",
-    audio_ready: Boolean(part.audio_url),
-    text: part.text ?? "",
+    audio_url: url,
+    audio_ready: Boolean(url),
+    text: "",
   }));
 }
 
-// GeneratedQuestion never carries a correct_answer to the student (see
-// learning_path/HANDOFF.md § 3), so the mapped correct_answer is always "" --
-// QuestionCard's per-option "this was correct" highlight simply never
-// matches, which is the desired behavior here, not a bug.
-export function stepQuestions(step: ApiStep, chunkId: number | null): PlayerQuestion[] {
-  const { questions } = stepChunk(step, chunkId);
-  return questions.map((q, index) => ({
+function choicesOf(choices: string[] | Record<string, string> | null): string[] {
+  if (!choices) return [];
+  if (Array.isArray(choices)) return choices.map(String);
+  return Object.keys(choices)
+    .sort()
+    .map((key) => String(choices[key]));
+}
+
+/** The step's questions, then its reserve (asked only after a missed True/False). */
+function questionPool(step: ApiPackageStep) {
+  return [...step.questions, ...(step.reserve_questions ?? [])];
+}
+
+export function questionsFor(state: PlayerState): PlayerQuestion[] {
+  const step = currentStep(state);
+  if (!step) return [];
+  return questionPool(step).map((q, index) => ({
     id: q.id,
     order: index,
     prompt: q.text,
     question_type: q.format === "TF" ? "true_false" : "multiple_choice",
-    choices:
-      q.format === "MCQ" && q.choices
-        ? Object.keys(q.choices)
-            .sort()
-            .map((key) => q.choices![key])
-        : [],
+    choices: q.format === "TF" ? [] : choicesOf(q.choices),
     correct_answer: "",
+    audio_url: step.question_audio?.[String(q.id)] ?? "",
   }));
 }
 
-export function questionsFor(state: PlayerState): PlayerQuestion[] {
-  if (state.pathStep) return stepQuestions(state.pathStep, state.currentChunk);
-  return state.lesson?.questions ?? [];
-}
-
-/** QuestionCard's React key. Two consecutive presentations of a question must
- *  never share one: the engine re-serves the same question id after a miss,
- *  and a reused key makes React keep the card that is already answered and
- *  disabled, which is what used to leave a student stuck on "Not quite" with
- *  no way to respond to the re-teach. Exported so the screen and the test
- *  harness cannot drift apart on what counts as a new presentation. */
+/** QuestionCard's React key: a re-served question must never reuse the key of
+ *  the attempt that was just answered, or the card stays answered/disabled. */
 export function cardKey(state: PlayerState): string | null {
   const question = questionsFor(state)[state.questionIndex];
   if (!question) return null;
-  return `${question.id}-${state.variant}-${state.currentChunk ?? "rep"}-${state.askCount}`;
+  return `${question.id}-${state.position}-${state.variant}-${state.askCount}`;
 }
 
-export function tracksFor(state: PlayerState): ApiTrack[] {
-  if (state.pathStep) return stepTracks(state.pathStep, state.variant, state.currentChunk);
-  return state.lesson?.tracks ?? [];
+function indexOfQuestion(steps: ApiPackageStep[], position: number, questionId: number | null): number {
+  const step = steps.find((s) => s.position === position);
+  if (!step || questionId == null) return 0;
+  const index = questionPool(step).findIndex((q) => q.id === questionId);
+  return index >= 0 ? index : 0;
 }
 
 // --- spoken hand-offs -------------------------------------------------------
-// Every transition that changes what the student is about to hear announces
-// itself before the narration starts. This is the only channel that carries
-// it: the student cannot see the screen. QuestionCard has already said
-// "Correct" or "Not quite" by the time one of these plays, so none repeat it.
+// Every change in what the student is about to hear announces itself first.
+// QuestionCard has already said "Correct" or "Not quite", so none repeat it.
 
 export const RETEACH_LINE: Record<Variant, string> = {
-  normal: "Let's go over that idea again.",
+  standard: "Let's go over that idea again.",
   simplified: "Here's the same idea, explained more simply.",
   elaborated: "Let's go through that idea in more detail.",
 };
-export const CHUNK_SWITCH_LINE = "Here's another explanation of the same idea.";
 export const DETOUR_LINE = "First, a quick review of something this builds on.";
 export const RESUME_LINE = "Now, back to where you left off.";
 export const ADVANCE_LINE = "Next idea.";
 
-export const INITIAL_STATE: PlayerState = {
-  lesson: null,
-  pathStep: null,
-  variant: "normal",
-  currentChunk: null,
-  remediationTarget: null,
-  questionIndex: 0,
-  trackIndex: 0,
-  askCount: 0,
-  phase: "audio",
-  announcement: null,
-};
+/** The end-of-segment review: each question the student missed and never got
+ *  right, with its answer and why. Said only once the segment is over, so it can
+ *  never give away a question still to come. Null when nothing was missed. */
+export function reviewLine(review: ApiReviewItem[] | undefined): string | null {
+  if (!review || review.length === 0) return null;
+  const intro =
+    review.length === 1
+      ? "Before we go on, let's review the question you missed."
+      : `Before we go on, let's review the ${review.length} questions you missed.`;
+  const items = review.map((item) =>
+    [item.question, `The answer is ${item.answer}.`, item.explanation].filter(Boolean).join(" ")
+  );
+  return [intro, ...items].join(" ");
+}
 
-/** Where the student lands on opening a lesson: a resumed path step, or the
- *  lesson's own playlist / flat question list. */
-export function applyStart(pkg: ApiLesson, start: ApiStartResult | null): PlayerState {
-  const step = start?.current_step ?? null;
-  // A path step belongs to whichever topic the engine is on. If that is not
-  // the package we fetched, follow the engine's -- rendering its concept
-  // under another lesson's title and playlist would be showing two different
-  // topics at once.
-  const lesson = (step && start?.lesson) || pkg;
-  const base: PlayerState = { ...INITIAL_STATE, lesson, pathStep: step };
+function withReview(command: ApiCommand, line: string | null): string | null {
+  return [reviewLine(command.review), line].filter(Boolean).join(" ") || null;
+}
 
-  if (step) {
-    const variant = start!.learning_state.current_variant || "normal";
-    const currentChunk = start!.learning_state.current_chunk ?? null;
-    const assignedId = start!.learning_state.current_generated_question;
-    const active = stepChunk(step, currentChunk).questions;
-    const idx = active.findIndex((q) => q.id === assignedId);
-    return {
-      ...base,
-      variant,
-      currentChunk,
-      questionIndex: idx >= 0 ? idx : 0,
-      remediationTarget: start!.learning_state.remediation_target_position ?? null,
-      // Always via "audio": a version with no generated audio gets read aloud
-      // by the device rather than parking the student on a warning they
-      // cannot see.
-      phase: "audio",
-    };
-  }
+// --- transitions ------------------------------------------------------------
 
-  if (lesson.tracks.length === 0) {
-    return { ...base, phase: lesson.has_questions ? "questions" : "done" };
-  }
+/** Where the student lands on opening a topic: wherever they left off. */
+export function applyPackage(pkg: ApiTopicPackage): PlayerState {
+  const base: PlayerState = {
+    ...INITIAL_STATE,
+    topic: pkg.topic,
+    steps: pkg.steps,
+    position: pkg.progress.current_step_position,
+    variant: pkg.progress.current_variant || "standard",
+    returnTo: pkg.progress.return_to_position,
+    questionIndex: indexOfQuestion(pkg.steps, pkg.progress.current_step_position, pkg.next_question_id),
+    awaitingQuestion: pkg.next_question_id != null,
+  };
+  if (pkg.progress.completed) return { ...base, phase: "done", finishedBefore: true };
+  if (pkg.steps.length === 0) return { ...base, phase: "done" };
   return base;
 }
 
-/** The state transition for one graded answer. `res` is null for open-ended
- *  questions, which are never submitted and so never graded. */
-export function applyResult(state: PlayerState, res: ApiSubmitResult | null): PlayerState {
-  const questions = questionsFor(state);
+/** The last clip of a step has finished playing. */
+export function afterAudio(state: PlayerState): PlayerState {
+  const step = currentStep(state);
+  // No step loaded (the package hasn't arrived): nothing has been heard, so
+  // never treat it as a listen-only step that is done.
+  if (!step) return state;
+  const ask = state.awaitingQuestion && questionPool(step).length > 0;
+  return { ...state, phase: ask ? "questions" : "continue", announcement: null, skipReading: false };
+}
 
-  if (!res) {
-    // Nothing was graded, so the engine has no opinion -- step locally
-    // through this topic's own list, as the player did before path mode.
-    if (state.questionIndex + 1 < questions.length) {
-      return {
-        ...state,
-        questionIndex: state.questionIndex + 1,
-        askCount: state.askCount + 1,
-        announcement: null,
-      };
-    }
-    return { ...state, pathStep: null, phase: "done", announcement: null };
+/** Follow one command from the engine (after an answer, or after continuing
+ *  past a listen-only step). */
+export function applyCommand(state: PlayerState, command: ApiCommand): PlayerState {
+  if (command.action === "complete") {
+    return { ...state, phase: "done", announcement: reviewLine(command.review) };
   }
 
-  // The engine may have moved on to a different topic entirely (this one's
-  // chunks fully consumed) -- swap in its fresh package rather than rendering
-  // content belonging to wherever the student started, so the journey stays
-  // continuous instead of stalling at the topic boundary.
-  const lessonChanged = Boolean(res.lesson) && res.lesson!.id !== state.lesson?.id;
-  const lesson = lessonChanged ? res.lesson : state.lesson;
-
-  if (res.completed) {
-    return { ...state, lesson, pathStep: null, phase: "done", announcement: null };
-  }
-
-  if (res.current_step) {
-    const newStep = res.current_step;
-    const sameConcept = state.pathStep?.concept_id === newStep.concept_id;
-    const variant = res.current_variant ?? "normal";
-    const currentChunk = res.current_chunk ?? null;
-    const chunkChanged = currentChunk !== state.currentChunk;
-    const variantChanged = variant !== state.variant;
-    const remediationTarget = res.remediation_target_position ?? null;
-    const wasDetoured = state.remediationTarget !== null;
-
-    const active = stepChunk(newStep, currentChunk).questions;
-    const idx = active.findIndex((q) => q.id === res.next_question);
-
-    const next: PlayerState = {
-      ...state,
-      lesson,
-      pathStep: newStep,
-      variant,
-      currentChunk,
-      remediationTarget,
-      questionIndex: idx >= 0 ? idx : 0,
-      askCount: state.askCount + 1,
-      announcement: null,
-    };
-
-    // Same concept, same chunk, same variant: the LOT -> HOT move within a
-    // question just cleared. Nothing new to hear, so go straight to asking it.
-    if (sameConcept && !chunkChanged && !variantChanged) {
-      return { ...next, phase: "questions" };
-    }
-
-    // Everything else hands the student genuinely different material: an
-    // escalated variant of this same explanation (the miss path -- normal ->
-    // simplified -> elaborated, the same question waiting at the end of it),
-    // another PDF's telling of the concept, or a different concept entirely.
-    // All three get played before the question is put again -- re-asking
-    // without first re-teaching is what turned a miss into a dead end.
-    const announcement = !sameConcept
-      ? remediationTarget !== null
-        ? DETOUR_LINE
-        : wasDetoured
-        ? RESUME_LINE
-        : ADVANCE_LINE
-      : chunkChanged
-      ? CHUNK_SWITCH_LINE
-      : RETEACH_LINE[variant];
-
-    return { ...next, trackIndex: 0, phase: "audio", announcement };
-  }
-
-  // No path step in the result: either this topic was always legacy mode
-  // (flat lessons.Question list), or the engine just handed off from path
-  // mode into a legacy-mode topic. Either way, follow it rather than
-  // stopping -- find the assigned question in the (possibly fresh) lesson
-  // package and keep going.
-  const wasPathMode = state.pathStep !== null;
-  const nextQuestions = lesson?.questions ?? [];
-  const idx = nextQuestions.findIndex((q) => q.id === res.next_question);
-
+  const position = command.next_step_position ?? state.position;
+  const variant = (command.next_variant || state.variant) as Variant;
   const next: PlayerState = {
     ...state,
-    lesson,
-    pathStep: null,
-    variant: "normal",
-    currentChunk: null,
-    remediationTarget: null,
-    announcement: null,
-  };
-
-  if (idx < 0 && res.next_question == null) {
-    return { ...next, phase: "done" };
-  }
-
-  // Legacy mode re-serves the same question id after a miss too (see
-  // AdaptiveEngine.evaluate: it only advances once the answer is right or
-  // MAX_QUESTION_ATTEMPTS is spent), so the card needs the same forced
-  // remount the path-mode branch above takes.
-  const served: PlayerState = {
-    ...next,
-    questionIndex: idx >= 0 ? idx : 0,
+    position,
+    variant,
+    returnTo: command.return_to_position,
+    questionIndex: indexOfQuestion(state.steps, position, command.next_question_id),
+    awaitingQuestion: command.next_question_id != null,
     askCount: state.askCount + 1,
+    announcement: null,
+    skipReading: false,
   };
 
-  if (wasPathMode || lessonChanged) {
-    const hasTracks = (lesson?.tracks?.length ?? 0) > 0;
-    return { ...served, trackIndex: 0, phase: hasTracks ? "audio" : "questions" };
+  switch (command.action) {
+    case "next_question": // right answer, more of this step to ask
+    case "retry": //         wrong answer, ask it again
+      return { ...next, phase: "questions" };
+    case "escalate_variant": // re-teach in the next explanation type, then ask again
+      return { ...next, trackIndex: 0, phase: "audio", announcement: RETEACH_LINE[variant] };
+    case "regress": // detour through a prerequisite
+      return { ...next, trackIndex: 0, phase: "audio", announcement: DETOUR_LINE };
+    case "resume": // back from the detour
+      return {
+        ...next,
+        trackIndex: 0,
+        phase: "audio",
+        announcement: withReview(command, RESUME_LINE),
+        skipReading: command.play_audio === false,
+      };
+    case "advance": // next concept
+    default:
+      return { ...next, trackIndex: 0, phase: "audio", announcement: withReview(command, ADVANCE_LINE) };
   }
-  return served;
 }

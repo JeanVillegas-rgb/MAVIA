@@ -389,13 +389,16 @@
   color: #aab4c4;
 }
 
-.mv-side a,
+/* Nav links only. The Add Course button is an <a> in this column too, but it
+   is a white pill rather than a link on the dark panel -- pale text on it is
+   white on white. It keeps the colour .mv-btn--light gives it. */
+.mv-side a:not(.mv-side__cta),
 .mv-side button {
   color: #dbe3ee;
   border-color: transparent;
 }
 
-.mv-side a:hover {
+.mv-side a:not(.mv-side__cta):hover {
   background: var(--mv-dark-soft);
   color: #ffffff;
 }
@@ -561,4 +564,258 @@ body {
 .app-shell > .learning-path-page::-webkit-scrollbar-track,
 .cp-layout > .cp-panel::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* --- Review steps: tracker on top, Back/Next bottom-right ---------------- */
+
+/* A block, not a grid: a sticky grid item can only move inside its own grid
+   row, so the tracker would scroll away with the first step's content. */
+.review-steps-frame {
+  display: block;
+  min-width: 0;
+}
+
+.review-step-indicator.is-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-bottom: 1rem;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+/* Room under the last row so the pinned buttons never sit on top of it. */
+.topic-workspace-shell > .topic-detail-page {
+  padding-bottom: 7rem;
+}
+
+.review-step-dock {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  max-width: calc(100vw - 3rem);
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--mv-border);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+  font-family: var(--mv-font);
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.review-step-dock .publish-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.review-step-dock small,
+.review-step-dock-note {
+  max-width: 20rem;
+  color: var(--mv-muted);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .review-step-dock {
+    right: 1rem;
+    bottom: 1rem;
+    left: 1rem;
+    max-width: none;
+  }
+}
+
+.topic-detail-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* A tip for a control that cannot be used yet. It sits on a wrapper because a
+   disabled control does not reliably receive hover. */
+.has-tip {
+  position: relative;
+  display: inline-flex;
+}
+
+.has-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 70;
+  width: max-content;
+  max-width: 20rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1f2a37;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.has-tip:hover::after,
+.has-tip:focus-within::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Generate / Manual: one area, two views. */
+.question-mode-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--mv-border);
+}
+
+.question-mode-tabs > button {
+  margin-bottom: -1px;
+  padding: 0.6rem 1.1rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--mv-muted);
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.question-mode-tabs > button[aria-selected="true"] {
+  color: var(--mv-brand-600);
+  border-bottom-color: var(--mv-brand-600);
+}
+
+/* Reconfirm review: one plain row per approved part that would move. */
+.reconfirm-review-modal {
+  width: min(640px, calc(100vw - 2rem));
+}
+
+.reconfirm-change-list {
+  display: grid;
+  gap: 0.6rem;
+  max-height: 50vh;
+  margin: 0.75rem 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.reconfirm-change-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--mv-border);
+  border-radius: 10px;
+}
+
+.reconfirm-change-list small {
+  display: block;
+  color: var(--mv-muted);
+}
+
+.reconfirm-change-list p {
+  margin: 0.3rem 0 0;
+  font-size: 0.9rem;
+}
+
+.reconfirm-change-choice {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+}
+
+/* A labelled question the learner quiz has no tier for. Plain text with a
+   dotted underline, so it reads as something to hover for the reason. */
+.question-not-served {
+  color: var(--mv-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
+/* LOTS/HOTS counters on each concept in the Questions step. */
+.question-bank-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.question-bank-head h5 {
+  margin: 0;
+}
+
+.tier-counters {
+  display: grid;
+  justify-items: end;
+  gap: 0.35rem;
+}
+
+.tier-counter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--mv-muted);
+}
+
+.tier-counter-boxes {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.tier-box {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 1.5px solid #c9d1e0;
+  border-radius: 3px;
+  background: #ffffff;
+}
+
+.tier-box.is-one { border-color: #c0392b; background: #e05545; }
+.tier-box.is-two { border-color: #b7791f; background: #f2c14e; }
+.tier-box.is-enough { border-color: #1f7a45; background: #34a565; }
+
+.tier-counter-extra {
+  min-width: 1rem;
+  color: var(--mv-ink, #1f2a37);
+  font-weight: 700;
+}
+
+/* A concept's Standard version, one numbered, titled entry per learning object.
+   Shared by the learning path card, Content versions and the Questions step. */
+.bundle-parts {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.bundle-parts strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.bundle-parts p {
+  margin: 0.15rem 0 0;
+  line-height: 1.5;
 }

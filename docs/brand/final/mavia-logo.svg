@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500"><defs>
+<linearGradient id="r500" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#0e6c8c"/></linearGradient>
+<linearGradient id="w500" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc20e"/><stop offset="1" stop-color="#ffc20e"/></linearGradient>
+<linearGradient id="m500" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1aa0d0"/><stop offset="1" stop-color="#0b5878"/></linearGradient>
+<filter id="s500" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0b1230" flood-opacity=".35"/></filter></defs>
+<g transform="rotate(-40 245 243)">
+<path d="M383 107 A194 194 0 1 0 383 380" fill="none" stroke="url(#r500)" stroke-width="32" stroke-linecap="round"/>
+<path d="M386 179 A156 156 0 0 1 386 307" fill="none" stroke="url(#w500)" stroke-width="29" stroke-linecap="round"/>
+<path d="M426 132 A228 228 0 0 1 426 355" fill="none" stroke="url(#w500)" stroke-width="29" stroke-linecap="round"/></g>
+<path d="M158 330 V170 L235 312 L312 170 V330" fill="none" stroke="url(#m500)" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="158" cy="170" r="30" fill="#ffffff" filter="url(#s500)"/><circle cx="158" cy="250" r="26" fill="none" stroke="#ffffff" stroke-width="7.5" stroke-opacity=".9"/><circle cx="158" cy="330" r="30" fill="#ffffff" filter="url(#s500)"/><circle cx="312" cy="170" r="30" fill="#ffffff" filter="url(#s500)"/><circle cx="312" cy="250" r="26" fill="none" stroke="#ffffff" stroke-width="7.5" stroke-opacity=".9"/><circle cx="312" cy="330" r="26" fill="none" stroke="#ffffff" stroke-width="7.5" stroke-opacity=".9"/></svg>

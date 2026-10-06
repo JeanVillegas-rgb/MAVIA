@@ -7,6 +7,7 @@ import TextField from "@/components/TextField";
 import Button from "@/components/Button";
 import Card from "@/components/Card";
 import { resendVerification } from "@/api/client";
+import { liveRegion, useAnnouncement } from "@/hooks/useAnnouncement";
 import { colors, spacing } from "@/theme";
 
 // The verification link itself opens in the phone's browser (it points at
@@ -17,6 +18,8 @@ export default function VerifyEmailScreen() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  useAnnouncement(error);
+  useAnnouncement(message);
 
   async function handleResend() {
     if (!/\S+@\S+\.\S+/.test(email)) {
@@ -46,7 +49,7 @@ export default function VerifyEmailScreen() {
         </Text>
 
         {message ? (
-          <Text style={styles.message}>{message}</Text>
+          <Text style={styles.message} {...liveRegion}>{message}</Text>
         ) : (
           <View style={{ marginTop: spacing.md }}>
             <TextField
@@ -60,7 +63,7 @@ export default function VerifyEmailScreen() {
                 setError("");
               }}
             />
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? <Text style={styles.error} {...liveRegion}>{error}</Text> : null}
             <Button
               label={sending ? "Sending…" : "Resend verification email"}
               onPress={handleResend}

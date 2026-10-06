@@ -77,7 +77,7 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(self.group.label, "Solid")
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_group_uses_cleaned_first_pdf_normal_title(self, classify):
+    def test_group_uses_cleaned_first_pdf_standard_title(self, classify):
         first = self._object(
             self._material("PDF one", 0), SHORT, title="1. Solid (Part 1 of 2)"
         )
@@ -226,7 +226,7 @@ class VersionAssignmentTests(TestCase):
         self.assertIn("facts_not_kept", result["needs_confirmation"][0]["review_issues"])
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_a_weakly_matched_normal_idea_needs_teacher_review(self, classify):
+    def test_a_weakly_matched_standard_idea_needs_teacher_review(self, classify):
         second, result = self._assign(
             classify, self._row("ELABORATED"), facts_kept=False,
             adds_content=True, weakly_covered_sentences=1,
@@ -336,7 +336,34 @@ class VersionAssignmentTests(TestCase):
         self.assertEqual(classify.call_count, 1)
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_first_relevant_pdf_stays_normal_even_if_llm_prefers_second(self, classify):
+    def test_reading_a_concept_again_reuses_the_role_check(self, classify):
+        """Every page load reads the concept; re-measuring there loaded the
+        grouping models and logged on screens that have nothing to do with versions."""
+        second, _first_run = self._assign(classify, self._row("ELABORATED"), adds_content=True)
+        self.group.refresh_from_db()
+
+        with self._measures(adds_content=True) as measure:
+            again = assign_group_versions(self.group)
+
+        measure.assert_not_called()
+        self.assertEqual(again["bundle_roles"], {second.material_id: "ELABORATED"})
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_a_changed_text_is_checked_again(self, classify):
+        second, _first_run = self._assign(classify, self._row("ELABORATED"), adds_content=True)
+        second.content += " Particles also move faster when heated."
+        second.save()
+        self.group.refresh_from_db()
+
+        # A changed text voids the stored answer; the next sort asks again and
+        # the stored check is not reused for text it never measured.
+        with self._measures(adds_content=True) as measure:
+            assign_group_versions(self.group, use_llm=True)
+
+        measure.assert_called()
+
+    @patch("course.version_assignment.classify_group_versions")
+    def test_first_relevant_pdf_stays_standard_even_if_llm_prefers_second(self, classify):
         first = self._object(self._material("PDF one", 0), SHORT)
         second = self._object(self._material("PDF two", 5), LONG)
         classify.return_value = {
@@ -347,7 +374,7 @@ class VersionAssignmentTests(TestCase):
         result = assign_group_versions(self.group, use_llm=True)
 
         self.assertEqual(result["representative_id"], first.id)
-        self.assertEqual(result["normal_material_id"], first.material_id)
+        self.assertEqual(result["standard_material_id"], first.material_id)
         classify.assert_called_once()
         self.assertEqual(classify.call_args.kwargs["representative"].id, first.id)
 
@@ -645,7 +672,7 @@ class VersionAssignmentTests(TestCase):
         self.assertTrue(result["assigned"][0]["persisted"])
 
     @patch("course.version_assignment.classify_group_versions")
-    def test_adding_a_second_pdf_does_not_replace_the_existing_normal(self, classify):
+    def test_adding_a_second_pdf_does_not_replace_the_existing_standard(self, classify):
         first = self._object(self._material("First PDF", 0), SHORT)
         LessonVariant.objects.create(learning_object=first, variant="SIMPLIFIED", narration="Previously generated.")
         second = self._object(self._material("New PDF", 5), MIDDLING)
@@ -675,7 +702,7 @@ class BundleRoleTests(TestCase):
         self.second = LearningMaterial.objects.create(
             course=self.course, outline_node=self.topic, title="B", generated_json=dict(confirmed))
         self.group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Solid")
-        self.normal = LearningObject.objects.create(
+        self.standard = LearningObject.objects.create(
             material=self.first, group=self.group, title="Solid", order=0,
             content=(
                 "A solid has a definite shape and a definite volume because its constituent "
@@ -694,8 +721,8 @@ class BundleRoleTests(TestCase):
     def test_the_whole_bundle_takes_one_role(self):
         outcome = assign_group_versions(self.group)
 
-        self.assertEqual(outcome["normal_material_id"], self.first.id)
-        self.assertEqual(outcome["representative_id"], self.normal.id)
+        self.assertEqual(outcome["standard_material_id"], self.first.id)
+        self.assertEqual(outcome["representative_id"], self.standard.id)
         self.assertEqual(outcome["bundle_roles"], {self.second.id: "SIMPLIFIED"})
 
     @patch("course.version_assignment.classify_group_versions")
@@ -704,7 +731,7 @@ class BundleRoleTests(TestCase):
         # records one, so the supplied version exists only once the concept
         # has actually been classified -- which is how the teacher gets here.
         classify.return_value = {
-            self.normal.id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
+            self.standard.id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
             self.simple_lead.id: {"slot": "SIMPLIFIED", "confidence": 0.9, "reason": "Plainer."},
         }
         assign_group_versions(self.group, use_llm=True)
@@ -724,26 +751,26 @@ class BundleRoleTests(TestCase):
 
         self.assertEqual(outcome["bundle_roles"], {self.second.id: "ELABORATED"})
 
-    def test_unassigned_pdf_can_become_normal_without_forcing_old_normal_into_a_slot(self):
+    def test_unassigned_pdf_can_become_standard_without_forcing_old_standard_into_a_slot(self):
         assign_source_as_representative(self.group, self.simple_lead)
 
         self.group.refresh_from_db()
-        self.normal.refresh_from_db()
+        self.standard.refresh_from_db()
         self.simple_lead.refresh_from_db()
-        self.assertEqual(self.group.version_selection["normal_material_id"], self.second.id)
+        self.assertEqual(self.group.version_selection["standard_material_id"], self.second.id)
         self.assertEqual(self.group.version_selection["bundle_roles"], {})
-        self.assertIsNone(self.normal.represented_by_id)
+        self.assertIsNone(self.standard.represented_by_id)
         self.assertIsNone(self.simple_lead.represented_by_id)
         outcome = assign_group_versions(self.group)
         self.assertEqual(outcome["needs_confirmation"][0]["material_id"], self.first.id)
 
-    def test_the_normal_bundle_is_reported_in_document_order(self):
+    def test_the_standard_bundle_is_reported_in_document_order(self):
         extra = LearningObject.objects.create(
             material=self.first, group=self.group, title="Particle diagram", order=1,
             section_title="Solid", content="Particles sit in a grid.",
         )
 
-        self.assertEqual(version_bundles(self.group)["NORMAL"], [self.normal, extra])
+        self.assertEqual(version_bundles(self.group)["STANDARD"], [self.standard, extra])
 
 
 class ReadDoesNotDecideRolesTests(TestCase):
@@ -843,12 +870,12 @@ class MeasuredCheckTests(TestCase):
     not how accurately Gemma classifies.
     """
 
-    NORMAL = "Solids have a fixed shape and volume."
+    STANDARD = "Solids have a fixed shape and volume."
 
-    def measure(self, candidate, normal=None):
+    def measure(self, candidate, standard=None):
         from .content_measures import measure_versions
 
-        return measure_versions(normal or self.NORMAL, candidate)
+        return measure_versions(standard or self.STANDARD, candidate)
 
     def test_a_simplification_keeps_the_facts_adds_nothing_and_is_easier(self):
         result = self.measure("A solid keeps its shape and takes up a fixed amount of space.")
@@ -877,13 +904,13 @@ class MeasuredCheckTests(TestCase):
 
         from .content_measures import measure_versions
 
-        normal = "Matter has mass. Matter takes up space."
+        standard = "Matter has mass. Matter takes up space."
         candidate = "Matter has mass. Objects have weight."
         with patch("course.content_measures._similarities", return_value=np.array([
             [0.95, 0.45],
             [0.31, 0.30],
         ])):
-            result = measure_versions(normal, candidate)
+            result = measure_versions(standard, candidate)
 
         self.assertGreater(result["mean_coverage"], 0.55)
         self.assertEqual(result["weakly_covered_sentences"], 1)
@@ -893,7 +920,7 @@ class MeasuredCheckTests(TestCase):
         """FKGL read this as easy; Dale-Chall counts the unfamiliar words."""
         result = self.measure(
             "Solids resist deformation: intermolecular forces lock particles into a lattice.",
-            normal="A solid keeps its shape because its particles are held tightly in place and can only vibrate.",
+            standard="A solid keeps its shape because its particles are held tightly in place and can only vibrate.",
         )
 
         self.assertFalse(result["easier"])

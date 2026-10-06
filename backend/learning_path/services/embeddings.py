@@ -93,7 +93,7 @@ def embed(sentences, encoder=None, cache_path=None):
     try:
         found = _read_cache(path, keys)
     except (sqlite3.Error, OSError) as exc:
-        logger.warning("Learning-path vector cache unusable at %s: %s", path, exc)
+        logger.warning("[Learning path] vector cache at %s is unusable, recomputing: %s", path, exc)
         path, found = None, {}
     missing = [(key, sentence) for key, sentence in dict(zip(keys, sentences)).items() if key not in found]
     if missing:
@@ -107,6 +107,6 @@ def embed(sentences, encoder=None, cache_path=None):
             try:
                 _write_cache(path, fresh)
             except (sqlite3.Error, OSError) as exc:
-                logger.warning("Could not store vectors in %s: %s", path, exc)
+                logger.warning("[Learning path] could not save vectors to the cache at %s: %s", path, exc)
         found.update(fresh)
     return np.array([found[key] for key in keys], dtype="float32")

@@ -135,7 +135,7 @@ def learn_weights(vote_rows):
     """``(weights, agreement)`` per clue, from agreement with the other clues' majority.
 
     Reported by the calibration, not used for verdicts: weights cannot correct
-    errors the content clues share (measured on gold 62/152, 2026-09-30).
+    errors the content clues share (measured 2026-09-30).
     """
     agreement = {}
     for clue in CLUES:

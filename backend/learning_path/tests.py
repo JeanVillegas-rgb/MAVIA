@@ -208,7 +208,7 @@ class PublishedPathTests(TopicFixture):
         self.assertEqual(solid["position"], 2)
         self.assertEqual(solid["depth"], 1)
         self.assertEqual(solid["concept_id"], self.groups["Solid"].id)
-        self.assertEqual(solid["versions"]["normal"]["text"], "Solid is taught here.")
+        self.assertEqual(solid["versions"]["standard"]["text"], "Solid is taught here.")
         self.assertEqual(solid["versions"]["simplified"]["text"], "Solids keep shape.")
         self.assertIsNone(solid["versions"]["elaborated"])
         self.assertEqual(solid["sources"], [{"material_id": self.material.id, "title": "Lesson one"}])
@@ -247,14 +247,14 @@ class PublishedPathTests(TopicFixture):
         self.assertEqual(response.status_code, 404)
         self.assertIsNone(get_published_path(self.topic))
 
-    def test_normal_variant_uses_the_already_generated_lesson_audio(self):
-        """The "normal" variant's audio isn't synthesized separately (unlike
+    def test_standard_variant_uses_the_already_generated_lesson_audio(self):
+        """The "standard" variant's audio isn't synthesized separately (unlike
         simplified/elaborated, via LessonVariant) -- it's whatever the
         material's own lesson-playlist TTS pass already produced for this
         LearningObject's narration. Each playlist entry names the
         LearningObject it speaks for (see course.models.audio_clip_for).
         Regression test for the mobile "quick check comes before the lesson
-        chunk" bug -- normal audio was always "" before this, so path mode
+        chunk" bug -- standard audio was always "" before this, so path mode
         skipped straight to questions for every concept's first attempt."""
         self.material.generated_json = {
             **self.material.generated_json,
@@ -269,11 +269,11 @@ class PublishedPathTests(TopicFixture):
         body = self._get("TEACHER").json()
 
         by_title = {step["title"]: step for step in body["steps"]}
-        self.assertEqual(by_title["Matter"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/matter.mp3")
-        self.assertEqual(by_title["Solid"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/solid.mp3")
-        self.assertEqual(by_title["Liquid"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/liquid.mp3")
+        self.assertEqual(by_title["Matter"]["versions"]["standard"]["audio_url"], "/media/audio_lessons/matter.mp3")
+        self.assertEqual(by_title["Solid"]["versions"]["standard"]["audio_url"], "/media/audio_lessons/solid.mp3")
+        self.assertEqual(by_title["Liquid"]["versions"]["standard"]["audio_url"], "/media/audio_lessons/liquid.mp3")
 
-    def test_normal_audio_from_a_playlist_written_before_objects_were_named(self):
+    def test_standard_audio_from_a_playlist_written_before_objects_were_named(self):
         """Materials processed before playlist entries named their object keep
         their recordings: those entries are matched by position instead."""
         self.material.generated_json = {
@@ -290,14 +290,14 @@ class PublishedPathTests(TopicFixture):
         body = self._get("TEACHER").json()
 
         by_title = {step["title"]: step for step in body["steps"]}
-        self.assertEqual(by_title["Solid"]["versions"]["normal"]["audio_url"], "/media/audio_lessons/solid.mp3")
-        self.assertEqual(by_title["Solid"]["versions"]["normal"]["parts"][0]["audio_url"], "/media/audio_lessons/solid.mp3")
+        self.assertEqual(by_title["Solid"]["versions"]["standard"]["audio_url"], "/media/audio_lessons/solid.mp3")
+        self.assertEqual(by_title["Solid"]["versions"]["standard"]["parts"][0]["audio_url"], "/media/audio_lessons/solid.mp3")
 
-    def test_normal_variant_audio_is_blank_when_the_playlist_has_no_match(self):
+    def test_standard_variant_audio_is_blank_when_the_playlist_has_no_match(self):
         body = self._get("TEACHER").json()
 
         for step in body["steps"]:
-            self.assertEqual(step["versions"]["normal"]["audio_url"], "")
+            self.assertEqual(step["versions"]["standard"]["audio_url"], "")
 
     def test_the_python_function_and_the_api_agree(self):
         body = self._get("TEACHER").json()
@@ -307,13 +307,15 @@ class PublishedPathTests(TopicFixture):
             [step["concept_id"] for step in get_published_path(self.topic)["steps"]],
         )
 
-    def test_a_step_never_serves_more_than_one_lot_and_one_hot(self):
-        """Question generation isn't guaranteed to cap itself at one final
-        question per thinking_order per node -- seen on real published data
-        (3-4 final rows on one concept). A step is one assessment, not a
-        quiz bank: cap to the earliest LOT and earliest HOT, LOT first."""
+    def test_a_step_serves_two_lot_and_one_hot_at_most(self):
+        """Question generation isn't guaranteed to cap itself per
+        thinking_order per node -- seen on real published data (3-4 final rows
+        on one concept). A step carries two lower-order questions and one
+        higher-order, earliest first, LOT before HOT: the spare LOT is what
+        lets a missed question be replaced by a different one rather than
+        asked again (see adaptive/services.py::evaluate_path)."""
         GeneratedQuestion.objects.create(
-            node=self.objects["Solid"], question_text="Second LOT (should be dropped)",
+            node=self.objects["Solid"], question_text="Second LOT (kept)",
             question_format="TF", correct_answer="True", thinking_order="LOT",
             bloom_level="remember", status="final",
         )
@@ -332,7 +334,11 @@ class PublishedPathTests(TopicFixture):
 
         self.assertEqual(
             [(q["text"], q["thinking_order"]) for q in solid["questions"]],
-            [("Does a solid keep its shape?", "LOT"), ("A HOT question", "HOT")],
+            [
+                ("Does a solid keep its shape?", "LOT"),
+                ("Second LOT (kept)", "LOT"),
+                ("A HOT question", "HOT"),
+            ],
         )
 
 
@@ -498,19 +504,21 @@ class SplitPassageTests(TestCase):
         )
 
     def test_every_part_is_narrated_in_reading_order_with_its_own_recording(self):
-        normal = self.path["steps"][0]["versions"]["normal"]
+        standard = self.path["steps"][0]["versions"]["standard"]
 
         self.assertEqual(
-            normal["parts"],
+            [{"text": part["text"], "audio_url": part["audio_url"]} for part in standard["parts"]],
             [
                 {"text": "Flowering plants reproduce sexually.", "audio_url": "/media/part-1.mp3"},
                 {"text": "A flower holds male and female parts.", "audio_url": "/media/part-2.mp3"},
             ],
         )
+        # Each part names the object it narrates, so a player can label it.
+        self.assertTrue(all(part["title"] for part in standard["parts"]))
         # No single file covers both parts, so the legacy field stays empty
         # rather than pointing at a recording of half the text.
-        self.assertEqual(normal["audio_url"], "")
-        self.assertIn("A flower holds male and female parts.", normal["text"])
+        self.assertEqual(standard["audio_url"], "")
+        self.assertIn("A flower holds male and female parts.", standard["text"])
 
     def test_a_rung_is_offered_only_when_every_part_has_it(self):
         simplified = self.path["steps"][0]["versions"]["simplified"]
@@ -527,13 +535,6 @@ class SplitPassageTests(TestCase):
         self.assertEqual(self.path["steps"][0]["alternates"], [])
 
     def test_a_single_chunk_keeps_its_own_recording(self):
-        stamen = self.path["steps"][1]["versions"]["normal"]
+        stamen = self.path["steps"][1]["versions"]["standard"]
         self.assertEqual(stamen["audio_url"], "/media/stamen.mp3")
         self.assertEqual(len(stamen["parts"]), 1)
-
-    def test_the_engine_starts_on_the_split_concept_instead_of_skipping_it(self):
-        from adaptive.services import resolve_path_start
-
-        _path, step, question = resolve_path_start(self.topic)
-        self.assertEqual(step["position"], 1)
-        self.assertEqual(question["id"], self.question.id)

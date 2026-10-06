@@ -1,6 +1,6 @@
-"""The teacher's Generate button must cover the whole Normal bundle.
+"""The teacher's Generate button must cover the whole Standard bundle.
 
-A concept's Normal version can be several objects of one PDF -- a comparison
+A concept's Standard version can be several objects of one PDF -- a comparison
 section written as Shape, Volume, Particle arrangement and Flow. The review
 screen shows a slot as written only once every one of them has a version, but
 the button generated for the representative alone. So it wrote one row of four,
@@ -41,8 +41,8 @@ class GenerateButtonBundleTests(TestCase):
             course=self.course, outline_node=self.topic, title="B", generated_json=dict(confirmed))
         self.group = LearningObjectGroup.objects.create(outline_node=self.topic, label="Comparing")
 
-        # The Normal version is one PDF's comparison section: four objects.
-        self.normal = [
+        # The Standard version is one PDF's comparison section: four objects.
+        self.standard = [
             LearningObject.objects.create(
                 material=self.first, group=self.group, title=title, order=index,
                 section_title="Comparing", content=content,
@@ -65,7 +65,7 @@ class GenerateButtonBundleTests(TestCase):
         )
         with patch("course.version_assignment.classify_group_versions") as classify:
             classify.return_value = {
-                self.normal[0].id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
+                self.standard[0].id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
                 self.elaborated.id: {"slot": "ELABORATED", "confidence": 0.9, "reason": "Fuller."},
             }
             assign_group_versions(self.group, use_llm=True)
@@ -78,7 +78,7 @@ class GenerateButtonBundleTests(TestCase):
             {"slot": slot}, format="json",
         )
 
-    def test_every_object_of_the_normal_bundle_gets_the_version(self):
+    def test_every_object_of_the_standard_bundle_gets_the_version(self):
         with patch("course.variant_generator._request_variants") as request:
             request.return_value = {"SIMPLIFIED": "Short.", "ELABORATED": "Longer."}
             response = self.generate()
@@ -86,10 +86,10 @@ class GenerateButtonBundleTests(TestCase):
         self.assertEqual(response.status_code, 200, getattr(response, "data", None))
         written = set(
             LessonVariant.objects.filter(
-                learning_object__in=self.normal, variant="SIMPLIFIED",
+                learning_object__in=self.standard, variant="SIMPLIFIED",
             ).values_list("learning_object_id", flat=True)
         )
-        self.assertEqual(written, {item.id for item in self.normal})
+        self.assertEqual(written, {item.id for item in self.standard})
 
     def test_a_second_press_does_not_leave_the_slot_half_written(self):
         """The stuck state: one row written, three missing, and no way forward."""
@@ -100,9 +100,9 @@ class GenerateButtonBundleTests(TestCase):
 
         self.assertEqual(
             LessonVariant.objects.filter(
-                learning_object__in=self.normal, variant="SIMPLIFIED",
+                learning_object__in=self.standard, variant="SIMPLIFIED",
             ).count(),
-            len(self.normal),
+            len(self.standard),
         )
 
     def test_a_role_a_pdf_already_supplies_is_not_generated_over(self):
@@ -113,6 +113,6 @@ class GenerateButtonBundleTests(TestCase):
 
         self.assertFalse(
             LessonVariant.objects.filter(
-                learning_object__in=self.normal, variant="ELABORATED",
+                learning_object__in=self.standard, variant="ELABORATED",
             ).exists()
         )

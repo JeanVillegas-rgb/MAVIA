@@ -32,7 +32,8 @@ THREE_VOTES = "three-votes"
 REFERENCE_ORDER = "reference-order"
 CLEANER_EDGES = "cleaner-edges"
 RULES = (THREE_VOTES, REFERENCE_ORDER, CLEANER_EDGES)
-# v6.1 since the final check of 2026-10-02 (docs/learning-path-v6-1-evaluation-2026-10-02.md).
+# v6.1 since the final check of 2026-10-02 (docs/learning-path-v6-1-evaluation-2026-10-02.md);
+# 6.2 (2026-10-06) also names a concept by its parts' titles, within a shared file.
 DEFAULT_RULE = CLEANER_EDGES
 
 _PDF_ORDER = {1: SHARED, -1: SHARED, 0: DISAGREE, None: NONE_SHARED}
@@ -125,7 +126,7 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None, 
     ``runtime_instance`` is kept for callers and ignored. Without the encoder
     the verdicts are the same; only relatedness and meaning are not recorded.
     ``without`` silences clues, for the evaluation's ablations. ``rule`` is
-    ``REFERENCE_ORDER`` (v6), ``CLEANER_EDGES`` (v6.1) or ``THREE_VOTES`` (v7, not
+    ``REFERENCE_ORDER`` (v6), ``CLEANER_EDGES`` (v6.1, 6.2 with part names) or ``THREE_VOTES`` (v7, not
     adopted); default ``DEFAULT_RULE``. v6's text rule decides whether a link exists.
     """
     concepts = list(concepts)
@@ -142,6 +143,10 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None, 
     meaning_cutoff = calibration["meaning_cutoff"]
     rule = rule or DEFAULT_RULE
     cleaner = rule == CLEANER_EDGES
+    if not cleaner:
+        # Part names came after v6 and v7 were measured; those rules keep their own reading.
+        for text in texts:
+            text.part_names = ()
     min_terms = MIN_SHARED_TERMS if cleaner else 1
     matrix = build_block_matrix(texts, owners) if rule == THREE_VOTES else None
 
@@ -178,5 +183,6 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None, 
                 "cross_section": crosses_sections(prerequisite.concept, dependent.concept),
             })
             if cleaner:
-                decisions[-1]["evidence"]["version"] = "6.1"
+                # 6.2: a concept is also named by its parts' titles, within a shared file.
+                decisions[-1]["evidence"]["version"] = "6.2"
     return decisions

@@ -15,7 +15,7 @@
 // past on their first visit, so it earns its length or it loses them.
 
 import type { AnswerLetter } from "@/input/brailleKeypad";
-import { ANSWER_KEYS, COMMAND_KEYS } from "./script";
+import { ANSWER_KEYS, COMMAND_KEYS, type GuideSectionId } from "./script";
 
 /** How an answer was given. A drill that teaches one way of answering has to
  *  be able to tell it apart from the others, or "tap three times for C" would
@@ -31,6 +31,11 @@ export type ExpectedInput =
 
 export type Drill = {
   id: string;
+  /** The guide section this drill rehearses. Hearing a section and then doing
+   *  the move it just described is the point: the words are the lesson, the
+   *  drill is the practice. `GuideMenu` plays a section and then runs the
+   *  drills tagged with it. */
+  section: GuideSectionId;
   /** Teaches the move and asks for it, in one breath. */
   prompt: string;
   expects: ExpectedInput;
@@ -43,6 +48,7 @@ export type Drill = {
 export const DRILLS: Drill[] = [
   {
     id: "swipe",
+    section: "moving",
     prompt:
       "Let us try each one. First, finding a lesson. " +
       "Put a finger anywhere on the screen and slide it to the right. Go ahead.",
@@ -52,6 +58,7 @@ export const DRILLS: Drill[] = [
   },
   {
     id: "letter",
+    section: "choosing",
     prompt:
       "Now, choosing. I read four things out, each with a letter. " +
       "A, Science. B, Maths. C, English. D, History. " +
@@ -62,6 +69,7 @@ export const DRILLS: Drill[] = [
   },
   {
     id: "repeat",
+    section: "listening",
     prompt:
       "If anything is ever read too quickly, you can hear it again. " +
       `Press the ${COMMAND_KEYS.repeat} key now.`,
@@ -74,6 +82,7 @@ export const DRILLS: Drill[] = [
   // pressed a key never found out that tapping works at all.
   {
     id: "answer-tap",
+    section: "answering",
     prompt:
       "Now a question, the way your lessons will ask them. " +
       "Which of these is a solid? A, water. B, air. C, ice. D, steam. " +
@@ -85,6 +94,7 @@ export const DRILLS: Drill[] = [
   },
   {
     id: "answer-key",
+    section: "answering",
     prompt:
       "Now the same answer with a key. " +
       `Press the key marked ${ANSWER_KEYS.c}.`,
@@ -96,6 +106,7 @@ export const DRILLS: Drill[] = [
   },
   {
     id: "back",
+    section: "moving",
     prompt:
       "Last one. To leave anything at all, go back. " +
       `Press the ${COMMAND_KEYS.back} key now.`,
@@ -120,3 +131,11 @@ export const PRACTICE_SKIP = "Not to worry, we can come back to that one. Moving
 /** How long to wait before nudging, and how many nudges before moving on. */
 export const NUDGE_AFTER_MS = 11000;
 export const MAX_NUDGES = 2;
+
+
+/** The drills that rehearse one guide section, in the order they are run.
+ *  A section with none (nothing to practise) simply returns an empty list and
+ *  the menu goes quiet after reading it. */
+export function drillsForSection(section: GuideSectionId): Drill[] {
+  return DRILLS.filter((drill) => drill.section === section);
+}

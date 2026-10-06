@@ -31,7 +31,7 @@ from .tests import authenticated_api_client
 
 
 class StrandedCompanionTests(TestCase):
-    """A unit leaves a concept whose Normal it was; a counterpart stays."""
+    """A unit leaves a concept whose Standard it was; a counterpart stays."""
 
     def setUp(self):
         self.course = CourseGroup.objects.create(title="Science")
@@ -58,7 +58,7 @@ class StrandedCompanionTests(TestCase):
             "Diagram description", "Solids", 1,
         )
         self.liquid_a = self._object(self.a, self.left_behind, "Liquid", "", 1)
-        self.left_behind.version_selection = {"normal_material_id": self.b.id}
+        self.left_behind.version_selection = {"standard_material_id": self.b.id}
         self.left_behind.save(update_fields=["version_selection"])
         set_bundle_role(self.left_behind, self.a.id, "SIMPLIFIED")
         LearningObject.objects.filter(pk=self.liquid_a.pk).update(represented_by=self.solids_b)
@@ -112,7 +112,7 @@ class StrandedCompanionTests(TestCase):
         # A's "Liquid" leads this concept and B's run is its Simplified; when
         # the run leaves, the role must go with it, or a different object of
         # B's arriving later inherits a decision about text that has gone.
-        self.left_behind.version_selection = {"normal_material_id": self.a.id}
+        self.left_behind.version_selection = {"standard_material_id": self.a.id}
         self.left_behind.save(update_fields=["version_selection"])
         LearningObject.objects.filter(pk=self.liquid_a.pk).update(represented_by=None)
         set_bundle_role(self.left_behind, self.b.id, "ELABORATED")

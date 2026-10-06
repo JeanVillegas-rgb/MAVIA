@@ -43,7 +43,12 @@ let listeners = 0;
 
 function acquire(keys: KeyEventModule) {
   listeners += 1;
-  if (listeners > 1) return;
+  // Start on EVERY mount, not only the first. startListening() is also what
+  // re-takes native input focus, and focus is lost by ordinary things -- a tap
+  // on a control, a screen transition. With "first mount only", the layout's
+  // always-on listener pinned the count at 1 forever, so a picker mounting
+  // later (a question, the guide menu) could never get focus back and its keys
+  // silently went nowhere while the layout's still worked.
   try {
     keys.startListening();
   } catch {

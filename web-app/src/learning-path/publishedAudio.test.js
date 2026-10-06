@@ -9,7 +9,7 @@ const published = {
     {
       position: 2, title: "Solid",
       versions: {
-        normal: { segments: [segment("Solids keep shape.", "/media/a.mp3"), segment("Ice is solid.", "/media/b.mp3")] },
+        standard: { segments: [segment("Solids keep shape.", "/media/a.mp3"), segment("Ice is solid.", "/media/b.mp3")] },
         simplified: { segments: [segment("Easy.", "/media/s.mp3")] },
         elaborated: null,
       },
@@ -17,19 +17,19 @@ const published = {
     },
     {
       position: 1, title: "Matter",
-      versions: { normal: { segments: [segment("Matter is stuff.", "/media/m.mp3")] }, simplified: null, elaborated: null },
+      versions: { standard: { segments: [segment("Matter is stuff.", "/media/m.mp3")] }, simplified: null, elaborated: null },
       questions: [],
     },
     {
       position: 3, title: "Gas",
-      versions: { normal: { segments: [segment("Gas spreads.", ""), segment("Air.", "/media/g.mp3")] }, simplified: null, elaborated: null },
+      versions: { standard: { segments: [segment("Gas spreads.", ""), segment("Air.", "/media/g.mp3")] }, simplified: null, elaborated: null },
       questions: [],
     },
   ],
 };
 
 describe("publishedClips", () => {
-  it("lists concepts in path order with only their Normal clips", () => {
+  it("lists concepts in path order with only their Standard clips", () => {
     const rows = publishedClips(published);
     expect(rows.map((row) => row.title)).toEqual(["Matter", "Solid", "Gas"]);
     expect(rows[1].clips).toEqual(["/media/a.mp3", "/media/b.mp3"]);
@@ -43,5 +43,19 @@ describe("publishedClips", () => {
 
   it("is empty when nothing was published", () => {
     expect(publishedClips(null)).toEqual([]);
+  });
+
+  it("gives each learning object its own named clip", () => {
+    const step = {
+      position: 1, title: "Comparing the Three States",
+      versions: { standard: { segments: [
+        { text: "a", audio_url: "/media/1.mp3", title: "Shape" },
+        { text: "b", audio_url: "/media/2.mp3", title: "Volume" },
+      ] } },
+    };
+    expect(publishedClips({ steps: [step] })[0].parts).toEqual([
+      { url: "/media/1.mp3", title: "Shape" },
+      { url: "/media/2.mp3", title: "Volume" },
+    ]);
   });
 });

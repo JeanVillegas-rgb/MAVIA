@@ -11,28 +11,39 @@ class AdaptiveConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdaptiveConfig
         fields = [
+            # BKT population weights
             "p_guess",
+            "p_guess_true_false",
             "p_slip",
             "p_learn",
             "mastery_ceiling",
             "starting_mastery",
+            # cold-start calibration
+            "prior_weight",
+            "calibration_margin",
+            # legacy
             "default_difficulty",
             "updated_at",
             "updated_by_username",
         ]
         read_only_fields = ["updated_at", "updated_by_username"]
 
-    def validate(self, attrs):
-        p_guess = attrs.get("p_guess", getattr(self.instance, "p_guess", None))
-        p_slip = attrs.get("p_slip", getattr(self.instance, "p_slip", None))
-        if p_guess is not None and p_slip is not None and p_guess + p_slip >= 1:
-            raise serializers.ValidationError(
-                "p_guess + p_slip must be less than 1, or the scoring model "
-                "can no longer distinguish a correct answer from a guess."
-            )
+    def _value(self, attrs, name):
+        """The submitted value, or the saved one when a PATCH leaves it out."""
+        return attrs.get(name, getattr(self.instance, name, None))
 
-        starting = attrs.get("starting_mastery", getattr(self.instance, "starting_mastery", None))
-        ceiling = attrs.get("mastery_ceiling", getattr(self.instance, "mastery_ceiling", None))
+    def validate(self, attrs):
+        p_slip = self._value(attrs, "p_slip")
+        for name in ("p_guess", "p_guess_true_false"):
+            guess = self._value(attrs, name)
+            if guess is not None and p_slip is not None and guess + p_slip >= 1:
+                raise serializers.ValidationError(
+                    f"{name} + p_slip must be less than 1, or the scoring model "
+                    "can no longer distinguish a correct answer from a guess."
+                )
+
+        starting = self._value(attrs, "starting_mastery")
+        ceiling = self._value(attrs, "mastery_ceiling")
         if starting is not None and ceiling is not None and starting > ceiling:
             raise serializers.ValidationError(
                 "starting_mastery cannot be greater than mastery_ceiling."

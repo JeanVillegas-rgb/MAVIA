@@ -103,7 +103,7 @@ for node in nodes:
 **File:** `services/question_generator.py` → `_build_prompt()` (lines 145–155), called from `generate_questions()` (line 302)
 
 `content` (the node's raw text) and `difficulty` decide which template gets
-used; `strict` (False on pass 1) picks between the normal and strict prompt
+used; `strict` (False on pass 1) picks between the standard and strict prompt
 sets — see [Configuration → Prompt templates](#prompt-templates) below for
 what actually differs between them.
 
@@ -509,12 +509,12 @@ UNASSESSABLE_BLOOM_LEVELS = {"create"}   # dropped, never fills a quota
 
 ### Prompt templates
 
-Normal prompts (pass 1) state the target cognitive level loosely. Strict
+Standard prompts (pass 1) state the target cognitive level loosely. Strict
 prompts (rebalance only) explicitly ban the phrasing that causes drift.
 Example — `medium` (`services/question_generator.py:25-35` vs `68-83`):
 
 ```python
-# PROMPT_TEMPLATES["medium"] (normal, pass 1)
+# PROMPT_TEMPLATES["medium"] (standard, pass 1)
 "The questions should present a SCENARIO or ask the learner to COMPARE, "
 "DIFFERENTIATE, or APPLY a concept from the content to a new situation.\n\n"
 ```
@@ -530,7 +530,7 @@ Example — `medium` (`services/question_generator.py:25-35` vs `68-83`):
 "judge, rank, or justify.\n\n"
 ```
 
-The difference matters in practice: the normal medium prompt's "scenario or
+The difference matters in practice: the standard medium prompt's "scenario or
 compare" instruction lets the LLM drift into judgment phrasing ("which
 approach is best") that the classifier reads as `evaluate` → `hard`, not
 `medium`. The strict variant explicitly bans exactly that phrasing and

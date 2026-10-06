@@ -66,30 +66,44 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
     }
   }
 
-  // Dropping B (dragged) onto A (target): teach A before B.
+  // Dropping B (dragged) onto A (target): teach A before B. The dialog can
+  // swap the two, since a drag in the wrong direction is an easy mistake.
   function handleDrop(draggedId, targetId) {
-    const b = titleOf(draggedId);
-    const a = titleOf(targetId);
-    const drop = classifyDrop(steps, draggedId, targetId);
+    askOrder(targetId, draggedId);
+  }
+
+  function askOrder(firstId, thenId) {
+    const first = titleOf(firstId);
+    const then = titleOf(thenId);
+    const order = { first, then };
+    const drop = classifyDrop(steps, thenId, firstId);
     if (drop.kind === "self") return;
     if (drop.kind === "already") {
-      ask({ title: `${a} is already taught before ${b}.`, actions: [], cancelLabel: "OK" });
+      ask({ title: "Already in this order", order, actions: [], cancelLabel: "OK" });
       return;
     }
-    const add = () => apply(() => addPathLink(topicId, targetId, draggedId), `${a} is now taught before ${b}.`);
+    const swap = { label: "Swap order", onClick: () => askOrder(thenId, firstId) };
+    const add = () => apply(() => addPathLink(topicId, firstId, thenId), `${first} is now taught before ${then}.`);
     if (drop.kind === "add") {
-      ask({ title: `Teach ${a} before ${b}?`, actions: [{ label: "Yes", primary: true, onClick: add }] });
+      ask({
+        title: "Add a prerequisite",
+        order,
+        actions: [swap, { label: "Add as prerequisite", primary: true, onClick: add }],
+      });
       return;
     }
     const current = drop.current.map((entry) => entry.title).join(", ");
     ask({
-      title: `${b} already comes after ${current}. What do you want?`,
+      title: "Add a prerequisite",
+      order,
+      message: `${then} already has a prerequisite: ${current}. Keep it and add this one, or replace it?`,
       actions: [
-        { label: `Add ${a} as another prerequisite`, onClick: add },
+        swap,
+        { label: "Add as another prerequisite", onClick: add },
         {
-          label: `Move: ${a} replaces ${current}`,
+          label: "Replace current prerequisite",
           primary: true,
-          onClick: () => apply(() => movePathLink(topicId, targetId, draggedId), `${b} now comes only after ${a}.`),
+          onClick: () => apply(() => movePathLink(topicId, firstId, thenId), `${then} now comes only after ${first}.`),
         },
       ],
     });
@@ -99,9 +113,10 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
   // come before "step".
   function handleAccept(link, step) {
     ask({
-      title: `Teach ${link.title} before ${step.title}?`,
+      title: "Add this prerequisite?",
+      order: { first: link.title, then: step.title },
       actions: [{
-        label: "Yes",
+        label: "Add as prerequisite",
         primary: true,
         onClick: () => apply(
           () => decidePathLink(topicId, link.link_id, "approved"),
@@ -113,10 +128,11 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
 
   function handleReject(link, step) {
     ask({
-      title: `Don't teach ${link.title} before ${step.title}?`,
+      title: "Dismiss this suggestion?",
+      order: { first: link.title, then: step.title },
       message: "It won't be suggested again.",
       actions: [{
-        label: "Yes",
+        label: "Dismiss",
         primary: true,
         onClick: () => apply(
           () => decidePathLink(topicId, link.link_id, "rejected"),
@@ -128,10 +144,11 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
 
   function handleRemove(link, step) {
     ask({
-      title: `${link.title} no longer has to come before ${step.title}?`,
+      title: "Remove this prerequisite?",
+      order: { first: link.title, then: step.title },
       message: "It won't be suggested again.",
       actions: [{
-        label: "Yes",
+        label: "Remove prerequisite",
         primary: true,
         onClick: () => apply(
           () => decidePathLink(topicId, link.link_id, "rejected"),
@@ -151,6 +168,12 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
         <p className="muted-text path-ordering-note">
           Ordered as your lesson files present it. Nothing has to be learned before anything else yet
           {canEdit ? " — drag a concept onto the one that must come before it" : ""}.
+        </p>
+      )}
+
+      {canEdit && linkCount > 0 && (
+        <p className="pg-edit-hint">
+          To add a prerequisite, drag a concept onto the one that should be learned first.
         </p>
       )}
 
@@ -182,6 +205,9 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
         />
         <ConceptDetails
           step={selected}
+          dependents={selected
+            ? steps.filter((item) => (item.prerequisites || []).some((link) => link.concept_id === selected.concept_id))
+            : []}
           editable={canEdit}
           busy={busy}
           onRemove={handleRemove}
@@ -194,6 +220,7 @@ export function MaterialPath({ path, topicId = null, editable = false, onPathDat
       {confirm && (
         <ConfirmDialog
           title={confirm.title}
+          order={confirm.order}
           message={confirm.message}
           actions={confirm.actions}
           cancelLabel={confirm.cancelLabel}

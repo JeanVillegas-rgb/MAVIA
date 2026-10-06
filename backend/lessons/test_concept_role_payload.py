@@ -5,7 +5,7 @@ plus every other member labelled "Other variation". That describes the old
 model, where a concept held one object per PDF. Under bundles it is wrong in
 three ways, all visible on the real topic 152:
 
-* Normal was the representative's own text, so three of the four objects of
+* Standard was the representative's own text, so three of the four objects of
   "Comparing the Three States" were shown as variations of themselves.
 * A generated version showed only the representative's segment -- one of the
   four that had actually been written.
@@ -20,7 +20,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from course.models import LessonVariant
-from course.variant_generator import NORMAL_FALLBACK_GENERATOR
+from course.variant_generator import STANDARD_FALLBACK_GENERATOR
 from course.version_assignment import set_bundle_role
 from lessons.models import (
     CourseGroup,
@@ -50,7 +50,7 @@ class ConceptRolePayloadTests(TestCase):
         self.group = LearningObjectGroup.objects.create(
             outline_node=self.topic, label="Comparing the Three States",
         )
-        self.normal = [
+        self.standard = [
             self._object(self.first, "Shape", "Solids keep their shape.", 0),
             self._object(self.first, "Volume", "Gases expand to fill space.", 1),
             self._object(self.first, "Particle arrangement", "Gas particles are widely spaced.", 2),
@@ -61,7 +61,7 @@ class ConceptRolePayloadTests(TestCase):
             self._object(self.second, "5. Comparing the Three States", "Solids hold shape; gases fill the space.", 1),
         ]
         for item in self.supplied:
-            item.represented_by = self.normal[0]
+            item.represented_by = self.standard[0]
             item.save(update_fields=["represented_by"])
         set_bundle_role(self.group, self.second.id, "SIMPLIFIED")
 
@@ -84,31 +84,31 @@ class ConceptRolePayloadTests(TestCase):
         group = [g for g in response.data["learning_object_groups"] if g["id"] == self.group.id][0]
         return group["versions"]["slots"]
 
-    def test_normal_is_a_slot_of_its_own_carrying_the_whole_bundle(self):
-        normal = self._slots().get("normal")
+    def test_standard_is_a_slot_of_its_own_carrying_the_whole_bundle(self):
+        standard = self._slots().get("standard")
 
-        self.assertIsNotNone(normal, "the screen had no Normal to show but the lead's own text")
-        for item in self.normal:
-            self.assertIn(item.content, normal["text"])
+        self.assertIsNotNone(standard, "the screen had no Standard to show but the lead's own text")
+        for item in self.standard:
+            self.assertIn(item.content, standard["text"])
 
     def test_each_slot_names_the_objects_it_is_made_of(self):
-        normal = self._slots()["normal"]
+        standard = self._slots()["standard"]
 
         self.assertEqual(
-            [entry["id"] for entry in normal["objects"]],
-            [item.id for item in self.normal],
+            [entry["id"] for entry in standard["objects"]],
+            [item.id for item in self.standard],
         )
-        self.assertEqual(normal["objects"][1]["title"], "Volume")
+        self.assertEqual(standard["objects"][1]["title"], "Volume")
 
     def test_a_slot_says_whether_a_pdf_supplied_it_or_it_was_generated(self):
         slots = self._slots()
 
-        self.assertEqual(slots["normal"]["source"], "pdf")
-        self.assertEqual(slots["normal"]["material"], self.first.id)
+        self.assertEqual(slots["standard"]["source"], "pdf")
+        self.assertEqual(slots["standard"]["material"], self.first.id)
         self.assertEqual(slots["simplified"]["source"], "pdf")
         self.assertEqual(slots["simplified"]["material"], self.second.id)
 
-    def test_a_supplied_slot_carries_its_own_objects_not_the_normal_ones(self):
+    def test_a_supplied_slot_carries_its_own_objects_not_the_standard_ones(self):
         simplified = self._slots()["simplified"]
 
         self.assertEqual(
@@ -117,7 +117,7 @@ class ConceptRolePayloadTests(TestCase):
         )
 
     def test_a_generated_slot_carries_every_segment_not_only_the_leads(self):
-        for item in self.normal:
+        for item in self.standard:
             LessonVariant.objects.create(
                 learning_object=item, variant="ELABORATED",
                 narration=f"Elaborated {item.title}.",
@@ -127,27 +127,27 @@ class ConceptRolePayloadTests(TestCase):
         elaborated = self._slots()["elaborated"]
 
         self.assertEqual(elaborated["source"], "generated")
-        self.assertEqual(len(elaborated["objects"]), len(self.normal))
-        for item in self.normal:
+        self.assertEqual(len(elaborated["objects"]), len(self.standard))
+        for item in self.standard:
             self.assertIn(f"Elaborated {item.title}.", elaborated["text"])
 
     def test_a_generated_version_short_of_its_bundle_is_not_offered(self):
         """Three quarters of a version must not read as a whole one."""
         LessonVariant.objects.create(
-            learning_object=self.normal[0], variant="ELABORATED",
+            learning_object=self.standard[0], variant="ELABORATED",
             narration="Only the lead was written.",
             origin=LessonVariant.Origin.GENERATED,
         )
 
         self.assertIsNone(self._slots().get("elaborated"))
 
-    def test_a_partial_fallback_counts_only_the_unchanged_normal_segments(self):
-        for index, item in enumerate(self.normal):
+    def test_a_partial_fallback_counts_only_the_unchanged_standard_segments(self):
+        for index, item in enumerate(self.standard):
             LessonVariant.objects.create(
                 learning_object=item, variant="ELABORATED",
                 narration=item.content if index == 1 else f"Elaborated {item.title}.",
                 origin=LessonVariant.Origin.GENERATED,
-                generator_model=NORMAL_FALLBACK_GENERATOR if index == 1 else "test-model",
+                generator_model=STANDARD_FALLBACK_GENERATOR if index == 1 else "test-model",
             )
 
         elaborated = self._slots()["elaborated"]
@@ -157,7 +157,7 @@ class ConceptRolePayloadTests(TestCase):
         self.assertEqual(elaborated["segment_count"], 4)
 
     def test_a_supplied_role_still_outranks_a_generated_row(self):
-        for item in self.normal:
+        for item in self.standard:
             LessonVariant.objects.create(
                 learning_object=item, variant="SIMPLIFIED",
                 narration=f"Generated {item.title}.",
@@ -170,8 +170,8 @@ class ConceptRolePayloadTests(TestCase):
         self.assertNotIn("Generated Shape.", simplified["text"])
 
     def test_a_generated_segment_shows_what_was_written_not_its_source(self):
-        """An Elaborated block must not print the Normal text back at you."""
-        for item in self.normal:
+        """An Elaborated block must not print the Standard text back at you."""
+        for item in self.standard:
             LessonVariant.objects.create(
                 learning_object=item, variant="ELABORATED",
                 narration=f"Elaborated {item.title}.",
@@ -182,8 +182,8 @@ class ConceptRolePayloadTests(TestCase):
 
         self.assertEqual(
             [entry["text"] for entry in objects],
-            [f"Elaborated {item.title}." for item in self.normal],
+            [f"Elaborated {item.title}." for item in self.standard],
         )
         # The object is still named, so the teacher can see which segment is which.
         self.assertEqual([entry["title"] for entry in objects],
-                         [item.title for item in self.normal])
+                         [item.title for item in self.standard])

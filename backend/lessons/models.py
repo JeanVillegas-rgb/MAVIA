@@ -237,6 +237,10 @@ class LearningObject(models.Model):
     # to a grouped object could never be noticed. A mismatch is what enables
     # the teacher's "Review grouping changes" action.
     grouping_content_hash = models.CharField(max_length=64, blank=True, default="")
+    # Set when a teacher, reconfirming an edited PDF, chose to keep this part
+    # out of its section. Alone in its group, it would otherwise be folded
+    # straight back into the section on the next automatic pass.
+    kept_apart_from_section = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["order", "id"]
@@ -374,6 +378,9 @@ class Question(models.Model):
         db_index=True,
     )
     content_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
+    # A generated question the teacher has edited. Regenerating its concept's
+    # bank keeps it, alongside the new questions.
+    teacher_edited = models.BooleanField(default=False)
     question_type = models.CharField(
         max_length=30,
         choices=Type.choices,

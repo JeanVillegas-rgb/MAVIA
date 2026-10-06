@@ -2,11 +2,14 @@
 
 import base64
 import json
+import logging
 import threading
 import time
 
 import requests
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 _STRICT_SCHEMA_MODELS = {
@@ -78,8 +81,16 @@ def generate(
     schema: dict | None = None,
     image_bytes: bytes | None = None,
     on_rate_limit_wait=None,
+    use_failed_generation: bool = False,
 ) -> tuple[str, dict]:
-    """Return text and usage for one Groq chat-completion request."""
+    """Return text and usage for one Groq chat-completion request.
+
+    ``use_failed_generation``: when Groq rejects a reply for not matching the
+    schema, return the reply it rejected (its ``failed_generation``) instead
+    of asking again. Only for a caller that checks every item itself -- the
+    question generator does, and one true/false item missing ``"choices":
+    null`` would otherwise discard the whole batch, retries included.
+    """
     keys = _configured_keys()
     if not keys:
         raise ValueError("GROQ_API_KEY is required when LLM_PROVIDER=groq.")
@@ -174,6 +185,22 @@ def generate(
             except ValueError:
                 error_code = None
             if response.status_code == 400 and error_code == "json_validate_failed":
+                rejected_reply = ((response.json() or {}).get("error") or {}).get("failed_generation")
+                if use_failed_generation and isinstance(rejected_reply, str) and rejected_reply.strip():
+                    logger.warning(
+                        "[Groq] reply did not match the requested format; using it anyway, "
+                        "the caller checks each item  (%s)", model,
+                    )
+                    return rejected_reply, {
+                        "model": model,
+                        "total_ms": (time.monotonic() - started) * 1000,
+                        "load_ms": 0.0,
+                        "prompt_eval_ms": None,
+                        "eval_ms": None,
+                        "prompt_tokens": 0,
+                        "output_tokens": 0,
+                        "tokens_per_second": None,
+                    }
                 if validation_retries >= 3:
                     break
                 validation_retries += 1

@@ -6,7 +6,9 @@ from math import ceil
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 
+from config.console import name
 from .bloom_classifier import BloomClassifier
 from .question_generator import (
     generate_questions,
@@ -39,6 +41,14 @@ def thinking_order_counts():
     return {
         "LOT": int(getattr(settings, "QUESTION_COUNT_LOT", 3)),
         "HOT": int(getattr(settings, "QUESTION_COUNT_HOT", 3)),
+    }
+
+
+def question_minimum():
+    """LOTS and HOTS every concept needs before the Questions step is done."""
+    return {
+        "LOT": int(getattr(settings, "QUESTION_MIN_LOT", 4)),
+        "HOT": int(getattr(settings, "QUESTION_MIN_HOT", 2)),
     }
 
 
@@ -109,6 +119,17 @@ def _get_classifier():
     return _classifier_cache
 
 
+def concept_name(node):
+    """What a run is about: the concept, not the object its bank is filed under.
+
+    A concept's questions are written from every object of its Standard version
+    and filed under the first one, so naming that object ("Shape") read as if
+    only it had been used.
+    """
+    group = getattr(node, "group", None)
+    return (group.label if group is not None and group.label else node.title) or "Untitled concept"
+
+
 def _emit(on_event, event_type, message, **data):
     """Send a trace event to the optional callback. No-op when tracing is off."""
     if on_event:
@@ -135,16 +156,24 @@ def _print_node_summary(node, kept, rejected):
     for a 33-node material buried the one thing a reader wants from a trace:
     where it is now, and whether it is still moving.
     """
-    counts = Counter(q.thinking_order for q in kept)
-    breakdown = ", ".join(f"{counts.get(order, 0)} {order}" for order in QUESTION_DISTRIBUTION)
+    from lessons.services.question_workflow import concept_tier_counts
+
+    added = Counter(q.thinking_order for q in kept)
+    breakdown = ", ".join(f"{added.get(order, 0)} {order}" for order in QUESTION_DISTRIBUTION)
+    # Judged on the concept's whole bank against the minimum: this run's own
+    # output against its request said "short" for concepts that were not.
+    have = concept_tier_counts(node)
+    minimum = question_minimum()
     short = [
-        order for order, config in QUESTION_DISTRIBUTION.items()
-        if counts.get(order, 0) < config["count"]
+        f"{order} {have[order]} of {minimum[order]}"
+        for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]
     ]
     logger.info(
-        'node "%s": kept %s (%s), discarded %s%s',
-        node.title, len(kept), breakdown, len(rejected),
-        f" — short on {', '.join(short)}" if short else "",
+        "[Questions] %s  added %s (%s), discarded %s -- now %s, %s  (object %s)",
+        name(concept_name(node)), len(kept), breakdown, len(rejected),
+        " / ".join(f"{have[order]} {order}" for order in QUESTION_DISTRIBUTION),
+        f"still short: {', '.join(short)}" if short else "meets the minimum",
+        node.id,
     )
 
 
@@ -152,11 +181,11 @@ def _print_material_summary(material, node_count, all_questions, stats):
     counts = Counter(q.thinking_order for q in all_questions)
     distribution = ", ".join(f"{counts.get(order, 0)} {order}" for order in QUESTION_DISTRIBUTION)
     logger.info(
-        'finished "%s": %s questions across %s nodes (%s) from %s drafts '
-        "[excluded %s, duplicates %s, trimmed %s]",
-        material.title, len(all_questions), node_count, distribution,
-        stats["total_drafted"], stats["excluded_create"],
-        stats["duplicates"], stats["trimmed"],
+        "[Questions] PDF %s  done: %s questions for %s concepts (%s) from %s drafts; "
+        "dropped %s not grounded in the lesson, %s duplicates, %s wrong level, %s extra",
+        material.id, len(all_questions), node_count, distribution,
+        stats["total_drafted"], stats["ungrounded"], stats["duplicates"],
+        stats["excluded_create"], stats["trimmed"],
     )
 
 
@@ -164,18 +193,18 @@ def concept_source_text(node):
     """The text a concept's questions are written from: every telling of it.
 
     A concept holds one bundle per PDF, and the adaptive engine serves those
-    bundles as the Normal, Simplified and Elaborated versions of one concept.
+    bundles as the Standard, Simplified and Elaborated versions of one concept.
     A learner escalated to Elaborated hears another PDF's wording, so a bank
-    written from the Normal bundle alone asks about text that learner was
+    written from the Standard bundle alone asks about text that learner was
     never read.
 
     It also starves the higher-order half of the bank. A HOT question has to
-    combine two or more stated facts; measured on topic 276, the Normal
+    combine two or more stated facts; measured on topic 276, the Standard
     bundle for "Solid" is 32 words and often does not hold two, so the model
     supplied the second from its own knowledge. Every telling together is
     220 words of the same concept -- more facts, no change of subject.
     """
-    from course.version_assignment import bundle_roles, normal_material_id
+    from course.version_assignment import bundle_roles, standard_material_id
     from lessons.services.concept_bundles import (
         bundle_text,
         bundles_for_group,
@@ -195,25 +224,25 @@ def concept_source_text(node):
         for material_id, objects in bundles_for_group(group).items()
         if (kept := [item for item in objects if (item.content or "").strip()])
     }
-    normal_id = normal_material_id(group)
-    if not any(item.id == node.id for item in bundles.get(normal_id) or []):
+    standard_id = standard_material_id(group)
+    if not any(item.id == node.id for item in bundles.get(standard_id) or []):
         return node.content or ""
 
     roles = bundle_roles(group)
-    # The Normal telling leads, then the rest in upload order, so the model
+    # The Standard telling leads, then the rest in upload order, so the model
     # reads the concept the way the topic teaches it.
     rank = {
         material_id: index
         for index, material_id in enumerate(material_order(group.outline_node))
     }
     others = sorted(
-        (material_id for material_id in bundles if material_id != normal_id),
+        (material_id for material_id in bundles if material_id != standard_id),
         key=lambda material_id: (rank.get(material_id, len(rank)), material_id),
     )
 
     objects = []
-    for material_id in [normal_id, *others]:
-        if material_id != normal_id and material_id not in roles:
+    for material_id in [standard_id, *others]:
+        if material_id != standard_id and material_id not in roles:
             continue
         objects.extend(bundles.get(material_id) or [])
     return bundle_text(objects) or (node.content or "")
@@ -222,7 +251,7 @@ def concept_source_text(node):
 def _is_concept_source(node):
     """Whether ``node`` is the one object of its concept that generates.
 
-    A concept owns exactly one bank and it belongs to the Normal bundle's
+    A concept owns exactly one bank and it belongs to the Standard bundle's
     lead -- ``finalize_node_questions`` deletes every other bank in the group
     as soon as that lead finalizes. So an object from another PDF's telling
     is not merely redundant: its bank is already condemned when it is made.
@@ -231,19 +260,19 @@ def _is_concept_source(node):
 
     Two cases still generate from their own text, because no one else will
     speak for them: an object in no group at all, and one whose group has no
-    Normal bundle to own it.
+    Standard bundle to own it.
     """
     if node.group_id is None:
         return True
     from course.version_assignment import version_bundles
     from lessons.services.concept_bundles import bundle_lead
 
-    normal = version_bundles(node.group).get("NORMAL") or []
-    if not normal:
+    standard = version_bundles(node.group).get("STANDARD") or []
+    if not standard:
         return True
-    if not any(item.id == node.id for item in normal):
+    if not any(item.id == node.id for item in standard):
         return False
-    lead = bundle_lead(normal)
+    lead = bundle_lead(standard)
     return lead is not None and lead.id == node.id
 
 
@@ -255,12 +284,16 @@ def _draft_questions_for_node(
     on_event=None,
     generation_fingerprint="",
     correction="",
+    orders=None,
 ):
     """Run every LLM call for one node and persist the results as drafts.
 
     Nothing is classified, deduplicated or trimmed here — the questions go
     to the database exactly as the LLM produced them (after structural
     validation), so a crash later in the run cannot lose generated work.
+
+    ``orders`` limits the calls to those thinking orders; a top-up asks only
+    for the ones the concept is short of.
     """
     from question_generation.models import GeneratedQuestion
 
@@ -306,6 +339,8 @@ def _draft_questions_for_node(
 
     drafted = len(resumed)
     for thinking_order, config in QUESTION_DISTRIBUTION.items():
+        if orders is not None and thinking_order not in orders:
+            continue
         # Pad each format so classification drift still leaves enough in the
         # bucket, then ask for the whole mix in one call.
         targets = {
@@ -331,7 +366,7 @@ def _draft_questions_for_node(
             )
             continue
         summary = " + ".join(f"{n} {fmt}" for fmt, n in padded.items())
-        print(f"Generating {summary} {thinking_order} question(s) for: {node.title}")
+        logger.debug("[Questions] %s  drafting %s %s question(s)", name(concept_name(node)), summary, thinking_order)
         def record_metrics(metrics, order=thinking_order):
             _emit(
                 on_event,
@@ -354,6 +389,7 @@ def _draft_questions_for_node(
             )
 
         def record_rate_limit_wait(seconds, retry, order=thinking_order):
+            logger.info("[Questions] %s  rate limit reached; waiting %.0fs before retrying", name(concept_name(node)), seconds)
             _emit(
                 on_event,
                 "groq_rate_limit_wait",
@@ -430,7 +466,7 @@ def _validate_drafts_for_node(node, index, on_event=None, stats=None):
     failures, reject_ids, unverified = [], [], 0
     for draft in drafts:
         result = verify(draft, index)
-        if result["stage"] in ("lexical_only", "judge_unavailable"):
+        if result["stage"] in ("retrieval_unavailable", "judge_unavailable"):
             unverified += 1
         if result["passed"]:
             logger.debug('  ✓ grounded — "%s"', draft.question_text)
@@ -442,7 +478,6 @@ def _validate_drafts_for_node(node, index, on_event=None, stats=None):
             on_event, "question_ungrounded", draft.question_text,
             reason=result["reason"], stage=result["stage"],
             verdict=result["verdict"], node_id=node.id,
-            novel_terms=result["novel_terms"][:8],
             retrieved=result["retrieved"],
         )
 
@@ -462,7 +497,7 @@ def _validate_drafts_for_node(node, index, on_event=None, stats=None):
     return surviving, failures
 
 
-def _bank_is_short(node):
+def _bank_is_short(node, orders=None):
     """True while this node's surviving drafts cannot fill the quota.
 
     Measured on drafts rather than final rows because the gate runs before
@@ -478,12 +513,13 @@ def _bank_is_short(node):
     return any(
         counts.get(order, 0) < config["count"]
         for order, config in QUESTION_DISTRIBUTION.items()
+        if orders is None or order in orders
     )
 
 
 # ── Phase 2: post-processing (deterministic, no LLM) ──
 
-def finalize_node_questions(node, classifier, on_event=None, stats=None):
+def finalize_node_questions(node, classifier, on_event=None, stats=None, append=False, caps=None):
     """Classify, deduplicate and trim one node's drafts, then promote them.
 
     Runs entirely over rows already in the database and needs no LLM. The
@@ -494,10 +530,17 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
     until the moment this node's replacements are ready, so an interrupted
     run never leaves a node with no questions.
 
+    ``caps`` is how many of each thinking order this run may keep; a top-up
+    passes what is left below the target after the concept's existing
+    questions, so it fills a tier instead of piling onto it.
+
     NOTE: deleting a question cascades to its LearnerResponse rows —
     regenerating resets learner history for that node's questions.
     """
     from question_generation.models import GeneratedQuestion
+
+    if caps is None:
+        caps = {order: config["count"] for order, config in QUESTION_DISTRIBUTION.items()}
 
     drafts = list(
         GeneratedQuestion.objects.filter(node=node, status="draft").order_by("id")
@@ -508,6 +551,14 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
     counts = Counter()
     seen = set()
     duplicates = excluded_create = trimmed = 0
+    if append:
+        # "Generate more" adds to the bank: a draft repeating a question the
+        # concept already has is a duplicate like any other.
+        seen.update(
+            _dedup_key(text) for text in GeneratedQuestion.objects.filter(
+                node=node, status="final",
+            ).values_list("question_text", flat=True)
+        )
 
     for draft in drafts:
         key = _dedup_key(draft.question_text)
@@ -537,7 +588,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
             )
             continue
 
-        if counts[thinking_order] >= QUESTION_DISTRIBUTION[thinking_order]["count"]:
+        if counts[thinking_order] >= caps.get(thinking_order, 0):
             trimmed += 1
             reject_ids.append(draft.id)
             logger.debug('  ⊘ surplus %s — "%s"', thinking_order, draft.question_text)
@@ -553,8 +604,10 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
             '  ✓ %s (%s) — "%s"', thinking_order, bloom_level, draft.question_text
         )
 
-    for thinking_order, config in QUESTION_DISTRIBUTION.items():
-        short = config["count"] - counts.get(thinking_order, 0)
+    # A top-up's caps are room left, not a target; its summary line reports
+    # the concept against the minimum instead.
+    for thinking_order, cap in ({} if append else caps).items():
+        short = cap - counts.get(thinking_order, 0)
         if short > 0:
             _emit(
                 on_event, "shortfall_warning",
@@ -563,13 +616,26 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
             )
 
     with transaction.atomic():
-        # A concept owns one question bank, grounded in its Normal source.
+        # A concept owns one question bank, grounded in its Standard source.
         # When that bank is regenerated, remove older generated banks attached
         # to other source objects in the same group.
+        # Questions the teacher edited are kept through a regeneration, next
+        # to the new ones -- an older bank's included, moved to this one.
+        # Only rows generation wrote: a printed or teacher-written question's
+        # learner-facing copy shares this table, and a regeneration used to
+        # delete the ones paired to the concept's other objects.
+        generated = GeneratedQuestion.objects.filter(
+            Q(teacher_question__isnull=True)
+            | Q(teacher_question__source_type="generated")
+        )
+        edited = Q(teacher_question__teacher_edited=True)
         if node.group_id:
-            obsolete = GeneratedQuestion.objects.filter(
+            generated.filter(
+                edited, node__group_id=node.group_id, status="final",
+            ).exclude(node=node).update(node=node)
+            obsolete = generated.filter(
                 node__group_id=node.group_id,
-            ).exclude(node=node)
+            ).exclude(node=node).exclude(edited)
             obsolete_ids = list(obsolete.values_list("id", flat=True))
             if obsolete_ids:
                 from lessons.models import Question
@@ -581,12 +647,27 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None):
 
         # the previous run's questions are replaced only now, once this run
         # actually has something to replace them with
-        replaced, _ = GeneratedQuestion.objects.filter(node=node, status="final").delete()
+        replaced, _ = (
+            (0, None) if append
+            else generated.filter(node=node, status="final").exclude(edited).delete()
+        )
         if reject_ids:
             GeneratedQuestion.objects.filter(id__in=reject_ids).delete()
+        # Stamped with the text the bank was written from, so a later change
+        # to the concept shows the bank as out of date. Kept edited questions
+        # join the new bank, so they carry its stamps too.
+        from .bank_status import text_fingerprint
+        source_stamp = text_fingerprint(concept_source_text(node))
+        for question in keep:
+            question.source_text_fingerprint = source_stamp
         GeneratedQuestion.objects.bulk_update(
-            keep, ["bloom_level", "thinking_order", "category", "status"]
+            keep, ["bloom_level", "thinking_order", "category", "status", "source_text_fingerprint"]
         )
+        if keep:
+            generated.filter(edited, node=node, status="final").update(
+                source_text_fingerprint=source_stamp,
+                generation_fingerprint=keep[0].generation_fingerprint,
+            )
 
         material = node.material
         generated_json = material.generated_json or {}
@@ -621,6 +702,7 @@ def generate_questions_for_node(
     stats=None,
     generation_fingerprint="",
     grounding_index=None,
+    append=False,
 ):
     """Generate, ground-check and finalize one LearningObject's question bank.
 
@@ -640,10 +722,29 @@ def generate_questions_for_node(
     the caller. Without one the gate is skipped entirely, which keeps direct
     service and test calls network-free.
 
+    With ``append`` the run is a top-up: it asks only for the thinking
+    orders the concept is short of, and keeps only what fills them. A concept
+    already at its minimum gets no model call at all.
+
     on_event(event_type, message, data) receives trace events when provided.
     stats, when given a dict, accumulates run totals for a material summary.
     """
     from .grounding import correction_note, enabled
+
+    orders = caps = None
+    if append:
+        orders, caps = top_up_plan(node)
+        if not orders:
+            logger.info(
+                "[Questions] %s  already meets the minimum; nothing to add  (object %s)",
+                name(concept_name(node)), node.id,
+            )
+            _emit(
+                on_event, "node_already_met",
+                f"{concept_name(node)} already meets the minimum",
+                node_id=node.id,
+            )
+            return []
 
     gate_on = grounding_index is not None and enabled()
     max_retries = int(getattr(settings, "QUESTION_VALIDATION_MAX_RETRIES", 1))
@@ -656,6 +757,7 @@ def generate_questions_for_node(
             on_event=on_event,
             generation_fingerprint=generation_fingerprint,
             correction=correction,
+            orders=orders,
         )
         if not gate_on:
             break
@@ -668,7 +770,7 @@ def generate_questions_for_node(
         _surviving, failures = _validate_drafts_for_node(
             node, grounding_index, on_event=on_event, stats=stats,
         )
-        if not failures or not _bank_is_short(node) or attempt == max_retries:
+        if not failures or not _bank_is_short(node, orders) or attempt == max_retries:
             break
         correction = correction_note(failures)
         _emit(
@@ -685,7 +787,29 @@ def generate_questions_for_node(
         f"Classifying and filtering {drafted} draft(s)",
         node_id=node.id, drafted=drafted,
     )
-    return finalize_node_questions(node, classifier, on_event=on_event, stats=stats)
+    return finalize_node_questions(
+        node, classifier, on_event=on_event, stats=stats, append=append, caps=caps,
+    )
+
+
+def top_up_plan(node):
+    """What a top-up of ``node``'s concept asks for and may keep.
+
+    Returns ``(orders, caps)``: the thinking orders below the minimum, and per
+    order how many more fit under the bank's target. Counted from every
+    question that fills the minimum -- generated, the teacher's own, and
+    printed ones the teacher edited and confirmed.
+    """
+    from lessons.services.question_workflow import concept_tier_counts
+
+    have = concept_tier_counts(node)
+    minimum = question_minimum()
+    orders = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
+    caps = {
+        order: max(0, max(config["count"], minimum[order]) - have[order])
+        for order, config in QUESTION_DISTRIBUTION.items()
+    }
+    return orders, caps
 
 
 def _complete_current_bank(node, fingerprint):
@@ -708,6 +832,7 @@ def generate_questions_for_material(
     node_ids=None,
     *,
     skip_complete=False,
+    append=False,
 ):
     """Full pipeline: LearningMaterial → classified questions for its text
     learning objects, straight from the database (no JSON handoff).
@@ -730,9 +855,9 @@ def generate_questions_for_material(
     if len(nodes) != len(candidates):
         # Asking for one of these by id generates nothing at all, which used to
         # happen in silence. Its questions exist -- they are written from the
-        # whole Normal bundle and saved against that bundle's lead.
+        # whole Standard bundle and saved against that bundle's lead.
         logger.info(
-            "Skipping %s learning object(s) taught through another object's "
+            "[Questions] skipping %s learning object(s) taught through another object's "
             "concept bundle; their questions belong to that bundle's lead: %s",
             len(candidates) - len(nodes),
             ", ".join(
@@ -755,6 +880,10 @@ def generate_questions_for_material(
         # last run)
         GeneratedQuestion.objects.filter(node__material=material).exclude(
             node__in=nodes).delete()
+    logger.info(
+        "[Questions] PDF %s  started: %s concepts to write questions for, %s unchanged and reused",
+        material.id, len(nodes_to_generate), len(nodes) - len(nodes_to_generate),
+    )
     _emit(
         on_event, "material_started",
         f"Generating questions for {len(nodes)} content nodes",
@@ -823,21 +952,21 @@ def generate_questions_for_material(
             _emit(
                 on_event,
                 "node_skipped",
-                f"Reused unchanged question bank: {node.title}",
+                f"Reused unchanged question bank: {concept_name(node)}",
                 node_id=node.id,
-                title=node.title,
+                title=concept_name(node),
                 count=len(cached),
                 index=position,
                 total=total_nodes,
             )
             continue
-        logger.info('(%s/%s) generating questions for "%s"', position, total_nodes, node.title)
+        logger.info("[Questions] (%s/%s) %s  writing questions", position, total_nodes, name(concept_name(node)))
         # index/total are what let the teacher's dialog draw a real progress
         # bar. Without them it can only spin, and a spinner cannot tell slow
         # apart from stuck -- which is the whole complaint about this step.
         _emit(
-            on_event, "node_started", f"Generating questions for: {node.title}",
-            node_id=node.id, title=node.title,
+            on_event, "node_started", f"Generating questions for: {concept_name(node)}",
+            node_id=node.id, title=concept_name(node),
             index=position, total=total_nodes,
         )
         questions = generate_questions_for_node(
@@ -847,6 +976,7 @@ def generate_questions_for_material(
             stats=stats,
             generation_fingerprint=fingerprints[node.id],
             grounding_index=grounding_index,
+            append=append,
         )
         all_questions.extend(questions)
         _emit(
@@ -874,3 +1004,139 @@ def generate_questions_for_material(
         by_bloom=dict(Counter(q.bloom_level for q in all_questions)),
     )
     return all_questions
+
+
+def _prepare_generation(outline_node, on_event):
+    """The topic's grounding index, a warm question model and the classifier.
+
+    Built once per run and shared by every concept in it.
+    """
+    from .grounding import build_index, enabled as grounding_enabled
+
+    grounding_index = None
+    if grounding_enabled():
+        grounding_index = build_index(outline_node)
+        _emit(
+            on_event, "grounding_index_built",
+            f"Indexed {len(grounding_index.chunks)} source passage(s) for validation",
+            chunks=len(grounding_index.chunks),
+            searchable=grounding_index.searchable,
+            reason=grounding_index.reason,
+        )
+    if on_event:
+        _emit(
+            on_event, "model_warming",
+            "Question model is ready" if settings.LLM_PROVIDER == "groq"
+            else "Loading question model into Ollama",
+        )
+        warm_question_model(
+            on_metrics=lambda metrics: _emit(on_event, "model_warmed", "Question model is ready", **metrics),
+        )
+    if _classifier_cache is None:
+        _emit(on_event, "classifier_loading", "Loading Bloom's classifier model")
+    return grounding_index, _get_classifier()
+
+
+def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None):
+    """Fill every concept of a topic to its minimum, in rounds.
+
+    ``nodes`` are the concepts' Standard leads, the objects their banks are
+    filed under. Each round tops up only the concepts still short, and only
+    in the thinking orders they lack; a concept that fails is reported and
+    left out of later rounds without stopping the others.
+
+    Returns ``{"added", "still_short", "failed"}``: how many questions were
+    kept, and the concepts left short or failed, by name.
+    """
+    from lessons.services.question_workflow import concept_tier_counts
+
+    rounds = rounds or int(getattr(settings, "QUESTION_GENERATION_ROUNDS", 3))
+    minimum = question_minimum()
+    goal = " + ".join(f"{minimum[order]} {order}" for order in QUESTION_DISTRIBUTION)
+
+    def is_short(node):
+        have = concept_tier_counts(node)
+        return any(have[order] < minimum[order] for order in QUESTION_DISTRIBUTION)
+
+    targets = [node for node in nodes if is_short(node)]
+    logger.info(
+        "[Questions] topic %s  started: %s of %s concepts short of %s",
+        outline_node.id, len(targets), len(nodes), goal,
+    )
+    _emit(
+        on_event, "topic_started",
+        f"{len(targets)} of {len(nodes)} concepts need questions",
+        concept_count=len(nodes), short_count=len(targets), minimum=minimum,
+    )
+    stats = {"total_drafted": 0, "excluded_create": 0, "duplicates": 0, "trimmed": 0,
+             "ungrounded": 0, "unverified": 0}
+    added, failed = 0, {}
+    if targets:
+        grounding_index, classifier = _prepare_generation(outline_node, on_event)
+    for round_number in range(1, rounds + 1):
+        if not targets:
+            break
+        logger.info(
+            "[Questions] round %s of %s: %s concept(s) short of %s",
+            round_number, rounds, len(targets), goal,
+        )
+        _emit(
+            on_event, "round_started",
+            f"Round {round_number} of {rounds}: {len(targets)} concept(s) still short",
+            round=round_number, rounds=rounds, total=len(targets),
+        )
+        for position, node in enumerate(targets, start=1):
+            have = concept_tier_counts(node)
+            wanted = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
+            logger.info(
+                "[Questions] round %s/%s (%s/%s) %s  writing %s questions (has %s)",
+                round_number, rounds, position, len(targets), name(concept_name(node)),
+                " and ".join(wanted),
+                " / ".join(f"{have[order]} {order}" for order in QUESTION_DISTRIBUTION),
+            )
+            _emit(
+                on_event, "node_started", f"Generating questions for: {concept_name(node)}",
+                node_id=node.id, title=concept_name(node),
+                index=position, total=len(targets), round=round_number, rounds=rounds,
+            )
+            fingerprint = question_bank_fingerprint(concept_source_text(node), QUESTION_DISTRIBUTION)
+            try:
+                kept = generate_questions_for_node(
+                    node, classifier, on_event=on_event, stats=stats,
+                    generation_fingerprint=fingerprint,
+                    grounding_index=grounding_index, append=True,
+                )
+            except Exception as exc:  # noqa: BLE001 -- one concept must not stop the rest
+                logger.exception("[Questions] %s  failed: %s", name(concept_name(node)), exc)
+                failed[node.id] = f"{concept_name(node)}: {exc}"
+                _emit(
+                    on_event, "node_failed", f"{concept_name(node)}: {exc}",
+                    node_id=node.id, round=round_number,
+                )
+                continue
+            added += len(kept)
+            _emit(
+                on_event, "node_finished",
+                f"Finished node: saved {len(kept)} questions",
+                node_id=node.id, count=len(kept),
+                index=position, total=len(targets), round=round_number, rounds=rounds,
+                by_thinking_order=dict(Counter(q.thinking_order for q in kept)),
+            )
+        targets = [node for node in targets if node.id not in failed and is_short(node)]
+
+    still_short = [concept_name(node) for node in targets]
+    logger.info(
+        "[Questions] topic %s  done: %s questions added from %s drafts; dropped %s not grounded "
+        "in the lesson, %s duplicates, %s wrong level, %s extra%s%s",
+        outline_node.id, added, stats["total_drafted"], stats["ungrounded"],
+        stats["duplicates"], stats["excluded_create"], stats["trimmed"],
+        f"; still short: {', '.join(still_short)}" if still_short else "",
+        f"; failed: {len(failed)}" if failed else "",
+    )
+    _emit(
+        on_event, "topic_finished",
+        f"Added {added} questions",
+        added=added, still_short=still_short, failed=list(failed.values()),
+        drafted=stats["total_drafted"], ungrounded=stats["ungrounded"],
+    )
+    return {"added": added, "still_short": still_short, "failed": list(failed.values())}

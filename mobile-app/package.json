@@ -4,6 +4,7 @@
   "main": "expo-router/entry",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:wifi": "node scripts/dev.mjs --wifi",
     "reverse": "node scripts/reverse.mjs",
     "prestart": "node scripts/reverse.mjs",
     "start": "expo start",

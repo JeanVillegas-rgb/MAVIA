@@ -29,6 +29,7 @@ from .services.learning_resource_linker import (
     synchronize_detected_questions,
 )
 from .services.question_workflow import mirror_generated_questions
+from .test_question_pairing import WordVectorEncoder
 from .tests import authenticated_api_client
 
 
@@ -109,6 +110,10 @@ class GeneratedQuestionSafetyTests(TestCase):
         self._assert_intact(self.liquid_question, self.liquid)
         self._assert_intact(self.gas_question, self.gas)
 
+    @patch(
+        "lessons.services.learning_resource_linker._question_encoder",
+        new=lambda: WordVectorEncoder(),
+    )
     def test_extracted_questions_are_still_paired(self):
         """The protection is for generated questions only; extracted ones keep
         being matched to the object they read like."""

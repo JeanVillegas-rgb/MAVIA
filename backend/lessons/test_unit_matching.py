@@ -164,7 +164,7 @@ class NumberedPartTests(UnitFixture):
         self.assertEqual(numbered_part_series([one, two]), [])
         self.assertEqual(reconcile_numbered_parts(self.topic), 0)
 
-    def test_other_normal_object_in_group_prevents_transitive_merge(self):
+    def test_other_standard_object_in_group_prevents_transitive_merge(self):
         one, two = self._parts()
         self.matter.group = two.group
         self.matter.save(update_fields=["group"])

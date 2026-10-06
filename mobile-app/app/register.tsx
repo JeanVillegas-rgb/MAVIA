@@ -7,6 +7,7 @@ import TextField from "@/components/TextField";
 import Button from "@/components/Button";
 import Card from "@/components/Card";
 import { register } from "@/api/client";
+import { liveRegion, useAnnouncement } from "@/hooks/useAnnouncement";
 import { colors, spacing } from "@/theme";
 
 export default function RegisterScreen() {
@@ -20,6 +21,8 @@ export default function RegisterScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  useAnnouncement(error);
+  useAnnouncement(done ? `Account created. We sent a verification link to ${email}. Open it to activate your account, then log in.` : "");
 
   async function handleSubmit() {
     setError("");
@@ -46,7 +49,7 @@ export default function RegisterScreen() {
     return (
       <ScreenContainer>
         <Card style={{ alignItems: "center" }}>
-          <Text style={styles.eyebrow}>Check your inbox</Text>
+          <Text style={styles.eyebrow} {...liveRegion}>Check your inbox</Text>
           <Text style={[styles.title, { textAlign: "center" }]}>Verify your email</Text>
           <Text style={[styles.subtitle, { textAlign: "center" }]}>
             We sent a verification link to{"\n"}
@@ -108,7 +111,7 @@ export default function RegisterScreen() {
       />
 
       {error ? (
-        <View style={styles.alert}>
+        <View style={styles.alert} {...liveRegion}>
           <Text style={styles.alertText}>{error}</Text>
         </View>
       ) : null}

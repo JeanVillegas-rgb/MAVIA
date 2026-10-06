@@ -14,6 +14,8 @@
 export type VoiceCommandId =
   | "repeatTopic"
   | "repeatQuestion"
+  | "pickTopic"
+  | "pickQuestion"
   | "chooseA"
   | "chooseB"
   | "chooseC"
@@ -58,6 +60,8 @@ export const VOICE_COMMANDS: VoiceCommand[] = [
       "please repeat the lesson",
       "repeat the lesson",
       "say the lesson again",
+      "repeat topic",
+      "repeat lesson",
     ],
   },
   {
@@ -71,7 +75,22 @@ export const VOICE_COMMANDS: VoiceCommand[] = [
       "say the question again",
       "can you repeat that question",
       "repeat that question",
+      "repeat question",
     ],
+  },
+  // The two answers to the repeat key's "the topic, or the question?". Single
+  // words are allowed here for the same reason as the list letters below: the
+  // lesson player only listens for them while that question is waiting for an
+  // answer -- never while anything is playing or being read.
+  {
+    id: "pickTopic",
+    description: "Hear the topic again (answering 'topic or question?')",
+    phrases: ["topic", "the topic", "lesson", "the lesson", "the topic please", "topic please"],
+  },
+  {
+    id: "pickQuestion",
+    description: "Hear the question again (answering 'topic or question?')",
+    phrases: ["question", "the question", "the question please", "question please"],
   },
   // The list letters. These are the one place a single word is allowed to be a
   // command, because a list screen is the only place they are ever listened

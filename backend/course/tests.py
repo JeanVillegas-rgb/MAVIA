@@ -6,7 +6,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 
-from .models import CourseModule, LessonNode, LessonVariant
+from .models import LessonVariant
 from .testing import without_measurements
 from .variant_generator import (
     VariantGenerationError,
@@ -84,8 +84,6 @@ class StandaloneVariantGenerationTests(TestCase):
             generated_json={"learning_objects_confirmed": True},
             status=LearningMaterial.Status.COMPLETED,
         )
-        course_module = CourseModule.objects.create(source=self.module)
-        LessonNode.objects.create(module=course_module, source=self.material)
 
     def _object(self, title, content, group):
         return LearningObject.objects.create(
@@ -182,7 +180,7 @@ class StandaloneVariantGenerationTests(TestCase):
 
 class GeneratedVersionCheckTests(SimpleTestCase):
     """BUG-002: a generated version is checked, rewritten with the reason, and
-    the Normal text is kept for a level no attempt gets right.
+    the Standard text is kept for a level no attempt gets right.
 
     The check result is patched here, so these verify the retry and fallback
     code. The check itself is in GeneratedVersionMeasureTests.
@@ -221,7 +219,7 @@ class GeneratedVersionCheckTests(SimpleTestCase):
         self.assertIn("simplified: it is not easier to read", second_prompt)
         self.assertEqual(result.fallback, {})
 
-    def test_a_level_no_attempt_gets_right_keeps_the_normal_text(self):
+    def test_a_level_no_attempt_gets_right_keeps_the_standard_text(self):
         def check(slot, source, text):
             return ["it leaves out facts"] if slot == "ELABORATED" else []
 

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Enrollment, LearningState, StudentResponse
+from .models import ConceptMastery, Decision, Enrollment, StudentBaseline
 
 
 @admin.register(Enrollment)
@@ -10,14 +10,19 @@ class EnrollmentAdmin(admin.ModelAdmin):
     search_fields = ("student__username", "student__email")
 
 
-@admin.register(LearningState)
-class LearningStateAdmin(admin.ModelAdmin):
-    list_display = ("student", "course", "mastery", "attempts", "completed", "updated_at")
-    list_filter = ("course", "completed")
-    search_fields = ("student__username",)
+@admin.register(StudentBaseline)
+class StudentBaselineAdmin(admin.ModelAdmin):
+    # the cold-start demo screen: watch a stranger's estimates move until calibrated
+    list_display = ("student", "course", "total_responses_count", "estimated_ability", "estimated_l0", "calibrated", "calibrated_at")
+    list_filter = ("course", "calibrated")
 
 
-@admin.register(StudentResponse)
-class StudentResponseAdmin(admin.ModelAdmin):
-    list_display = ("learning_state", "question", "is_correct", "created_at")
-    list_filter = ("is_correct",)
+@admin.register(ConceptMastery)
+class ConceptMasteryAdmin(admin.ModelAdmin):
+    list_display = ("student", "concept_id", "mastery_score", "updated_at")
+
+
+@admin.register(Decision)
+class DecisionAdmin(admin.ModelAdmin):
+    list_display = ("response", "action", "predicted_correct", "mastery_before", "mastery_after", "p_guess_used", "baseline_calibrated")
+    list_filter = ("action", "baseline_calibrated")

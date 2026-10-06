@@ -34,6 +34,10 @@ export default function Button({
     <Pressable
       onPress={onPress}
       disabled={isDisabled}
+      // Named by its label even while the spinner replaces the text.
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !!isDisabled, busy: !!loading }}
       style={({ pressed }) => [
         styles.base,
         variantStyles[variant],

@@ -84,6 +84,23 @@ class TopicPublishServiceTests(TestCase):
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
     @patch("course.variant_generator._request_variants")
+    def test_a_blocked_publish_stops_before_making_audio(self, request_variants, audio, images):
+        """Audio took 104 of 106 seconds of a publish already known to fail."""
+        from course.variant_generator import VariantGenerationError
+        images.return_value = {"generated_count": 0, "errors": []}
+        request_variants.side_effect = VariantGenerationError("Gemma did not return valid JSON.")
+
+        summary = self._run()
+
+        audio.assert_not_called()
+        self.version_audio.assert_not_called()
+        self.assertFalse(summary["published"])
+        self.assertIn("audio_skipped", [event[0] for event in self.events])
+        self.assertEqual(self.events[-1][0], "publish_failed")
+
+    @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
+    @patch("lessons.services.topic_publish.generate_material_audio_playlist")
+    @patch("course.variant_generator._request_variants")
     def test_audio_failure_does_not_publish(self, request_variants, audio, images):
         from .services.audio_generator import AudioGenerationError
         images.return_value = {"generated_count": 0, "errors": []}

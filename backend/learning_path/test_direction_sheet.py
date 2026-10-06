@@ -3,6 +3,7 @@
 import csv
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.core.management import call_command
 from django.test import SimpleTestCase
@@ -39,7 +40,10 @@ class DirectionSheetTests(SimpleTestCase):
     def test_the_command_writes_a_csv_excel_can_open(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "sheet.csv"
-            call_command("export_direction_sheet", gold="357", output=str(output))
+            command = "learning_path.management.commands.export_direction_sheet"
+            with patch(f"{command}.OutlineNode") as topics,                  patch(f"{command}.concepts_for_topic", return_value=three_states()):
+                topics.objects.filter.return_value.first.return_value = object()
+                call_command("export_direction_sheet", 12, output=str(output))
 
             with output.open(encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.reader(handle))

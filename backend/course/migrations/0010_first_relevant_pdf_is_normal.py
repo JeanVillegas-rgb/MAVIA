@@ -21,25 +21,28 @@ def rebase_existing_concepts(apps, schema_editor):
             continue
 
         selection = dict(group.version_selection or {})
-        stored = selection.get("normal_material_id")
+        # Keys use the Standard name (the Normal version was renamed Standard;
+        # course/0009_rename_normal_to_standard). course/0011 renames any
+        # normal_ key an older database still carries.
+        stored = selection.get("standard_material_id")
         first = relevant_ids[0]
         if stored is None:
-            selection["normal_material_id"] = first
-            selection["normal_assigned_by"] = "upload_order"
+            selection["standard_material_id"] = first
+            selection["standard_assigned_by"] = "upload_order"
             group.version_selection = selection
             group.save(using=db, update_fields=["version_selection"])
             continue
         if stored not in relevant_ids:
-            # The normal source was removed. Runtime review requires the
+            # The standard source was removed. Runtime review requires the
             # teacher to choose a replacement; do not promote another PDF.
             affected_topics.add(group.outline_node_id)
             continue
-        if selection.get("normal_assigned_by") == "teacher" or stored == first:
+        if selection.get("standard_assigned_by") == "teacher" or stored == first:
             continue
 
         selection["baseline_rebase_backup"] = dict(selection)
-        selection["normal_material_id"] = first
-        selection["normal_assigned_by"] = "upload_order"
+        selection["standard_material_id"] = first
+        selection["standard_assigned_by"] = "upload_order"
         selection["bundle_roles"] = {}
         selection["bundle_roles_assigned_by"] = {}
         selection["bundle_roles_decided_at"] = {}

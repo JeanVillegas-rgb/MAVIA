@@ -294,14 +294,14 @@ class ApplyTests(RegroupingFixture):
         self.assertTrue(self.node.published)
 
     def test_when_the_original_leaves_its_companions_are_released(self):
-        """The leaving object supplied the concept's Normal version. Text it
+        """The leaving object supplied the concept's Standard version. Text it
         held for its companions goes, and a replacement must be chosen."""
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.examples_a.represented_by = self.examples_b
         self.examples_a.save()
         self.examples.version_selection = {
-            "normal_material_id": self.second.id,
-            "normal_assigned_by": "teacher",
+            "standard_material_id": self.second.id,
+            "standard_assigned_by": "teacher",
             "bundle_roles": {str(self.first.id): "SIMPLIFIED"},
             "bundle_roles_assigned_by": {str(self.first.id): "teacher"},
         }
@@ -317,16 +317,16 @@ class ApplyTests(RegroupingFixture):
         self.examples_a.refresh_from_db()
         self.examples.refresh_from_db()
         self.assertIsNone(self.examples_a.represented_by_id)
-        self.assertEqual(self.examples.version_selection["normal_material_id"], self.second.id)
+        self.assertEqual(self.examples.version_selection["standard_material_id"], self.second.id)
         from course.version_assignment import assign_group_versions
-        self.assertTrue(assign_group_versions(self.examples)["normal_replacement_needed"])
+        self.assertTrue(assign_group_versions(self.examples)["standard_replacement_needed"])
 
     def test_a_leaving_member_takes_its_own_text_off_the_original(self):
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.examples_b.represented_by = self.examples_a
         self.examples_b.save()
         self.examples.version_selection = {
-            "normal_material_id": self.first.id,
+            "standard_material_id": self.first.id,
             "bundle_roles": {str(self.second.id): "ELABORATED"},
             "bundle_roles_assigned_by": {str(self.second.id): "teacher"},
         }
@@ -393,7 +393,7 @@ class SeparateReleasesVersionLinksTests(RegroupingFixture):
         self.examples_b.represented_by = self.examples_a
         self.examples_b.save()
         self.examples.version_selection = {
-            "normal_material_id": self.first.id,
+            "standard_material_id": self.first.id,
             "bundle_roles": {str(self.second.id): "ELABORATED"},
             "bundle_roles_assigned_by": {str(self.second.id): "teacher"},
         }
@@ -428,7 +428,7 @@ class SeparateReleasesVersionLinksTests(RegroupingFixture):
         self.solid_a.represented_by = self.solid_c
         self.solid_a.save()
         self.solid.version_selection = {
-            "normal_material_id": self.third.id,
+            "standard_material_id": self.third.id,
             "bundle_roles": {str(self.first.id): "SIMPLIFIED"},
             "bundle_roles_assigned_by": {str(self.first.id): "teacher"},
         }

@@ -15,9 +15,8 @@ from user.permissions import IsTeacherOrAdmin
 
 from course.models import LessonVariant
 from course.bulk_version_generation import classify_all_source_versions
-from course.services import sync_course_outline
 from course.variant_generator import (
-    NORMAL_FALLBACK_GENERATOR,
+    STANDARD_FALLBACK_GENERATOR,
     _fingerprint as version_fingerprint,
     fill_missing_bundle_slots,
     fill_missing_slots,
@@ -87,7 +86,6 @@ from .services.content_generator import (
     is_structural_metadata_label,
 )
 from .services.instructional_content_classifier import CLASSIFICATION_CATEGORIES
-from .services.image_describer import populate_missing_image_descriptions
 from .services.learning_resource_linker import (
     CONFIRMED_QUESTION_PAIRING_STATUSES,
     learning_objects_are_confirmed,
@@ -98,7 +96,21 @@ from .services.learning_resource_linker import (
     refresh_material_learning_relationships,
     refresh_question_learning_object_links,
 )
+from .services.reconfirm_review import (
+    FIRST_CONFIRMED_KEY,
+    approved_placements,
+    keep_in_place,
+    rehearse,
+    was_confirmed_before,
+)
 from .services.unit_matching import place_unit, unpublish_topic
+from question_generation.services.bank_status import (
+    bank_out_of_date,
+    keep_bank,
+    refile_bank_before_delete,
+    settle_bank_owner,
+)
+from question_generation.services.pipeline import question_minimum
 from .services.regrouping import (
     RegroupingUnavailable,
     apply_regrouping,
@@ -106,6 +118,9 @@ from .services.regrouping import (
     propose_regrouping,
 )
 from .services.question_workflow import (
+    TIERS,
+    counts_toward_minimum,
+    label_printed_questions,
     delete_generated_questions_for,
     duplicate_for_topic,
     duplicate_in_topic,
@@ -145,6 +160,7 @@ def _active_topic_run(outline_node, *, stale_after=timedelta(minutes=30)):
                 "so it can be retried."
             ),
         )
+        logger.warning("run %s stopped reporting progress and was closed so it can be retried", run.id)
         run.status = "failed"
         run.finished_at = timezone.now()
         run.save(update_fields=["status", "finished_at"])
@@ -153,16 +169,10 @@ def _active_topic_run(outline_node, *, stale_after=timedelta(minutes=30)):
 
 def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
     """Thread entry point. Owns the run's lifecycle and nothing else."""
-    from question_generation.models import GenerationEvent
+    from question_generation.tracing import run_tracer
 
     run = GenerationRun.objects.get(id=run_id)
-    seq = {"n": 0}
-
-    def record(event_type, message, **data):
-        seq["n"] += 1
-        GenerationEvent.objects.create(
-            run=run, seq=seq["n"], event_type=event_type, message=message, data=data or None
-        )
+    record = run_tracer(run, label="Publish")
 
     try:
         course = CourseGroup.objects.get(id=course_id)
@@ -174,7 +184,7 @@ def _run_topic_publish_in_background(run_id, course_id, node_id, set_confirmed):
         )
         run.status = "finished"
     except Exception as exc:  # a failed publish must not leave the run "running" forever
-        logger.exception("Publish run %s failed", run_id)
+        logger.exception("[Publish] run %s failed", run_id)
         # Status first: recording the event writes too, and when the failure
         # was the database itself ("database is locked") that write fails as
         # well -- which used to skip this line and save the run as "running".
@@ -190,28 +200,22 @@ def _record_failure(record, event_type, exc, run_id):
     try:
         record(event_type, str(exc))
     except Exception:
-        logger.exception("Could not record the failure of run %s", run_id)
+        logger.exception("run %s: could not record why it failed", run_id)
 
 
 def _run_all_versions_in_background(run_id, node_id):
     """Classify all existing PDF variants while recording pollable progress."""
-    from question_generation.models import GenerationEvent
+    from question_generation.tracing import run_tracer
 
     run = GenerationRun.objects.get(id=run_id)
-    seq = {"n": 0}
-
-    def record(event_type, message, **data):
-        seq["n"] += 1
-        GenerationEvent.objects.create(
-            run=run, seq=seq["n"], event_type=event_type, message=message, data=data or None
-        )
+    record = run_tracer(run, label="Versions")
 
     try:
         node = OutlineNode.objects.get(id=node_id)
         classify_all_source_versions(node, on_event=record)
         run.status = "finished"
     except Exception as exc:
-        logger.exception("Bulk version run %s failed", run_id)
+        logger.exception("[Versions] run %s failed", run_id)
         # Status first; see _run_topic_publish_in_background.
         run.status = "failed"
         _record_failure(record, "versions_bulk_failed", exc, run_id)
@@ -309,13 +313,20 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             .order_by("material_id", "order", "id")
         ) if has_confirmed_learning_objects else []
         confirmed_questions_by_group = defaultdict(list)
+        minimum = question_minimum()
+        # Toward each concept's minimum: the same rule generation uses, so the
+        # counter and the Generate button agree on who is short.
+        counted_by_group = defaultdict(set)
         for question in all_questions:
-            group_ids = {
-                link.learning_object.group_id
-                for link in question.learning_object_links.all()
-                if link.review_status in CONFIRMED_QUESTION_PAIRING_STATUSES
-                and link.learning_object.group_id is not None
-            }
+            group_ids = set()
+            for link in question.learning_object_links.all():
+                group_id = link.learning_object.group_id
+                if group_id is None:
+                    continue
+                if link.review_status in CONFIRMED_QUESTION_PAIRING_STATUSES:
+                    group_ids.add(group_id)
+                if counts_toward_minimum(question, link):
+                    counted_by_group[group_id].add(question)
             for group_id in group_ids:
                 confirmed_questions_by_group[group_id].append(question)
 
@@ -367,10 +378,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             # the variant table only fills what was generated. Reading the table
             # alone left such a slot empty and the concept forever "incomplete".
             role_provenance = bundle_role_provenance(group)
-            normal_material = version_state.get("normal_material_id")
-            normal_objects = [
+            standard_material = version_state.get("standard_material_id")
+            standard_objects = [
                 item
-                for item in group_bundles.get(normal_material, [])
+                for item in group_bundles.get(standard_material, [])
                 if (item.content or "").strip()
             ]
 
@@ -379,7 +390,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
                 The review screen shows every object exactly once, under the
                 role it actually plays. Without this it had no way to tell a
-                member of the Normal bundle from a bundle supplying another
+                member of the Standard bundle from a bundle supplying another
                 version, and labelled both "Other variation".
                 """
                 return [
@@ -393,19 +404,19 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     for item in objects
                 ]
 
-            # Normal is a role like the others: the bundle the concept is
+            # Standard is a role like the others: the bundle the concept is
             # taught as. It used to be absent from the payload entirely, so the
             # screen fell back to the bundle's lead object and dropped the rest.
-            if normal_objects:
-                slot_rows["normal"] = {
+            if standard_objects:
+                slot_rows["standard"] = {
                     "id": None,
-                    "material": normal_material,
-                    "text": bundle_text(normal_objects),
+                    "material": standard_material,
+                    "text": bundle_text(standard_objects),
                     "origin": LessonVariant.Origin.SOURCE_PDF,
                     "source": "pdf",
-                    "assigned_by": role_provenance.get(normal_material, ""),
-                    "source_learning_object_id": normal_objects[0].id,
-                    "objects": object_rows(normal_objects),
+                    "assigned_by": role_provenance.get(standard_material, ""),
+                    "source_learning_object_id": standard_objects[0].id,
+                    "objects": object_rows(standard_objects),
                     "stale": False,
                 }
 
@@ -426,20 +437,20 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     "assigned_by": role_provenance.get(material_id, ""),
                     "source_learning_object_id": supplied[0].id,
                     "objects": object_rows(supplied),
-                    # Teacher text, never written from the Normal wording, so
+                    # Teacher text, never written from the Standard wording, so
                     # it cannot go stale the way a generated version does.
                     "stale": False,
                 }
                 slot_rows[role.lower()] = entry
 
-            if normal_objects:
-                # A generated version is written one object of the Normal
+            if standard_objects:
+                # A generated version is written one object of the Standard
                 # bundle at a time, so it is read back the same way. Reading
                 # only the lead's row showed one segment of four.
-                by_id = {item.id: item for item in normal_objects}
-                position = {item.id: index for index, item in enumerate(normal_objects)}
+                by_id = {item.id: item for item in standard_objects}
+                position = {item.id: index for index, item in enumerate(standard_objects)}
                 generated = defaultdict(list)
-                for row in LessonVariant.objects.filter(learning_object__in=normal_objects):
+                for row in LessonVariant.objects.filter(learning_object__in=standard_objects):
                     generated[row.variant].append(row)
                 for variant, rows in generated.items():
                     rows.sort(key=lambda row: position.get(row.learning_object_id, len(position)))
@@ -448,10 +459,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     # A version short of its bundle is reported missing rather
                     # than served: three quarters of a version reads as a whole
                     # one to a learner who cannot see the page.
-                    if len(rows) < len(normal_objects):
+                    if len(rows) < len(standard_objects):
                         continue
                     fallback_count = sum(
-                        row.generator_model == NORMAL_FALLBACK_GENERATOR
+                        row.generator_model == STANDARD_FALLBACK_GENERATOR
                         and row.assigned_by != LessonVariant.AssignedBy.TEACHER
                         for row in rows
                     )
@@ -470,7 +481,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                         # Each segment carries the wording that was *written*,
                         # not the object it was written from -- showing the
                         # source text under an Elaborated heading would be
-                        # printing the Normal version a second time.
+                        # printing the Standard version a second time.
                         "objects": [
                             {
                                 **object_rows([by_id[row.learning_object_id]])[0],
@@ -478,9 +489,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                             }
                             for row in rows
                         ],
-                        # A failed segment keeps its own Normal text. Other
+                        # A failed segment keeps its own Standard text. Other
                         # segments may have passed, so report how many fell
-                        # back instead of describing the entire slot as Normal.
+                        # back instead of describing the entire slot as Standard.
                         "fallback": fallback_count > 0,
                         "fallback_count": fallback_count,
                         "segment_count": len(rows),
@@ -505,7 +516,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                     "versions": {
                         "representative_id": version_state["representative_id"],
                         "original_selected": version_state.get("original_selected", False),
-                        "normal_replacement_needed": version_state.get("normal_replacement_needed", False),
+                        "standard_replacement_needed": version_state.get("standard_replacement_needed", False),
                         "classification_complete": version_state.get("classification_complete", True),
                         "slots": slot_rows,
                         "archived_unassigned": archived_unassigned,
@@ -521,7 +532,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                             "material": material_id,
                             "role": version_state["bundle_roles"].get(
                                 material_id,
-                                "NORMAL" if material_id == version_state["normal_material_id"] else None,
+                                "STANDARD" if material_id == version_state["standard_material_id"] else None,
                             ),
                             "learning_objects": LearningObjectSerializer(
                                 objects, many=True, context={"request": request},
@@ -542,6 +553,14 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                         many=True,
                         context={"request": request},
                     ).data,
+                    "question_counts": {
+                        tier: sum(question.thinking_order == tier for question in counted_by_group[group.id])
+                        for tier in TIERS
+                    },
+                    "question_minimum": minimum,
+                    # Written before the concept's text last changed; the
+                    # teacher keeps or regenerates it before publishing.
+                    "question_bank_out_of_date": bank_out_of_date(group),
                 }
             )
         title_entries = [
@@ -571,6 +590,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             # knows whether "Review grouping changes" is worth enabling.
             "regrouping": {"changed_count": len(changed_learning_objects(node))},
             "learning_object_groups": groups,
+            "question_minimum": minimum,
             "matching_debug": learning_object_match_debug_configuration(),
             "question_pairing_debug": question_pairing_debug_configuration(),
             "question_pairings": QuestionSerializer(
@@ -872,6 +892,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             label=bundle_label([learning_object])[:255],
         )
         place_unit([learning_object], target)
+        # Alone in its group now, it would otherwise be filed back under its
+        # section's concept on the next automatic pass.
+        learning_object.kept_apart_from_section = True
+        learning_object.save(update_fields=["kept_apart_from_section"])
         # A teacher breaking a bundle up is a decision, not a gap in the
         # evidence: without recording it the next automatic pass would place
         # the object straight back. Only cross-PDF pairs are decided -- two
@@ -1495,6 +1519,12 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                         )
             for field, value in values.items():
                 setattr(question, field, value)
+            if question.source_type != Question.SourceType.MANUAL:
+                # A generated one is kept through a regeneration of its
+                # concept's bank; a printed one now counts toward the
+                # concept's minimum once its pairing is confirmed too.
+                question.teacher_edited = True
+                values["teacher_edited"] = True
             question.save(update_fields=list(values))
 
             if update_pairing:
@@ -1573,12 +1603,16 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
         material = learning_object.material
         group = learning_object.group
-        # Only this concept's generated questions go with it. Every other
-        # concept's generated questions are left exactly as they are.
+        # The concept's question bank belongs to the concept, not to the
+        # object it is filed under; it stays, re-filed, and reads as out of
+        # date. Only questions generated from this object alone go with it.
+        refile_bank_before_delete(learning_object)
         delete_generated_questions_for(learning_object)
         learning_object.delete()
         if group is not None and not group.learning_objects.exists():
             group.delete()
+        elif group is not None:
+            settle_bank_owner(group)
 
         self._refresh_relationship_snapshots({material})
 
@@ -1695,7 +1729,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         replace_stale = bool(request.data.get("replace_stale"))
         target_slots = [requested_slot] if requested_slot else None
         if learning_object.group_id:
-            # A concept's Normal version can be several objects of one PDF -- a
+            # A concept's Standard version can be several objects of one PDF -- a
             # comparison section written as Shape, Volume, Particle arrangement
             # and Flow. The screen shows a slot as written only once every one
             # of them has a version, so generating for the representative alone
@@ -1808,7 +1842,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/versions/(?P<variant_id>[^/.]+)/keep",
     )
     def keep_version_text(self, request, pk=None, node_id=None, variant_id=None):
-        """Confirm an out-of-date version still matches the current Normal text.
+        """Confirm an out-of-date version still matches the current Standard text.
 
         The wording is left exactly as it is; only the record of which text it
         was checked against moves forward, which is what clears the publish
@@ -1836,6 +1870,54 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/label-questions",
+    )
+    def label_topic_questions(self, request, pk=None, node_id=None):
+        """Label the printed questions not labelled yet: the Questions step's job.
+
+        Upload stores them without a Bloom level, LOTS/HOTS or category, so
+        every question process happens on the Questions screen. A failure is
+        reported, not swallowed: the teacher cannot move on until it works.
+        """
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            label_printed_questions(node)
+        except Exception as exc:  # noqa: BLE001 -- shown to the teacher with Try again
+            logger.exception("[Questions] topic %s  labelling printed questions failed", node.id)
+            return Response(
+                {"detail": f"The printed questions could not be labelled: {exc}"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(self._learning_resources_payload(node, request))
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/concepts/(?P<group_id>[^/.]+)/keep-questions",
+    )
+    def keep_question_bank(self, request, pk=None, node_id=None, group_id=None):
+        """Confirm an out-of-date question bank still fits the concept's text.
+
+        The questions are left exactly as they are; only the record of which
+        text they were checked against moves forward, which clears the
+        publish block -- the same as keeping an out-of-date version.
+        """
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+            group = node.learning_object_groups.get(pk=group_id)
+        except (OutlineNode.DoesNotExist, LearningObjectGroup.DoesNotExist, ValueError):
+            return Response({"detail": "Concept not found in this topic."}, status=status.HTTP_404_NOT_FOUND)
+        keep_bank(group)
+        return Response(self._learning_resources_payload(node, request))
+
+    @action(
+        detail=True,
+        methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/version-assignment",
     )
     def confirm_version_assignment(self, request, pk=None, node_id=None):
@@ -1847,9 +1929,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
 
         slot = str(request.data.get("slot", "")).upper()
-        if slot not in ("NORMAL", "SIMPLIFIED", "ELABORATED"):
+        if slot not in ("STANDARD", "SIMPLIFIED", "ELABORATED"):
             return Response(
-                {"detail": "slot must be NORMAL, SIMPLIFIED or ELABORATED."},
+                {"detail": "slot must be STANDARD, SIMPLIFIED or ELABORATED."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1872,32 +1954,32 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
         state = assign_group_versions(learning_object.group)
         representative_id = state["representative_id"]
-        if representative_id is None and slot != "NORMAL":
+        if representative_id is None and slot != "STANDARD":
             return Response(
-                {"detail": "Choose a replacement Normal PDF first."},
+                {"detail": "Choose a replacement Standard PDF first."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if slot == "NORMAL":
+        if slot == "STANDARD":
             try:
                 assign_source_as_representative(learning_object.group, learning_object)
             except ValueError as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
             payload = self._learning_resources_payload(node, request)
             learning_object.group.refresh_from_db(fields=["version_selection"])
-            old_normal_needs_review = (
-                state["normal_material_id"] not in bundle_roles(learning_object.group)
+            old_standard_needs_review = (
+                state["standard_material_id"] not in bundle_roles(learning_object.group)
             )
             payload["version_assignment"] = {
                 "slot": slot,
                 "source_learning_object_id": learning_object.id,
-                "needs_review": representative_id if old_normal_needs_review else None,
+                "needs_review": representative_id if old_standard_needs_review else None,
             }
             return Response(payload)
 
         if representative_id == learning_object.id:
             return Response(
-                {"detail": "Choose another PDF source as Normal before moving this one."},
+                {"detail": "Choose another PDF source as Standard before moving this one."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2291,6 +2373,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         # Publish the confirmation state before relationship refresh so the
         # linker can never use draft learning objects as candidates.
         generated_json = material.generated_json or {}
+        if confirmed or generated_json.get("learning_objects_confirmed"):
+            # Kept when the PDF goes back to draft, so confirming it again
+            # is known to be a reconfirm and is reviewed first.
+            generated_json.setdefault(FIRST_CONFIRMED_KEY, timezone.now().isoformat())
         generated_json["learning_objects_confirmed"] = confirmed
         generated_json["learning_objects_confirmed_at"] = timezone.now().isoformat() if confirmed else None
         material.generated_json = generated_json
@@ -2307,6 +2393,12 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 .distinct()
             )
             for question_material in related_question_materials:
+                if not confirmed:
+                    # A draft edit reaches no other PDF: not their grouping,
+                    # not their question pairs. A question whose object was
+                    # deleted stays unpaired until this PDF is confirmed again,
+                    # which re-pairs everything below.
+                    continue
                 refresh_material_learning_relationships(question_material)
                 question_json = question_material.generated_json or {}
                 question_json["questions"] = question_snapshots(question_material)
@@ -2436,7 +2528,32 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        self._set_learning_objects_confirmed(material, True)
+        # Confirming an edited PDF again can move objects of the approved
+        # PDFs. Without the teacher's answer ("keep": the ids to leave where
+        # they are), the confirmation is rehearsed and what it would change
+        # is returned instead.
+        keep = request.data.get("keep")
+        rehearsed = keep is None and was_confirmed_before(material)
+        if rehearsed:
+            # Kept when nothing approved moves, so it is not run twice.
+            changes = rehearse(material, lambda: self._set_learning_objects_confirmed(material, True))
+            if changes:
+                return Response({"approved_changes": changes, "confirmed": False})
+        try:
+            kept_ids = [int(item) for item in keep or []]
+        except (TypeError, ValueError):
+            return Response({"detail": "keep must be a list of learning object ids."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        before = approved_placements(material) if kept_ids else {}
+
+        if not rehearsed:
+            self._set_learning_objects_confirmed(material, True)
+        if kept_ids:
+            keep_in_place(material, kept_ids, before)
+            self._refresh_relationship_snapshots(
+                LearningMaterial.objects.filter(learning_objects__id__in=kept_ids).distinct(),
+                recompute=False,
+            )
         response = self._serialize_course_detail(course, request)
         response.data["image_description_generation"] = {
             "generated_count": 0,
@@ -2444,34 +2561,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "errors": [],
             "deferred": True,
         }
-        return response
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"materials/(?P<material_id>[^/.]+)/regenerate-image-narrations",
-    )
-    def regenerate_image_narrations(self, request, pk=None, material_id=None):
-        """Repair blank narration on saved image objects without re-uploading the PDF."""
-        course = self.get_object()
-        material = self._get_course_material(course, material_id)
-        if material is None:
-            return Response(
-                {"detail": "Learning material not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        image_result = populate_missing_image_descriptions(material)
-        if image_result["generated_count"]:
-            # Refresh narration and playlist snapshots while preserving whether
-            # this material was already confirmed.
-            confirmed = bool(
-                (material.generated_json or {}).get("learning_objects_confirmed")
-            )
-            self._set_learning_objects_confirmed(material, confirmed)
-
-        response = self._serialize_course_detail(course, request)
-        response.data["image_description_generation"] = image_result
         return response
 
     @action(
@@ -2568,12 +2657,16 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
         if request.method == "DELETE":
             group = learning_object.group
-            # Only this object's generated questions go with it.
+            # The concept's bank stays with the concept (re-filed); only this
+            # object's own generated questions go with it.
+            refile_bank_before_delete(learning_object)
             delete_generated_questions_for(learning_object)
             learning_object.delete()
             # A group whose only member was deleted is not a concept any more.
             if group is not None and not group.learning_objects.exists():
                 group.delete()
+            elif group is not None:
+                settle_bank_owner(group)
             self._set_learning_objects_confirmed(material, False)
             return self._serialize_course_detail(course, request)
 

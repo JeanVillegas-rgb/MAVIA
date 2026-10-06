@@ -1,10 +1,12 @@
 // The card a teacher reads after clicking a concept: its text, the files it
 // came from, what must be learned before it, and -- on the editable screen --
-// the recommended links still waiting for a decision. It sits over the
+// what comes after it, the recommended links still waiting for a decision. It sits over the
 // graph's corner without a backdrop, so the highlighted neighbours stay visible.
 import { useEffect } from "react";
 
-export default function ConceptDetails({ step, editable = false, busy = false, onRemove, onAccept, onReject, onClose }) {
+import BundleParts from "./BundleParts";
+
+export default function ConceptDetails({ step, dependents = [], editable = false, busy = false, onRemove, onAccept, onReject, onClose }) {
   useEffect(() => {
     if (!step) return undefined;
     const onKey = (event) => event.key === "Escape" && onClose();
@@ -27,13 +29,13 @@ export default function ConceptDetails({ step, editable = false, busy = false, o
           Close
         </button>
       </header>
-      {step.content && <p className="pg-details-text">{step.content}</p>}
+      <BundleParts parts={step.parts} fallback={step.content} className="pg-details-text" />
       {sources.length > 0 && (
         <p className="pg-details-sources">From: {sources.map((source) => source.title).join(", ")}</p>
       )}
-      <h4>Must learn first</h4>
-      {prerequisites.length === 0 && pending.length === 0 && (
-        <p className="muted-text">Nothing must be learned before this.</p>
+      <h4>Learn these first</h4>
+      {prerequisites.length === 0 && (
+        <p className="muted-text">No prerequisites.</p>
       )}
       {prerequisites.length > 0 && (
         <ul className="pg-details-list">
@@ -45,7 +47,7 @@ export default function ConceptDetails({ step, editable = false, busy = false, o
               </div>
               {editable && (
                 <button type="button" className="btn btn-small btn-secondary" disabled={busy} onClick={() => onRemove(link, step)}>
-                  Remove
+                  Remove prerequisite
                 </button>
               )}
             </li>
@@ -53,11 +55,12 @@ export default function ConceptDetails({ step, editable = false, busy = false, o
         </ul>
       )}
       {pending.length > 0 && (
-        <ul className="pg-pending-list" aria-label="Recommended links waiting for your decision">
+        <>
+        <h4>Suggested prerequisites</h4>
+        <ul className="pg-pending-list" aria-label="Suggested prerequisites waiting for your decision">
           {pending.map((link) => (
             <li key={link.link_id} className="pg-pending">
               <div className="pg-pending-head">
-                <span className="pg-pending-label">Pending</span>
                 <strong>{link.title}</strong>
                 {link.cross_section && (
                   <span
@@ -71,12 +74,25 @@ export default function ConceptDetails({ step, editable = false, busy = false, o
               {link.reason && <small>{link.reason}</small>}
               <div className="pg-pending-actions">
                 <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => onAccept(link, step)}>
-                  Accept
+                  Add as prerequisite
                 </button>
                 <button type="button" className="btn btn-small btn-secondary" disabled={busy} onClick={() => onReject(link, step)}>
-                  Reject
+                  Dismiss
                 </button>
               </div>
+            </li>
+          ))}
+        </ul>
+        </>
+      )}
+      <h4>Comes after this</h4>
+      {dependents.length === 0 ? (
+        <p className="muted-text">Nothing builds on this yet.</p>
+      ) : (
+        <ul className="pg-details-list">
+          {dependents.map((item) => (
+            <li key={item.concept_id}>
+              <strong>{item.position}. {item.title || "Untitled concept"}</strong>
             </li>
           ))}
         </ul>

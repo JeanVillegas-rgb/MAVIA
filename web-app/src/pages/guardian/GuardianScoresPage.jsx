@@ -1,7 +1,8 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import GuardianShell from "./GuardianShell";
-import { child, scores } from "./guardianData";
+import { fetchChild, fetchScores } from "./api/guardianApi";
 
 const RESULT_PILL = {
   Mastered: "mv-pill mv-pill--ok",
@@ -10,6 +11,32 @@ const RESULT_PILL = {
 };
 
 export default function GuardianScoresPage() {
+  // Both come through api/guardianApi.js -- see the note there.
+  const [child, setChild] = useState(null);
+  const [scores, setScores] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchChild(), fetchScores()]).then(([childData, scoreData]) => {
+      if (cancelled) return;
+      setChild(childData);
+      setScores(scoreData);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!child) {
+    return (
+      <GuardianShell>
+        <div className="mv-page-head">
+          <h1>Loading&hellip;</h1>
+        </div>
+      </GuardianShell>
+    );
+  }
+
   const firstName = child.name.split(" ")[0];
 
   return (

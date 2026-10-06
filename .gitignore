@@ -66,6 +66,7 @@ tmp/
 
 # Defense slide decks and their traces
 docs/pipeline-run-through-2026-10-02/
+docs/pipeline-run-through-2026-10-05/
 
 # Source lesson PDFs kept at the repo root for re-uploading
 /Science*.pdf
@@ -75,3 +76,27 @@ backend/learning_path/fixtures/gold_map_308.json
 
 # Course-level slide deck and its generator
 docs/course-level-deck/
+
+# Pipeline flowchart (slide asset) and its generator
+docs/pipeline-flowchart/
+
+# Code and computation walkthroughs (presentation material) and their generators
+*walkthrough*
+docs/question-generation-and-within-topic-learning-path-code-sources.json
+
+# "Within Topic Pipeline" document, its sources, renders and build scripts
+docs/MAVIA Within Topic Pipeline.docx
+docs/within-topic-pipeline-source.md
+docs/build_pipeline_docx.mjs
+docs/render_pipeline_*.ps1
+docs/pipeline-docx-qa/
+
+# Computation outputs behind the walkthroughs and documents
+docs/content-path-*.json
+docs/learning-path-calculations/
+
+# Database backups, kept locally only
+backend/db.sqlite3.*
+
+# Simulation run workbooks and their builder
+docs/simulation-*/

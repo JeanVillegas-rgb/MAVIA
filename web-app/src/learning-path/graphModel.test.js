@@ -48,6 +48,57 @@ describe("buildGraph", () => {
     expect(at(graph, 1).x).toBeLessThan(at(graph, 2).x);
   });
 
+  it("draws one labelled band per tier, behind the concepts in it", () => {
+    const graph = buildGraph(STEPS);
+    const tiers = graph.nodes.filter((node) => node.type === "tier");
+    expect(tiers.map((node) => node.data.number)).toEqual([1, 2]);
+    const [first, second] = tiers;
+    expect(first.position.y).toBeLessThan(at(graph, 1).y);
+    expect(first.position.y + first.data.height).toBeGreaterThan(at(graph, 1).y);
+    expect(second.position.y).toBeLessThan(at(graph, 2).y);
+    expect(first.position.x).toBeLessThan(at(graph, 1).x);
+  });
+
+  it("has no tier bands when nothing is linked", () => {
+    const graph = buildGraph([step(1, 1, "A"), step(2, 2, "B")]);
+    expect(graph.nodes.some((node) => node.type === "tier")).toBe(false);
+  });
+
+  it("routes arrows as right-angle lines between tiers", () => {
+    const graph = buildGraph(STEPS);
+    expect(graph.edges.every((edge) => edge.type === "smoothstep")).toBe(true);
+  });
+
+  it("sends a link that skips a tier down a side lane, outside every band", () => {
+    const steps = [
+      step(1, 1, "Matter"),
+      step(2, 2, "Solid", [link(10, 1, "Matter")]),
+      step(3, 3, "Changes", [link(11, 2, "Solid"), link(12, 1, "Matter")]),
+    ];
+    const graph = buildGraph(steps);
+    const edge = (id) => graph.edges.find((item) => item.id === `link-${id}`);
+    const bandRight = Math.max(
+      ...graph.nodes.filter((node) => node.type === "tier").map((node) => node.position.x + node.data.width),
+    );
+
+    expect(edge(10).type).toBe("smoothstep");
+    expect(edge(12).type).toBe("lane");
+    expect(edge(12).data.laneX).toBeGreaterThan(bandRight);
+  });
+
+  it("gives each skipping link its own lane", () => {
+    const steps = [
+      step(1, 1, "A"),
+      step(2, 2, "B", [link(10, 1, "A")]),
+      step(3, 3, "C", [link(11, 2, "B"), link(12, 1, "A")]),
+      step(4, 4, "D", [link(13, 3, "C"), link(14, 1, "A")]),
+    ];
+    const lanes = buildGraph(steps).edges.filter((edge) => edge.type === "lane");
+
+    expect(lanes).toHaveLength(2);
+    expect(lanes[0].data.laneX).not.toBe(lanes[1].data.laneX);
+  });
+
   it("dims every concept unrelated to the selection", () => {
     const graph = buildGraph(STEPS, 2);
     const role = (id) => graph.nodes.find((node) => node.id === String(id)).data.role;

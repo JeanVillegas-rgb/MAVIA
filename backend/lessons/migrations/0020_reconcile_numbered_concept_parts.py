@@ -7,7 +7,8 @@ from django.db.models import F
 
 
 PART = re.compile(r"\s*\(\s*part\s+(\d+)\s*(?:of|/)\s*(\d+)\s*\)\s*$", re.I)
-AUTOMATIC_KEYS = {"normal_material_id", "normal_assigned_by", "auto_label"}
+# Standard (formerly Normal) -- see course/0009_rename_normal_to_standard.
+AUTOMATIC_KEYS = {"standard_material_id", "standard_assigned_by", "auto_label"}
 
 
 def _key(value):

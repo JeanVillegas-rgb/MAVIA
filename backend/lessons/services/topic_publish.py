@@ -12,7 +12,6 @@ exercised synchronously without a background thread or an HTTP round trip.
 from django.utils import timezone
 
 from course.models import LessonVariant
-from course.services import sync_course_outline
 from course.version_assignment import settle_group
 
 from ..models import LearningMaterial, LearningObject
@@ -20,6 +19,7 @@ from .audio_generator import (
     AudioGenerationError,
     generate_bundle_version_audio,
     generate_material_audio_playlist,
+    generate_question_audio,
     generate_version_audio,
 )
 from .image_describer import populate_missing_image_descriptions
@@ -51,8 +51,8 @@ def concepts_missing_a_version(node, materials):
       there is no ``LessonVariant`` row to look for, and demanding one would
       make every two-PDF topic unpublishable;
     * a role no bundle supplies must have been written, one row per object of
-      the Normal bundle, so the version a student hears covers all of it;
-    * only the Normal bundle's lead speaks for the concept. Every other object
+      the Standard bundle, so the version a student hears covers all of it;
+    * only the Standard bundle's lead speaks for the concept. Every other object
       either repeats it or belongs to a bundle that is already a version --
       including a bundle still awaiting the teacher's confirmation, which is
       simply not a version yet and must not hold publishing back.
@@ -62,7 +62,7 @@ def concepts_missing_a_version(node, materials):
     over confirmed materials only, so un-confirming one PDF after grouping
     would otherwise publish a version with nothing to play.
     """
-    from course.version_assignment import PRIMARY_SLOTS, version_bundles
+    from course.version_assignment import PRIMARY_SLOTS, served_version_bundles
 
     confirmed_ids = {material.id for material in materials}
     filled = {
@@ -84,34 +84,34 @@ def concepts_missing_a_version(node, materials):
         if candidate.group_id is None:
             if candidate.represented_by_id is not None:
                 continue
-            normal, supplied = [candidate], set()
+            standard, supplied = [candidate], set()
         else:
             if candidate.group_id not in bundles_by_group:
-                bundles_by_group[candidate.group_id] = version_bundles(candidate.group)
+                bundles_by_group[candidate.group_id] = served_version_bundles(candidate.group)
             bundles = bundles_by_group[candidate.group_id]
-            normal = bundles.get("NORMAL") or []
+            standard = bundles.get("STANDARD") or []
             supplied = {
                 role for role, objects in bundles.items()
                 if role in PRIMARY_SLOTS
                 and objects
                 and all(item.material_id in confirmed_ids for item in objects)
             }
-            if normal:
-                if normal[0].id != candidate.id:
+            if standard:
+                if standard[0].id != candidate.id:
                     continue
             elif candidate.represented_by_id is None:
                 # Nothing in the concept has text to teach; report it against
                 # whichever object is still standing for it.
-                normal = [candidate]
+                standard = [candidate]
             else:
                 continue
-        if not any((item.content or "").strip() for item in normal):
+        if not any((item.content or "").strip() for item in standard):
             missing.append(candidate.id)
             continue
         if any(
             (item.id, slot) not in filled
             for slot in set(PRIMARY_SLOTS) - supplied
-            for item in normal
+            for item in standard
         ):
             missing.append(candidate.id)
     return missing
@@ -183,10 +183,8 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
             generated=result["generated_count"],
         )
 
-    # LessonVariant requires the student-facing lesson package wrapper.
     # Assignment normally happened at review; this is a backstop for content
     # edited afterwards. Settled groups generate nothing.
-    sync_course_outline(course.id)
     groups = list(node.learning_object_groups.filter(learning_objects__material__in=materials).distinct())
     variant_generated = []
     variant_errors = []
@@ -200,17 +198,18 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
         variant_generated.extend(outcome["generated"])
         variant_errors.extend(outcome["errors"])
         for pending in outcome["needs_confirmation"]:
-            detail = (
-                "A PDF source has no confirmed content-version role. "
-                "Choose Simplified or Elaborated, or separate it from this concept."
-            )
-            error = {
-                "learning_object_id": pending["learning_object_id"],
-                "detail": detail,
-            }
-            variant_errors.append(error)
+            # A flag, not a fault: the PDF's text may become a version once a
+            # teacher confirms it. Until then it is not served and the written
+            # versions stand in, so publishing goes ahead and only says so.
+            source = LearningObject.objects.select_related("material").filter(
+                pk=pending["learning_object_id"],
+            ).first()
+            file_name = (source.material.title if source else "") or "a PDF"
             emit(
-                "versions_failed", detail,
+                "versions_flagged",
+                f"“{group.label or f'Concept {index}'}”: the version from “{file_name}” "
+                "is still flagged, so learners get the written versions instead. "
+                "Confirm it in Content versions to use it.",
                 group_id=group.id,
                 learning_object_id=pending["learning_object_id"],
             )
@@ -226,9 +225,11 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
                 learning_object_id=error.get("learning_object_id"),
                 slots=error.get("slots", []),
             )
+        written = len(outcome["generated"])
         emit(
             "versions_finished",
-            f"Concept {index} of {len(groups)} settled",
+            f"“{group.label or f'Concept {index}'}” versions settled"
+            + (f", {written} written" if written else ""),
             index=index, total=len(groups), group_id=group.id,
             generated=outcome["generated"],
         )
@@ -244,9 +245,36 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
             learning_object_ids=incomplete_versions,
         )
 
+    # A bank written before its concept's text changed may ask about text
+    # that is gone. Publishing waits until the teacher keeps or regenerates it.
+    from question_generation.services.bank_status import out_of_date_groups
+
+    stale_banks = [group.id for group in out_of_date_groups(node)]
+    if stale_banks:
+        names = [
+            group.label or "Untitled concept"
+            for group in node.learning_object_groups.filter(id__in=stale_banks)
+        ]
+        emit(
+            "questions_out_of_date_failed",
+            f"{len(stale_banks)} concept(s) have questions written before their text changed: "
+            f"{', '.join(names)}. Keep or regenerate them in the Questions step.",
+            group_ids=stale_banks,
+        )
+
     audio_generated = 0
     audio_errors = []
-    for index, material in enumerate(materials, start=1):
+    # Everything above already decides that this publish cannot succeed.
+    # Audio is the slow phase -- 104 of 106 seconds of a publish that failed on
+    # three unconfirmed versions found in its first second -- so it is made
+    # only when the publish can actually go through.
+    blocked = bool(image_errors or variant_errors or incomplete_versions or stale_banks)
+    if blocked:
+        emit(
+            "audio_skipped",
+            "Audio was not generated: resolve the problems above, then publish again.",
+        )
+    for index, material in enumerate([] if blocked else materials, start=1):
         emit(
             "audio_started",
             f"Generating audio for {material.title}",
@@ -262,6 +290,9 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
             # their own clips the alternate track would play silence.
             bundle_audio = generate_bundle_version_audio(material)
             result["generated_count"] += bundle_audio["generated_count"]
+            # The questions are read from their own clips too, in the same voice.
+            question_audio = generate_question_audio(material)
+            result["generated_count"] += question_audio["generated_count"]
             audio_generated += result["generated_count"]
             emit(
                 "audio_finished",
@@ -277,7 +308,7 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
                 index=index, total=len(materials), material_id=material.id,
             )
 
-    ready = not (image_errors or variant_errors or incomplete_versions or audio_errors)
+    ready = not (image_errors or variant_errors or incomplete_versions or stale_banks or audio_errors)
 
     # The learning path is saved only when everything else succeeded, so the
     # saved path always matches what students can see. A failure here keeps the
@@ -318,6 +349,7 @@ def run_topic_publish(course, node, set_confirmed, on_event=None):
         "adaptive_variants_generated": len(variant_generated),
         "adaptive_variant_errors": variant_errors,
         "incomplete_versions": incomplete_versions,
+        "out_of_date_question_banks": stale_banks,
         "image_descriptions_generated": image_generated,
         "image_description_errors": image_errors,
         "learning_path": path_summary,

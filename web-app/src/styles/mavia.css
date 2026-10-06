@@ -103,7 +103,7 @@
 /* ---------- Buttons ---------- */
 .mv-btn {
   --_bg: var(--mv-brand-600);
-  --_fg: #fff;
+  --_fg: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -517,6 +517,7 @@
 }
 .mv-side__cta {
   width: 100%;
+  --_fg: var(--mv-ink);
 }
 .mv-side__group-label {
   font-size: 0.68rem;

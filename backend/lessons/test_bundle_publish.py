@@ -48,7 +48,7 @@ LIQUID_A = (
     ADAPTIVE_VARIANT_LLM_MODEL="gemma3:4b",
 )
 class TwoPdfPublishTests(TestCase):
-    """One PDF supplies Simplified; the other is the Normal wording."""
+    """One PDF supplies Simplified; the other is the Standard wording."""
 
     def setUp(self):
         without_measurements(self)
@@ -100,7 +100,7 @@ class TwoPdfPublishTests(TestCase):
         self.addCleanup(classifier.stop)
 
         def classify(members, representative=None):
-            # The first-uploaded PDF is the Normal wording; the other is the
+            # The first-uploaded PDF is the Standard wording; the other is the
             # Simplified one, supplied as its own objects.
             simple_ids = {self.solid_b.id}
             return {
@@ -170,7 +170,7 @@ class TwoPdfPublishTests(TestCase):
             lead.refresh_from_db()
             chunk = _build_chunk(lead)
             self.assertTrue(chunk["versions_complete"], chunk)
-            for role in ("normal", "simplified", "elaborated"):
+            for role in ("standard", "simplified", "elaborated"):
                 version = chunk["variants"][role]
                 self.assertTrue(version["text"].strip(), (lead.title, role))
                 for segment in version["segments"]:
@@ -213,18 +213,18 @@ class PendingBundleGateTests(TestCase):
         self.first = self._material("Lesson 1", now)
         self.second = self._material("Lesson 2", now + timezone.timedelta(minutes=5))
         self.group = LearningObjectGroup.objects.create(outline_node=self.node, label="Solid")
-        self.normal = LearningObject.objects.create(
+        self.standard = LearningObject.objects.create(
             material=self.first, group=self.group, title="Solid", content=SOLID_A, order=0,
         )
         self.awaiting = LearningObject.objects.create(
             material=self.second, group=self.group, title="Solid", content=SOLID_B, order=0,
         )
-        self.group.version_selection = {"normal_material_id": self.first.id}
+        self.group.version_selection = {"standard_material_id": self.first.id}
         self.group.save(update_fields=["version_selection"])
         set_bundle_role(self.group, self.second.id, "SIMPLIFIED")
         for slot in ("SIMPLIFIED", "ELABORATED"):
             LessonVariant.objects.create(
-                learning_object=self.normal, variant=slot,
+                learning_object=self.standard, variant=slot,
                 narration=f"{slot} wording.", origin=LessonVariant.Origin.GENERATED,
             )
 
@@ -249,11 +249,11 @@ class PendingBundleGateTests(TestCase):
 
     def test_a_concept_with_no_text_at_all_is_still_reported(self):
         LearningObject.objects.filter(pk=self.awaiting.pk).delete()
-        LearningObject.objects.filter(pk=self.normal.pk).update(content="")
+        LearningObject.objects.filter(pk=self.standard.pk).update(content="")
 
         missing = concepts_missing_a_version(self.node, [self.first, self.second])
 
-        self.assertEqual(missing, [self.normal.id])
+        self.assertEqual(missing, [self.standard.id])
 
     def test_a_role_supplied_by_an_unconfirmed_pdf_is_not_supplied(self):
         """Finding 11: the gate counted a role supplied by any material of the
@@ -261,16 +261,16 @@ class PendingBundleGateTests(TestCase):
         materials. Un-confirming the second PDF after grouping would publish a
         Simplified track with nothing to play."""
         LessonVariant.objects.filter(
-            learning_object=self.normal, variant="SIMPLIFIED",
+            learning_object=self.standard, variant="SIMPLIFIED",
         ).delete()
 
         missing = concepts_missing_a_version(self.node, [self.first])
 
-        self.assertEqual(missing, [self.normal.id])
+        self.assertEqual(missing, [self.standard.id])
 
     def test_a_role_supplied_by_a_confirmed_pdf_still_counts(self):
         LessonVariant.objects.filter(
-            learning_object=self.normal, variant="SIMPLIFIED",
+            learning_object=self.standard, variant="SIMPLIFIED",
         ).delete()
 
         missing = concepts_missing_a_version(self.node, [self.first, self.second])

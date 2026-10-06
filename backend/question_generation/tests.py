@@ -124,7 +124,7 @@ class QuestionGenerationScopeTests(TestCase):
         fingerprint = question_bank_fingerprint(node.content, QUESTION_DISTRIBUTION)
         questions = []
         for thinking_order in ("LOT", "HOT"):
-            for index in range(3):
+            for index in range(QUESTION_DISTRIBUTION[thinking_order]["count"]):
                 questions.append(GeneratedQuestion.objects.create(
                     node=node,
                     question_text=f"{thinking_order} question {index}?",
@@ -197,18 +197,22 @@ class QuestionGenerationScopeTests(TestCase):
             self.first_node.content,
             QUESTION_DISTRIBUTION,
         )
+        # Exactly the configured LOT mix, so the LOT step reads as finished.
+        lot_formats = [
+            fmt for fmt, n in QUESTION_DISTRIBUTION["LOT"]["format_split"].items() for _ in range(n)
+        ]
         lot_questions = [
             {
                 "question": f"LOT question {index}?",
-                "format": "MCQ" if index < 2 else "TF",
+                "format": fmt,
                 "choices": (
                     {"A": "One", "B": "Two", "C": "Three", "D": "Four"}
-                    if index < 2 else None
+                    if fmt == "MCQ" else None
                 ),
-                "correct_answer": "A" if index < 2 else "True",
+                "correct_answer": "A" if fmt == "MCQ" else "True",
                 "explanation": "Because the source says so.",
             }
-            for index in range(3)
+            for index, fmt in enumerate(lot_formats)
         ]
         hot_questions = [
             {
@@ -234,7 +238,7 @@ class QuestionGenerationScopeTests(TestCase):
                 )
 
         saved_ids = list(self.first_node.generated_questions.values_list("id", flat=True))
-        self.assertEqual(len(saved_ids), 3)
+        self.assertEqual(len(saved_ids), len(lot_questions))
         self.assertEqual(
             set(self.first_node.generated_questions.values_list("thinking_order", flat=True)),
             {"LOT"},
@@ -252,7 +256,7 @@ class QuestionGenerationScopeTests(TestCase):
 
         self.assertEqual(generate.call_count, 1)
         self.assertEqual(generate.call_args.kwargs["thinking_order"], "HOT")
-        self.assertEqual(draft_count, 6)
+        self.assertEqual(draft_count, len(lot_questions) + len(hot_questions))
         self.assertTrue(
             set(saved_ids).issubset(
                 set(self.first_node.generated_questions.values_list("id", flat=True))
@@ -333,7 +337,7 @@ class QuestionGenerationScopeTests(TestCase):
 
         self.assertFalse(GeneratedQuestion.objects.filter(id=old.id).exists())
 
-    def test_normal_regeneration_removes_question_banks_from_other_group_variants(self):
+    def test_standard_regeneration_removes_question_banks_from_other_group_variants(self):
         outline_node = OutlineNode.objects.create(
             course=self.course,
             title="Matter topic",
@@ -484,6 +488,16 @@ class StartGenerationViewScopeTests(TestCase):
         )
 
     @patch("question_generation.views.threading.Thread")
+    def test_generate_more_adds_to_the_bank_instead_of_replacing_it(self, mock_thread):
+        self.client.post(
+            f"/api/generation/materials/{self.material.id}/nodes/{self.first_node.id}/start/",
+            {"append": True},
+            format="json",
+        )
+
+        self.assertEqual(mock_thread.call_args.kwargs["kwargs"], {"append": True})
+
+    @patch("question_generation.views.threading.Thread")
     def test_generate_all_node_request_can_skip_complete_bank(self, mock_thread):
         response = self.client.post(
             f"/api/generation/materials/{self.material.id}/nodes/{self.first_node.id}/start/",
@@ -500,7 +514,7 @@ class StartGenerationViewScopeTests(TestCase):
 
     @patch("question_generation.views.assign_group_versions")
     @patch("question_generation.views.threading.Thread")
-    def test_grouped_non_normal_source_cannot_generate_questions(self, mock_thread, assignment):
+    def test_grouped_non_standard_source_cannot_generate_questions(self, mock_thread, assignment):
         outline_node = OutlineNode.objects.create(
             course=self.course,
             title="Matter topic",
@@ -526,13 +540,13 @@ class StartGenerationViewScopeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data["normal_learning_object_id"], self.first_node.id)
-        self.assertIn("Normal version", response.data["error"])
+        self.assertEqual(response.data["standard_learning_object_id"], self.first_node.id)
+        self.assertIn("Standard version", response.data["error"])
         mock_thread.assert_not_called()
 
     @patch("question_generation.views.assign_group_versions")
     @patch("question_generation.views.threading.Thread")
-    def test_material_generation_scopes_a_group_to_its_normal_source(self, mock_thread, assignment):
+    def test_material_generation_scopes_a_group_to_its_standard_source(self, mock_thread, assignment):
         outline_node = OutlineNode.objects.create(
             course=self.course,
             title="Matter topic",

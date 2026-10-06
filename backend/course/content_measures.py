@@ -1,12 +1,12 @@
-"""Measure how a candidate version relates to the Normal text, without Gemma.
+"""Measure how a candidate version relates to the Standard text, without Gemma.
 
 A version label is right only when three things are true of the candidate:
 
-* **the facts are kept** -- every Normal sentence has a plausible match
+* **the facts are kept** -- every Standard sentence has a plausible match
   somewhere in the candidate (meaning coverage); a strong average cannot
   hide one weakly matched sentence;
 * **something is added**, or not -- candidate sentences that match nothing in
-  Normal (novelty);
+  Standard (novelty);
 * **it is easier to read**, or not -- the Dale-Chall score, which counts words
   most students do not know. FKGL counts only word and sentence length, so
   "intermolecular forces lock particles into a lattice" looked easy to it.
@@ -26,10 +26,10 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-# A candidate sentence closer than this to some Normal sentence says the same
+# A candidate sentence closer than this to some Standard sentence says the same
 # thing; one further from all of them is new content.
 NOVEL_SENTENCE_SIMILARITY = 0.6
-# Minimum plausible match for each Normal sentence. A failed sentence asks for
+# Minimum plausible match for each Standard sentence. A failed sentence asks for
 # review rather than automatically assigning a PDF-supplied role.
 MIN_SENTENCE_COVERAGE = 0.55
 # A sentence needs a few words to carry a fact; shorter fragments ("Examples:")
@@ -100,7 +100,7 @@ def sentences(text):
     return kept or [" ".join((text or "").split())]
 
 
-def _similarities(normal_sentences, candidate_sentences):
+def _similarities(standard_sentences, candidate_sentences):
     from lessons.services.semantic_grouping import SemanticUnavailable, runtime
 
     try:
@@ -111,9 +111,9 @@ def _similarities(normal_sentences, candidate_sentences):
         # A runtime without a sentence encoder (a scoring-only stand-in)
         # cannot measure; treated as unavailable rather than failing.
         raise MeasurementUnavailable("no sentence encoder in the semantic runtime")
-    normal = encoder.encode(normal_sentences, normalize_embeddings=True, convert_to_numpy=True)
+    standard = encoder.encode(standard_sentences, normalize_embeddings=True, convert_to_numpy=True)
     candidate = encoder.encode(candidate_sentences, normalize_embeddings=True, convert_to_numpy=True)
-    return normal @ candidate.T  # rows: Normal sentences, columns: candidate sentences
+    return standard @ candidate.T  # rows: Standard sentences, columns: candidate sentences
 
 
 def outside_terms(source_text, version_text):
@@ -132,17 +132,17 @@ def outside_terms(source_text, version_text):
     return sorted(terms)
 
 
-def measure_versions(normal_text, candidate_text):
-    """``{facts_kept, adds_content, easier, ...}`` for one candidate against Normal."""
-    normal_sentences = sentences(normal_text)
+def measure_versions(standard_text, candidate_text):
+    """``{facts_kept, adds_content, easier, ...}`` for one candidate against Standard."""
+    standard_sentences = sentences(standard_text)
     candidate_sentences = sentences(candidate_text)
-    similarity = _similarities(normal_sentences, candidate_sentences)
+    similarity = _similarities(standard_sentences, candidate_sentences)
     coverage = [float(value) for value in similarity.max(axis=1)]
     closeness = [float(value) for value in similarity.max(axis=0)]
     novel = sum(value < NOVEL_SENTENCE_SIMILARITY for value in closeness)
     mean_coverage = sum(coverage) / len(coverage)
     weak_coverage = sum(value < MIN_SENTENCE_COVERAGE for value in coverage)
-    dale_chall_change = dale_chall(candidate_text) - dale_chall(normal_text)
+    dale_chall_change = dale_chall(candidate_text) - dale_chall(standard_text)
     return {
         "facts_kept": weak_coverage == 0,
         "adds_content": novel >= 1,

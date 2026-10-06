@@ -1,7 +1,8 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import GuardianShell from "./GuardianShell";
-import { child, recent, summary, topics } from "./guardianData";
+import { fetchChild, fetchRecent, fetchSummary, fetchTopics } from "./api/guardianApi";
 
 // Mastery reads as three bands, and each one says so in words beside the bar:
 // colour alone would not reach a guardian using a screen reader.
@@ -13,6 +14,40 @@ const BAR_COLOR = {
 };
 
 export default function GuardianOverviewPage() {
+  // Every figure on this page arrives through api/guardianApi.js. Today those
+  // functions resolve placeholder data; when the guardian endpoints land they
+  // become real requests and nothing in this file changes.
+  const [child, setChild] = useState(null);
+  const [summary, setSummary] = useState([]);
+  const [topics, setTopics] = useState([]);
+  const [recent, setRecent] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchChild(), fetchSummary(), fetchTopics(), fetchRecent()]).then(
+      ([childData, summaryData, topicsData, recentData]) => {
+        if (cancelled) return;
+        setChild(childData);
+        setSummary(summaryData);
+        setTopics(topicsData);
+        setRecent(recentData);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!child) {
+    return (
+      <GuardianShell>
+        <div className="mv-page-head">
+          <h1>Loading&hellip;</h1>
+        </div>
+      </GuardianShell>
+    );
+  }
+
   const rail = (
     <>
       <div className="mv-rail__card">

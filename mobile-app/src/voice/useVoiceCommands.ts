@@ -22,6 +22,8 @@ export type VoiceCommandStatus =
 // player on that build instead of just leaving voice commands switched off.
 type SpeechModule = typeof import("expo-speech-recognition")["ExpoSpeechRecognitionModule"];
 let Speech: SpeechModule | null = null;
+// Said once per app run, not once per screen that asks for voice.
+let warnedNoModule = false;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   Speech = require("expo-speech-recognition").ExpoSpeechRecognitionModule as SpeechModule;
@@ -38,11 +40,32 @@ const ERROR_RESTART_DELAY_MS = 1500;
 // Errors that mean listening can never work on this screen; stop trying.
 const FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed", "language-not-supported"]);
 
+/** Drop whatever the recognizer has heard so far and start a fresh session.
+ *  Call it right after the app finishes speaking a prompt it is about to
+ *  listen for an answer to: the transcript keeps everything heard since the
+ *  session began, prompt included, so "say topic, or question" would
+ *  otherwise answer itself. Each listening hook restarts on the "end" event. */
+export function restartListening(): void {
+  try {
+    Speech?.abort();
+  } catch {
+    // Not listening -- nothing to clear.
+  }
+}
+
 export function useVoiceCommands(
   handlers: VoiceCommandHandlers,
   { enabled = true }: { enabled?: boolean } = {}
 ): VoiceCommandStatus {
   const [status, setStatus] = useState<VoiceCommandStatus>(Speech ? "starting" : "unavailable");
+
+  if (__DEV__ && !Speech && !warnedNoModule) {
+    warnedNoModule = true;
+    console.log(
+      "[MAVIA voice] unavailable: expo-speech-recognition is not in this build. " +
+        "The installed app predates the dependency -- rebuild with expo run:android."
+    );
+  }
 
   // Read through a ref so the screen can pass a fresh object every render
   // without tearing the microphone session down and back up each time.
@@ -109,10 +132,12 @@ export function useVoiceCommands(
         // Our own abort() after a command reports as an error; it is not one.
         if (event.error === "aborted") return;
         if (FATAL_ERRORS.has(event.error)) {
+          if (__DEV__) console.log(`[MAVIA voice] stopped for good: ${event.error}`);
           active = false;
           setStatus("unavailable");
           return;
         }
+        if (__DEV__) console.log(`[MAVIA voice] recogniser error: ${event.error} (will retry)`);
         nextDelay = ERROR_RESTART_DELAY_MS;
       }),
 
@@ -124,16 +149,23 @@ export function useVoiceCommands(
     (async () => {
       try {
         if (!speech.isRecognitionAvailable()) {
+          // Four different things turn voice off and they used to look alike
+          // from the outside: no module, no recogniser, refused microphone, or
+          // a throw. On a device that is the whole diagnosis, so each says so.
+          if (__DEV__) console.log("[MAVIA voice] unavailable: device reports no speech recogniser");
           setStatus("unavailable");
           return;
         }
         const permission = await speech.requestPermissionsAsync();
         if (!permission.granted) {
+          if (__DEV__) console.log("[MAVIA voice] unavailable: microphone permission not granted");
           setStatus("unavailable");
           return;
         }
+        if (__DEV__) console.log("[MAVIA voice] listening");
         begin();
-      } catch {
+      } catch (err) {
+        if (__DEV__) console.log("[MAVIA voice] unavailable: setup threw", String(err));
         setStatus("unavailable");
       }
     })();

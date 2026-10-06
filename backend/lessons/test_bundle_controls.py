@@ -132,14 +132,14 @@ class PayloadTests(BundleControlFixture):
         self.assertEqual(bundles[self.second.id], [self.solids.id, self.diagram.id])
 
     def test_each_bundle_reports_the_role_it_plays(self):
-        """The earliest upload is Normal; a role a teacher set is reported as it is."""
+        """The earliest upload is Standard; a role a teacher set is reported as it is."""
         set_bundle_role(self.group, self.second.id, "ELABORATED")
         client = authenticated_api_client()
 
         response = client.get(self._url("learning-resources/"))
 
         roles = {row["material"]: row["role"] for row in self._group_row(response)["bundles"]}
-        self.assertEqual(roles[self.first.id], "NORMAL")
+        self.assertEqual(roles[self.first.id], "STANDARD")
         self.assertEqual(roles[self.second.id], "ELABORATED")
 
     def test_a_pdf_supplied_simplified_fills_its_slot(self):
@@ -174,7 +174,7 @@ class LeavingAGroupTests(BundleControlFixture):
     def setUp(self):
         super().setUp()
         # The concept is taught through A's object: B's two are suppressed
-        # duplicates until the Normal leaves.
+        # duplicates until the Standard leaves.
         LearningObject.objects.filter(
             pk__in=[self.solids.id, self.diagram.id]
         ).update(represented_by=self.solid)
@@ -188,7 +188,7 @@ class LeavingAGroupTests(BundleControlFixture):
             ).values_list("id", flat=True)
         )
 
-    def test_moving_the_normal_out_releases_the_objects_left_behind(self):
+    def test_moving_the_standard_out_releases_the_objects_left_behind(self):
         client = authenticated_api_client()
 
         response = client.post(self._url(f"learning-objects/{self.solid.id}/move-out/"), format="json")
@@ -200,7 +200,7 @@ class LeavingAGroupTests(BundleControlFixture):
         self.assertIsNone(self.diagram.represented_by_id)
         self.assertTrue({self.solids.id, self.diagram.id}.issubset(self._published_object_ids()))
 
-    def test_moving_the_normal_to_another_concept_releases_them_too(self):
+    def test_moving_the_standard_to_another_concept_releases_them_too(self):
         other = LearningObjectGroup.objects.create(outline_node=self.topic, label="Liquid")
         client = authenticated_api_client()
 

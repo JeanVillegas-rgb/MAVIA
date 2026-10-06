@@ -76,6 +76,26 @@ class LinkReasonTests(SimpleTestCase):
             "Air uses terms Uniform mixtures explains (mixture). Uniform mixtures comes first in the lesson.",
         )
 
+    def test_a_link_through_its_parts_names_them(self):
+        evidence = {"rule": "reference-order", "direction_from": "pdf_order", "contradictions": [],
+                    "votes": {"name": 1, "terms": 0, "heading": 0},
+                    "records": {"name": {"use": 0.75, "use_back": 0.0, "parts": ["Pollination", "Fertilization"]},
+                                "terms": {"use": 0.0, "use_back": 0.0}}}
+
+        self.assertEqual(
+            link_reason(evidence, "How Flowering Plants Reproduce", "Everyday Examples"),
+            "Everyday Examples names Pollination and Fertilization, parts of How Flowering Plants Reproduce. "
+            "How Flowering Plants Reproduce comes first in the lesson.",
+        )
+
+    def test_many_parts_are_counted_not_listed(self):
+        evidence = {"rule": "reference-order", "direction_from": "pdf_order", "contradictions": [],
+                    "records": {"name": {"use": 0.5, "use_back": 0.0,
+                                         "parts": ["Mouth", "Stomach", "Small intestine"]}}}
+
+        self.assertTrue(link_reason(evidence, "The Digestive System", "Helper organs").startswith(
+            "Helper organs names Mouth, Stomach and 1 more, parts of The Digestive System."))
+
     def test_a_v6_link_by_heading_and_name(self):
         evidence = {"rule": "reference-order", "direction_from": "heading", "contradictions": [],
                     "votes": {"name": 1, "terms": 0, "heading": 1},

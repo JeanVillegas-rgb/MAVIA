@@ -14,6 +14,7 @@ from .services.clues import (
     log_likelihood,
     meaning_cutoff,
     meaning_vote,
+    name_use,
     name_vote,
     order_vote,
     pair_votes,
@@ -290,3 +291,43 @@ class TwoWordTermTests(SimpleTestCase):
         _, record = term_vote(stamen, pollination, owners)
 
         self.assertEqual(set(record), {"owned", "use", "use_back"})
+
+
+def reproduction(examples_file=1):
+    """Two parts whose names live only in their titles, as the extractor stores them."""
+    return prepare([
+        concept(
+            5, "How Flowering Plants Reproduce",
+            member("Pollen is carried from the anther to the stigma by wind or insects.", order=1, title="Pollination"),
+            member("A pollen grain grows a tube down the style into the ovary.", order=2, title="Fertilization"),
+        ),
+        concept(6, "Everyday Examples", member(
+            "These examples show that pollination and fertilization must happen first.",
+            material_id=examples_file, order=3,
+        )),
+    ])
+
+
+class PartNameTests(SimpleTestCase):
+    """6.2: a concept is also named by its parts' titles, within a shared file."""
+
+    def test_a_concept_is_named_by_its_parts_titles(self):
+        process, examples = reproduction()
+
+        self.assertEqual(
+            name_vote(process, examples),
+            (1, {"use": 1.0, "use_back": 0.0, "parts": ["Pollination", "Fertilization"]}),
+        )
+
+    def test_across_files_a_parts_title_names_nothing(self):
+        process, examples = reproduction(examples_file=2)
+
+        self.assertEqual(name_use(examples, process), 0.0)
+        self.assertNotIn("parts", name_vote(process, examples)[1])
+
+    def test_the_concepts_own_title_is_not_one_of_its_parts(self):
+        solid, = prepare([concept(1, "Solid",
+                                  member("A solid keeps its shape.", title="Solid (Part 1 of 2)"),
+                                  member("Its particles vibrate in place.", title="2. Solid"))])
+
+        self.assertEqual(solid.part_names, ())

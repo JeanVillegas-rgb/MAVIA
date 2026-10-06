@@ -8,9 +8,9 @@ urlpatterns = [
     path("api/auth/", include("user.urls")),
     path("api/adaptive-config/", include("adaptive_config.urls")),
     path("api/adaptive/", include("adaptive.urls")),
+    path("api/mobile/", include("mobile_course_package.urls")),
     path("api/", include("lessons.urls")),
     path("api/", include("question_generation.urls")),
-    path("api/course/", include("course.urls")),
     path("api/learning-path/", include("learning_path.urls")),
 ]
 

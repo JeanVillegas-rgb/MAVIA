@@ -43,6 +43,9 @@ export function GuideMenu({
     },
     [onClose, onPlaySection]
   );
+  // `onPlaySection` is what follows the words with the matching drills; see
+  // the student layout. Hearing "swipe right to reach your courses" and having
+  // swiped are different things, and only the second is still true tomorrow.
 
   useListPicker<GuideSection>({
     items: GUIDE_SECTIONS,

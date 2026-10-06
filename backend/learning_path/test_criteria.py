@@ -7,7 +7,7 @@ from django.test import SimpleTestCase, TestCase
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 
 from .services.concept_units import concepts_for_topic
-from .services.criteria import ACCEPTED, CLEANER_EDGES, PENDING, THREE_VOTES, crosses_sections, decide_pairs
+from .services.criteria import ACCEPTED, CLEANER_EDGES, PENDING, REFERENCE_ORDER, THREE_VOTES, crosses_sections, decide_pairs
 from .services.embeddings import EncoderUnavailable
 from .test_direction_votes import three_states
 from .testing import concept, member, word_vectors
@@ -269,7 +269,7 @@ class CleanerEdgeTests(SimpleTestCase):
         row = decide_cleanly(flower())[(1, 2)]
 
         self.assertEqual(row["verdict"], ACCEPTED)
-        self.assertEqual(row["evidence"]["version"], "6.1")
+        self.assertEqual(row["evidence"]["version"], "6.2")
         self.assertEqual(row["evidence"]["records"]["terms"]["use"], 1.0)
 
     def test_a_single_shared_word_is_only_a_suggestion(self):
@@ -300,8 +300,36 @@ class CleanerEdgeTests(SimpleTestCase):
     def test_leaving_out_terms_leaves_out_single_words_too(self):
         self.assertNotIn((2, 3), decide_cleanly(flower(), without=("terms",)))
 
-    def test_v6_1_is_the_default(self):
+    def test_cleaner_edges_is_the_default(self):
         rows = decide_pairs(flower(), calibration=CALIBRATION, embed=word_vectors)
 
         self.assertTrue(rows)
-        self.assertTrue(all(row["evidence"]["version"] == "6.1" for row in rows))
+        self.assertTrue(all(row["evidence"]["version"] == "6.2" for row in rows))
+
+
+def reproduction():
+    return [
+        concept(
+            5, "How Flowering Plants Reproduce",
+            member("Pollen is carried from the anther to the stigma by wind or insects.", order=1, title="Pollination"),
+            member("A pollen grain grows a tube down the style into the ovary.", order=2, title="Fertilization"),
+        ),
+        concept(6, "Everyday Examples", member(
+            "These examples show that pollination and fertilization must happen first.", order=3,
+        )),
+    ]
+
+
+class PartNameTests(SimpleTestCase):
+    """6.2 end to end: naming a concept's parts links to the concept."""
+
+    def test_naming_its_parts_links_to_the_concept(self):
+        row = decide_cleanly(reproduction())[(5, 6)]
+
+        self.assertEqual(row["verdict"], ACCEPTED)
+        self.assertEqual(row["evidence"]["records"]["name"]["parts"], ["Pollination", "Fertilization"])
+
+    def test_v6_does_not_read_part_names(self):
+        rows = decide_pairs(reproduction(), calibration=CALIBRATION, embed=word_vectors, rule=REFERENCE_ORDER)
+
+        self.assertNotIn((5, 6), {(row["prerequisite"].id, row["dependent"].id) for row in rows})

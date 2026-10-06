@@ -87,6 +87,11 @@ class GeneratedQuestion(models.Model):
     generation_fingerprint = models.CharField(
         max_length=64, blank=True, default="", db_index=True,
     )
+    # The concept text alone, without the model or prompt settings above. A
+    # bank whose concept text no longer matches is out of date and waits for
+    # the teacher; a new model or prompt is not a reason to hold publishing.
+    # Blank on banks written before this was recorded: not known, not stale.
+    source_text_fingerprint = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

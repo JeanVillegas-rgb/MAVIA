@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "lessons",
     "question_generation",
     "course",
+    "mobile_course_package",
     "adaptive",
     "adaptive_config",
     "learning_path",
@@ -236,7 +237,9 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-repl
 #     moondream, qwen2-vl, llama3.2-vision …). Must be pulled: `ollama pull …`
 #   IMAGE_DESCRIPTION_ENABLED=False turns the feature off outright.
 # ---------------------------------------------------------------------------
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+# Every LLM process runs on Groq. The Ollama paths are kept, dormant, for a
+# return to local inference: set LLM_PROVIDER=ollama to use them.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_ADDITIONAL_API_KEYS = tuple(
@@ -282,8 +285,17 @@ OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 # Questions generated per learning object, per thinking order. Lower these
 # while iterating: each thinking order is one LLM call, and the count drives
 # how much that call has to write.
-QUESTION_COUNT_LOT = int(os.getenv("QUESTION_COUNT_LOT", "3"))
-QUESTION_COUNT_HOT = int(os.getenv("QUESTION_COUNT_HOT", "3"))
+# Questions asked for per tier on each run. Above the teacher's minimum of 3
+# per tier, so a run that loses a few (malformed, not grounded in the lesson,
+# or relabelled into the other tier) still usually reaches it.
+QUESTION_COUNT_LOT = int(os.getenv("QUESTION_COUNT_LOT", "5"))
+QUESTION_COUNT_HOT = int(os.getenv("QUESTION_COUNT_HOT", "5"))
+# What every concept needs before the teacher moves past the Questions step.
+# The page reads these from the API; nothing else holds a copy.
+QUESTION_MIN_LOT = int(os.getenv("QUESTION_MIN_LOT", "4"))
+QUESTION_MIN_HOT = int(os.getenv("QUESTION_MIN_HOT", "2"))
+# Rounds one "Generate" click runs, each one only for concepts still short.
+QUESTION_GENERATION_ROUNDS = int(os.getenv("QUESTION_GENERATION_ROUNDS", "3"))
 
 ADAPTIVE_VARIANT_GENERATION_ENABLED = os.getenv(
     "ADAPTIVE_VARIANT_GENERATION_ENABLED", "True"
@@ -336,13 +348,6 @@ QUESTION_VALIDATION_ENABLED = os.getenv(
 # Passages retrieved per draft. Three is enough to carry the one sentence a
 # question turns on plus its neighbours; more mostly dilutes the judge prompt.
 QUESTION_VALIDATION_TOP_K = int(os.getenv("QUESTION_VALIDATION_TOP_K", "3"))
-# Content words a draft may use that appear nowhere in the topic's materials.
-# Zero is the honest default for a lesson written for young learners: the
-# question should speak the lesson's own vocabulary. Raise it if a curriculum
-# legitimately expects outside terminology.
-QUESTION_VALIDATION_MAX_NOVEL_TERMS = int(
-    os.getenv("QUESTION_VALIDATION_MAX_NOVEL_TERMS", "0")
-)
 # Corrective passes after the first. Each one is a full set of LLM calls, so
 # this trades run time for bank completeness; the loop stops early once the
 # quota is met.
@@ -369,12 +374,12 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        # The pipelines already name themselves in the message, so a prefix
-        # here would only repeat it.
-        "trace": {"format": "%(message)s"},
+        # A time on every line, and WARNING/ERROR up front. The pipelines
+        # name their own stage in the message; see config/console.py.
+        "trace": {"()": "config.console.ConsoleFormatter"},
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler"},
+        "console": {"class": "logging.StreamHandler", "formatter": "trace"},
         "trace": {"class": "logging.StreamHandler", "formatter": "trace"},
     },
     "loggers": {
@@ -399,5 +404,8 @@ LOGGING = {
         "question_generation": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
         "learning_path": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
         "course": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        # the mobile engine's computations, one line each: BKT, baseline,
+        # starting mastery, the ladder's reason and the command it sends
+        "adaptive": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
     },
 }

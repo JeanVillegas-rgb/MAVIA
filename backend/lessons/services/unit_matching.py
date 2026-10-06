@@ -32,7 +32,7 @@ from . import semantic_grouping
 
 METHOD = "heading_unit_v1"
 _NUMBERED_PART = re.compile(r"\s*\(\s*part\s+(\d+)\s*(?:of|/)\s*(\d+)\s*\)\s*$", re.I)
-_AUTOMATIC_SELECTION_KEYS = {"normal_material_id", "normal_assigned_by", "auto_label"}
+_AUTOMATIC_SELECTION_KEYS = {"standard_material_id", "standard_assigned_by", "auto_label"}
 
 
 def heading_key(text):

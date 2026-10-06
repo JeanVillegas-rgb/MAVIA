@@ -1,64 +1,6 @@
-from django.core.exceptions import ValidationError
 from django.db import models
 
-from lessons.models import LearningMaterial, LearningObject, OutlineNode
-from question_generation.models import GeneratedQuestion
-
-
-class CourseModule(models.Model):
-    source = models.OneToOneField(
-        OutlineNode,
-        on_delete=models.CASCADE,
-        related_name="course_package_module",
-        limit_choices_to={"parent__isnull": True},
-        null=True,
-        blank=True,
-    )
-    is_active = models.BooleanField(default=True)
-
-    class Meta:
-        ordering = ["source__order"]
-
-    @property
-    def sequence_order(self):
-        return self.source.order if self.source_id else 0
-
-    @property
-    def title(self):
-        return self.source.title if self.source_id else "(unlinked)"
-
-    def __str__(self):
-        return f"Module {self.sequence_order}: {self.title}"
-
-
-class LessonNode(models.Model):
-    """Wraps a LearningMaterial (a full lesson). Teaching + questioning both
-    step through this lesson's LearningObjects (chunks) in order."""
-
-    module = models.ForeignKey(
-        CourseModule,
-        on_delete=models.CASCADE,
-        related_name="lesson_nodes",
-    )
-    source = models.OneToOneField(
-        LearningMaterial,
-        on_delete=models.CASCADE,
-        related_name="course_package_lesson_node",
-    )
-
-    class Meta:
-        ordering = ["source__created_at"]
-
-    @property
-    def title(self):
-        return self.source.title
-
-    @property
-    def learning_objects(self):
-        return self.source.learning_objects.all()
-
-    def __str__(self):
-        return self.title
+from lessons.models import LearningObject
 
 
 class LessonVariant(models.Model):
@@ -128,11 +70,11 @@ class LessonVariant(models.Model):
         return f"[{self.variant}] {self.learning_object.title}"
 
 
-def normal_bundle_for(learning_object):
-    """The objects the Normal version of this concept is taught as.
+def standard_bundle_for(learning_object):
+    """The objects the Standard version of this concept is taught as.
 
-    A concept holds a bundle per PDF, so its Normal version is every object of
-    the Normal bundle in document order. An object outside a concept -- or one
+    A concept holds a bundle per PDF, so its Standard version is every object of
+    the Standard bundle in document order. An object outside a concept -- or one
     whose concept is served by another PDF -- is a bundle of itself.
     """
     if learning_object.group_id is None:
@@ -140,7 +82,7 @@ def normal_bundle_for(learning_object):
 
     from .version_assignment import version_bundles
 
-    objects = version_bundles(learning_object.group).get("NORMAL") or []
+    objects = version_bundles(learning_object.group).get("STANDARD") or []
     if not any(item.id == learning_object.id for item in objects):
         return [learning_object]
     return objects
@@ -184,17 +126,19 @@ def bundle_segments(objects):
         segments.append({
             "text": (clip.get("narration") or item.content or "").strip(),
             "audio_url": clip.get("audio_url") or "",
+            # Which object the clip speaks for, so a player can label it.
+            "title": item.title or "",
         })
     return segments
 
 
-def normal_variant_for(learning_object):
-    """The Normal version of this object's concept: its whole bundle, joined.
+def standard_variant_for(learning_object):
+    """The Standard version of this object's concept: its whole bundle, joined.
 
     ``None`` until the narration exists, which is what tells a caller to fall
     back to the source text.
     """
-    objects = normal_bundle_for(learning_object)
+    objects = standard_bundle_for(learning_object)
     if not any(audio_clip_for(item) for item in objects):
         return None
 
@@ -202,7 +146,7 @@ def normal_variant_for(learning_object):
     # and the segments can never tell a caller two different things.
     segments = bundle_segments(objects)
     return {
-        "variant": "NORMAL",
+        "variant": "STANDARD",
         "narration": "\n".join(
             segment["text"] for segment in segments if segment["text"]
         ),
@@ -212,35 +156,3 @@ def normal_variant_for(learning_object):
     }
 
 
-class ModuleQuestion(models.Model):
-    lesson_node = models.ForeignKey(LessonNode, on_delete=models.CASCADE, related_name="module_questions")
-    question = models.ForeignKey(GeneratedQuestion, on_delete=models.CASCADE)
-    order = models.PositiveIntegerField(default=1)
-
-    class Meta:
-        unique_together = ("lesson_node", "question")
-        ordering = ["lesson_node_id", "order", "id"]
-
-    @property
-    def bloom_level(self):
-        return self.question.bloom_level
-
-    @property
-    def difficulty(self):
-        return self.question.difficulty
-
-    def clean(self):
-        if not self.lesson_node.source.learning_objects.filter(
-            pk=self.question.node_id
-        ).exists():
-            raise ValidationError({
-                "question": "Question's learning object must belong to this "
-                             "lesson node's Learning Material."
-            })
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        return f"{self.lesson_node.title} · Q{self.order} ({self.question.bloom_level})"

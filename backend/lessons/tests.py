@@ -69,6 +69,7 @@ from .services.instructional_content_classifier import (
     detect_instructional_document_role,
     extract_pdf_text_blocks,
 )
+from .test_question_pairing import WordVectorEncoder
 from .services.learning_resource_linker import (
     detected_question_payloads,
     ensure_learning_object_groups,
@@ -586,6 +587,10 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
         self.assertEqual(len(after.data["learning_object_groups"]), 1)
 
+    @patch(
+        "lessons.services.learning_resource_linker._question_encoder",
+        new=lambda: WordVectorEncoder(),
+    )
     def test_teacher_can_add_a_manual_multiple_choice_question_to_a_topic(self):
         lesson = self._material("confirmed-lesson")
         LearningObject.objects.create(
@@ -638,7 +643,7 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(duplicate.status_code, status.HTTP_409_CONFLICT)
         self.assertEqual(Question.objects.count(), 1)
 
-    def test_uploaded_open_question_is_flagged_and_classified(self):
+    def test_uploaded_open_question_is_flagged_and_left_for_labelling(self):
         payload = detected_question_payloads([{
             "block_id": 1,
             "page": 1,
@@ -649,7 +654,9 @@ class LearningResourceRelationshipTests(TestCase):
         self.assertEqual(payload["source_type"], Question.SourceType.PDF)
         self.assertEqual(payload["validation_status"], Question.ValidationStatus.NEEDS_REVIEW)
         self.assertTrue(payload["validation_issues"])
-        self.assertIn(payload["thinking_order"], {"LOT", "HOT"})
+        # Labelled in the Questions step (test_question_labelling), not here.
+        self.assertEqual(payload["thinking_order"], "")
+        self.assertEqual(payload["bloom_level"], "")
 
     def test_editing_approved_question_updates_adaptive_bank(self):
         lesson = self._material("confirmed-lesson")
@@ -744,17 +751,18 @@ class LearningResourceRelationshipTests(TestCase):
     @patch.dict(
         "os.environ",
         {
-            "QUESTION_PAIR_LEXICAL_WEIGHT": "0.1",
-            "QUESTION_PAIR_BLOCK_PROXIMITY_WEIGHT": "0.1",
-            "QUESTION_PAIR_SAME_PAGE_WEIGHT": "0.2",
+            "QUESTION_PAIR_AUTO_THRESHOLD": "0.7",
+            "QUESTION_PAIR_REVIEW_THRESHOLD": "0.9",
+            "QUESTION_PAIR_MINIMUM_MARGIN": "0.2",
         },
     )
-    def test_question_pairing_weights_are_configurable_and_normalized(self):
-        weights = question_pairing_debug_configuration()["weights"]
+    def test_question_pairing_thresholds_are_configurable(self):
+        thresholds = question_pairing_debug_configuration()["thresholds"]
 
-        self.assertEqual(weights["lexical_tfidf"], 0.25)
-        self.assertEqual(weights["source_block_proximity"], 0.25)
-        self.assertEqual(weights["same_page"], 0.5)
+        self.assertEqual(thresholds["auto_confirm"], 0.7)
+        # Review can never ask for more than confirming does.
+        self.assertEqual(thresholds["teacher_review"], 0.7)
+        self.assertEqual(thresholds["minimum_margin"], 0.2)
 
     def test_related_but_not_high_confidence_content_waits_for_review(self):
         first_material = self._material("standard")
@@ -1058,6 +1066,10 @@ class LearningResourceRelationshipTests(TestCase):
         suggestion = LearningObjectMatchSuggestion.objects.get(status="pending")
         self.assertEqual(suggestion.evidence["winner_margin"], 0.0)
 
+    @patch(
+        "lessons.services.learning_resource_linker._question_encoder",
+        new=lambda: WordVectorEncoder(),
+    )
     def test_detected_question_is_separate_and_paired_to_best_learning_object(self):
         material = self._material("questions")
         solid = LearningObject.objects.create(
@@ -1100,10 +1112,13 @@ class LearningResourceRelationshipTests(TestCase):
         question = Question.objects.get()
         link = QuestionLearningObjectLink.objects.get(question=question)
         self.assertEqual(link.learning_object, solid)
-        self.assertTrue(link.is_primary)
-        self.assertEqual(link.method, "layout_tfidf")
+        self.assertEqual(link.method, "sbert_concept")
         self.assertNotIn(question.prompt, solid.content)
 
+    @patch(
+        "lessons.services.learning_resource_linker._question_encoder",
+        new=lambda: WordVectorEncoder(),
+    )
     def test_question_only_pdf_pairs_against_learning_objects_in_its_topic(self):
         lesson_material = self._material("lesson")
         question_material = self._material("assessment")
@@ -1129,7 +1144,7 @@ class LearningResourceRelationshipTests(TestCase):
         link = QuestionLearningObjectLink.objects.get(question=question)
 
         self.assertEqual(link.learning_object, solid)
-        self.assertEqual(link.method, "topic_tfidf")
+        self.assertEqual(link.method, "sbert_concept")
         self.assertIn(
             link.review_status,
             {
@@ -1183,6 +1198,10 @@ class LearningResourceRelationshipTests(TestCase):
             "Q: What happens when the temperature becomes lower?",
         )
 
+    @patch(
+        "lessons.services.learning_resource_linker._question_encoder",
+        new=lambda: WordVectorEncoder(),
+    )
     def test_learning_resources_endpoint_exposes_groups_and_question_pairs(self):
         material = self._material("paired")
         learning_object = LearningObject.objects.create(
@@ -1223,6 +1242,10 @@ class LearningResourceRelationshipTests(TestCase):
             "QUESTION_PAIR_AUTO_THRESHOLD": "0.99",
             "QUESTION_PAIR_REVIEW_THRESHOLD": "0.00",
         },
+    )
+    @patch(
+        "lessons.services.learning_resource_linker._question_encoder",
+        new=lambda: WordVectorEncoder(),
     )
     def test_uncertain_question_waits_for_teacher_confirmation(self):
         material = self._material("question-review")
@@ -1616,15 +1639,17 @@ class LearningResourceRelationshipTests(TestCase):
         # standalone generator once for the node.
         settle_group_mock.assert_called_once()
 
+        # A flagged PDF version is a candidate, not a fault: it is not served
+        # until confirmed, and it does not hold publishing back.
         settle_group_mock.return_value["needs_confirmation"] = [{
             "learning_object_id": material.learning_objects.get().id,
         }]
-        blocked = run_topic_publish(
+        flagged = run_topic_publish(
             self.course, self.node, set_confirmed=lambda item: None
         )
         self.node.refresh_from_db()
-        self.assertFalse(self.node.published)
-        self.assertTrue(blocked["adaptive_variant_errors"])
+        self.assertTrue(self.node.published)
+        self.assertFalse(flagged["adaptive_variant_errors"])
 
     def test_course_outline_upload_rejects_non_pdf(self):
         client = authenticated_api_client()
@@ -1640,7 +1665,7 @@ class LearningResourceRelationshipTests(TestCase):
 
 
 class ConfirmLearningObjectsTests(TestCase):
-    @patch("lessons.views.populate_missing_image_descriptions")
+    @patch("lessons.services.image_describer.populate_missing_image_descriptions")
     def test_confirmation_does_not_run_image_model_in_request(self, populate):
         client = authenticated_api_client()
         course = CourseGroup.objects.create(title="Science 7")

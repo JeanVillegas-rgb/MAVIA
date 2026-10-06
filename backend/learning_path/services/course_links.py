@@ -21,7 +21,7 @@ from .reasons import link_reason
 # 2026-10-03: two final checks found no rule whose automatic course links can be
 # trusted (docs/course-path-closest-evaluation-2026-10-03.md), so every derived
 # course link is stored as a suggestion; only a teacher's approval lets it reach
-# learners. The rules' own verdicts are still measured by evaluate_course_paths.
+# learners. The rule's own verdict stays in each link's evidence.
 DERIVED_STATUS = CourseConceptLink.Status.PENDING
 
 
