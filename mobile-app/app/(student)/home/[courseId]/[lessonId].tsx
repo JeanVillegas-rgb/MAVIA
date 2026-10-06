@@ -276,11 +276,18 @@ export default function LessonPlayerScreen() {
   useEffect(() => {
     if (phase !== "done" || finishedBefore || leavingRef.current || !topic) return;
     leavingRef.current = true;
-    setFinishedTopic(topic.title);
-    silenceAll();
-    if (router.canGoBack()) router.back();
-    else router.replace(`/home/${courseId}`);
-  }, [phase, finishedBefore, topic, router, courseId]);
+    const leave = () => {
+      setFinishedTopic(topic.title);
+      silenceAll();
+      if (router.canGoBack()) router.back();
+      else router.replace(`/home/${courseId}`);
+    };
+    // The last segment's review, if it had misses, is heard before leaving.
+    const review = pendingAnnouncement.current;
+    pendingAnnouncement.current = null;
+    if (review) speak(review, { onDone: leave });
+    else leave();
+  }, [phase, finishedBefore, topic, router, courseId, speak]);
 
   // --- say it again -----------------------------------------------------------
   // Play the concept again from its first part. Asked from a question, the

@@ -8,7 +8,7 @@
 // can be driven straight from a script against the live API -- see
 // scripts/check-traversal.mjs.
 
-import type { ApiCommand, ApiPackageStep, ApiTopicPackage, ApiTrack, Variant } from "@/api/types";
+import type { ApiCommand, ApiPackageStep, ApiReviewItem, ApiTopicPackage, ApiTrack, Variant } from "@/api/types";
 
 // "continue" = a listen-only step (no questions) has been heard; the screen
 // asks the server to move on (POST /mobile/topics/<id>/continue/).
@@ -151,6 +151,25 @@ export const DETOUR_LINE = "First, a quick review of something this builds on.";
 export const RESUME_LINE = "Now, back to where you left off.";
 export const ADVANCE_LINE = "Next idea.";
 
+/** The end-of-segment review: each question the student missed and never got
+ *  right, with its answer and why. Said only once the segment is over, so it can
+ *  never give away a question still to come. Null when nothing was missed. */
+export function reviewLine(review: ApiReviewItem[] | undefined): string | null {
+  if (!review || review.length === 0) return null;
+  const intro =
+    review.length === 1
+      ? "Before we go on, let's review the question you missed."
+      : `Before we go on, let's review the ${review.length} questions you missed.`;
+  const items = review.map((item) =>
+    [item.question, `The answer is ${item.answer}.`, item.explanation].filter(Boolean).join(" ")
+  );
+  return [intro, ...items].join(" ");
+}
+
+function withReview(command: ApiCommand, line: string | null): string | null {
+  return [reviewLine(command.review), line].filter(Boolean).join(" ") || null;
+}
+
 // --- transitions ------------------------------------------------------------
 
 /** Where the student lands on opening a topic: wherever they left off. */
@@ -184,7 +203,7 @@ export function afterAudio(state: PlayerState): PlayerState {
  *  past a listen-only step). */
 export function applyCommand(state: PlayerState, command: ApiCommand): PlayerState {
   if (command.action === "complete") {
-    return { ...state, phase: "done", announcement: null };
+    return { ...state, phase: "done", announcement: reviewLine(command.review) };
   }
 
   const position = command.next_step_position ?? state.position;
@@ -209,9 +228,9 @@ export function applyCommand(state: PlayerState, command: ApiCommand): PlayerSta
     case "regress": // detour through a prerequisite
       return { ...next, trackIndex: 0, phase: "audio", announcement: DETOUR_LINE };
     case "resume": // back from the detour
-      return { ...next, trackIndex: 0, phase: "audio", announcement: RESUME_LINE };
+      return { ...next, trackIndex: 0, phase: "audio", announcement: withReview(command, RESUME_LINE) };
     case "advance": // next concept
     default:
-      return { ...next, trackIndex: 0, phase: "audio", announcement: ADVANCE_LINE };
+      return { ...next, trackIndex: 0, phase: "audio", announcement: withReview(command, ADVANCE_LINE) };
   }
 }

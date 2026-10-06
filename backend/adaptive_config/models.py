@@ -34,7 +34,7 @@ class AdaptiveConfig(models.Model):
         default=0.15,
         validators=UNIT_INTERVAL,
         help_text="Probability of(learner transitions from not-knowing to knowing after one question).",
-    )
+    )   
     mastery_ceiling = models.FloatField(
         default=0.99,
         validators=UNIT_INTERVAL,

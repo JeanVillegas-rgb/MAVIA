@@ -70,6 +70,15 @@ export type ApiAction =
   | "advance"
   | "complete";
 
+// A question the student missed in the segment they just finished and never got
+// right: read to them, with its answer and why, before the next part plays.
+export type ApiReviewItem = {
+  question_id: number;
+  question: string;
+  answer: string;
+  explanation: string;
+};
+
 // What the engine decided. The player only follows it.
 export type ApiCommand = {
   action: ApiAction;
@@ -78,6 +87,8 @@ export type ApiCommand = {
   next_question_id: number | null;
   return_to_position: number | null;
   play_audio: boolean;
+  // Filled when the command leaves a finished segment (advance, resume, complete).
+  review?: ApiReviewItem[];
 };
 
 export type ApiAnswerResult = {

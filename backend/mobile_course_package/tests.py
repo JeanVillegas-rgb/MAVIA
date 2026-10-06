@@ -161,6 +161,15 @@ class MobilePackageFlowTests(APITestCase):
         self.answer(2, "True")
         self.assertEqual(Decision.objects.order_by("id").last().p_guess_used, AdaptiveConfig.load().p_guess_true_false)
 
+    def test_a_re_ask_is_scored_as_easier_to_guess(self, _path):
+        self.open_topic()
+        self.client.post(f"/api/mobile/topics/{self.topic.id}/continue/")
+        self.answer(1, "b")                                      # first try: the configured guess rate
+        self.answer(1, "a")                                      # re-asked after the re-teach: 1 of 3 picks left
+        guesses = list(Decision.objects.order_by("id").values_list("p_guess_used", flat=True))
+        self.assertAlmostEqual(guesses[0], AdaptiveConfig.load().p_guess)
+        self.assertAlmostEqual(guesses[1], 1 / 3)
+
     def test_baseline_calibrates_once_the_margin_is_small_enough(self, _path):
         self.assertGreater(margin_of_error(0.7, 10), 0.15)
         self.assertLessEqual(margin_of_error(0.7, 36), 0.15)
@@ -200,11 +209,19 @@ class MobilePackageFlowTests(APITestCase):
         # back in Solids: its questions were already right, so one correct answer resumes Comparing
         resumed = self.answer(1, "a").data["next"]
         self.assertEqual((resumed["action"], resumed["next_step_position"]), ("resume", 3))
+        # the state each decision saw is logged as it was then
+        detour = Decision.objects.order_by("id").last()
+        self.assertEqual((detour.step_position, detour.on_detour, detour.attempt_number), (2, True, 2))
+        last_miss = Decision.objects.filter(action="regress").get()
+        self.assertEqual((last_miss.step_position, last_miss.misses_on_question, last_miss.on_detour,
+                          last_miss.step_already_regressed, last_miss.action_probability), (3, 3, False, False, 1.0))
+        self.assertIsNotNone(last_miss.prerequisite_mastery)           # Comparing needs Solids, already met
+        self.assertEqual(resumed["next_question_id"], 3)        # the question that sent them on the detour, asked again
         self.assertIsNone(self.progress().return_to_position)
 
         # Comparing may not regress twice: after the ladder runs out again, the topic completes
         actions = [self.answer(3, "b").data["next"]["action"] for _ in range(3)]
-        self.assertEqual(actions[-1], "complete")
+        self.assertEqual(actions, ["escalate_variant", "escalate_variant", "complete"])
         self.assertTrue(self.progress().completed)
 
     def test_every_answer_is_logged_with_a_decision(self, _path):
@@ -233,6 +250,20 @@ class MobilePackageFlowTests(APITestCase):
         nxt = self.answer(1, "b").data["next"]
         self.assertEqual((nxt["action"], nxt["next_variant"], nxt["next_question_id"]),
                          ("escalate_variant", "simplified", 1))
+
+    def test_a_concept_without_prerequisites_asks_its_other_questions_before_moving_on(self, _path):
+        self.reach_solids()                                      # Solids: no prerequisite, readings standard + simplified
+        self.answer(1, "b")                                      # re-taught in simplified, the step's last reading
+        nxt = self.answer(1, "b").data["next"]                   # missed on it too, and nowhere to detour
+        self.assertEqual((nxt["action"], nxt["next_step_position"], nxt["next_question_id"]),
+                         ("next_question", 2, 2))                 # the step's other question is still asked
+        done = self.answer(2, "True").data["next"]               # Q1 was missed on the last reading: not asked again here
+        self.assertEqual((done["action"], done["next_step_position"], done["next_question_id"]), ("advance", 3, 3))
+        # leaving the finished segment: what was missed, its answer and why
+        self.assertEqual(done["review"], [{"question_id": 1, "question": "Q1?", "answer": "A, Right",
+                                           "explanation": "Because 1."}])
+        # mid-segment commands never carry a review
+        self.assertEqual(nxt["review"], [])
 
     def test_a_missed_true_false_moves_to_a_different_question(self, _path):
         self.reach_solids()

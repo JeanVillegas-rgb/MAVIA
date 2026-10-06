@@ -53,8 +53,14 @@ def normalize(question, value):
 def grade(question, selected_answer):
     return normalize(question, selected_answer) == normalize(question, question["correct_answer"])
 
-def guess_for(question_format, weights):
-    return weights.p_guess_true_false if question_format == "TF" else weights.p_guess
+def guess_for(question_format, weights, choices=None, attempt=1):
+    base = weights.p_guess_true_false if question_format == "TF" else weights.p_guess
+    if question_format == "TF" or attempt <= 1:
+        return base
+    # a re-ask after a miss: the wrong picks so far can be ruled out, so a blind guess
+    # gets easier -- 1 in 3 on the 2nd try, 1 in 2 from the 3rd (never assumed easier than that)
+    left = max(len(choices or "ABCD") - (attempt - 1), 2)
+    return max(base, 1 / left)
 
 #THE POSSIBILITIES BEING COMPUTED FORR:
 #1: knew the answer and didnt slip: prior * (1-slip)
@@ -192,7 +198,8 @@ def nearest_prerequisite(step, steps):
 def command(action, position, variant, question_id=None, return_to=None):
     result = {"action": action, "next_step_position": position, "next_variant": variant,
               "next_question_id": question_id, "return_to_position": return_to,
-              "play_audio": action in PLAYS_AUDIO_FOR_ACTION}
+              "play_audio": action in PLAYS_AUDIO_FOR_ACTION,
+              "review": []}  # filled in when the student leaves a finished segment (see segment_review)
     if action == "complete":
         logger.info("[Command] complete -> topic finished")
     else:
@@ -220,14 +227,21 @@ def move_on(step, steps, return_to_position):
     return command("advance", position, "standard")
 
 
+def next_reading(step, variant):
+    #the fuller reading to re-teach in after a miss on `variant`, or None when there is none left
+    fuller = ESCALATION.get(variant)
+    return fuller if fuller and fuller in step["versions"] else None
+
+
 #da big thinking brain
 def decide(step, steps, variant, is_correct, question_id, question_format, open_ids, reserve_ids,
            return_to_position, regressed_positions):
     # open_ids: the step's own questions the student can still be asked, in
-    # order -- not answered correctly, and not a True/False they already missed.
+    # order -- not answered correctly, not a True/False they already missed, and
+    # not one already missed on the last reading (see askable_questions).
     # reserve_ids: the same, for the step's spare questions; they are only ever
     # a replacement for a missed True/False, never extra work. Both computed
-    # AFTER this answer was recorded (see open_questions).
+    # AFTER this answer was recorded.
     answered = f"Q{question_id} ({question_format}) on {variant}"
     if is_correct:
         if open_ids:
@@ -252,8 +266,8 @@ def decide(step, steps, variant, is_correct, question_id, question_format, open_
     else:
         ask_next = question_id
 
-    next_variant = ESCALATION.get(variant)
-    if next_variant and next_variant in step["versions"]:
+    next_variant = next_reading(step, variant)
+    if next_variant:
         # ask_next None: nothing fair is left to ask -- re-teach, then the phone
         # continues past the step once the explanation has been heard.
         logger.info("[Decide] %s wrong -> re-teach: escalate %s to %s", answered, variant, next_variant)
@@ -271,17 +285,22 @@ def decide(step, steps, variant, is_correct, question_id, question_format, open_
         why = "already on a prerequisite detour"
     else:
         why = "this step already used its regress"
-    logger.info("[Decide] %s wrong, every explanation tried, %s -> move on", answered, why)
+
+    # This question is done, but the step's OTHER questions still get asked: one
+    # question missed at every reading doesn't show the whole concept is missed,
+    # and the mastery score is only fair once the student had every question.
+    remaining = [q for q in open_ids if q != question_id] or (reserve_ids if question_format == "TF" else [])
+    if remaining:
+        logger.info("[Decide] %s wrong, every explanation tried, %s -> ask the step's next question Q%s",
+                    answered, why, remaining[0])
+        return command("next_question", step["position"], variant, remaining[0], return_to_position)
+
+    logger.info("[Decide] %s wrong, every explanation tried, %s, nothing else to ask -> move on", answered, why)
     return move_on(step, steps, return_to_position) # every option exhausted by the system: don't leave the student stranded--move them forward
 
 
 def open_questions(step, student, topic, package, reserve=False):
-    #the questions of a step this student can still be asked, in order: the step's
-    #own questions (or, with reserve=True, its spare questions from the bank).
-    #Leaves out the ones answered correctly, and any True/False they already
-    #missed -- a missed TF is never asked again, because the other answer is
-    #then certain. A step is done once its OWN questions are; the reserve only
-    #ever replaces a missed True/False.
+
     concept_answers = StudentResponse.objects.filter(student=student, topic=topic, concept_id=step["concept_id"])
     correct = set(concept_answers.filter(is_correct=True).values_list("question_id", flat=True))
     missed_tf = set(concept_answers.filter(is_correct=False, question_format="TF").values_list("question_id", flat=True))
@@ -289,10 +308,74 @@ def open_questions(step, student, topic, package, reserve=False):
     return [q["id"] for q in pool if q["id"] not in correct and q["id"] not in missed_tf]
 
 
+def missed_on_last_reading(step, student, topic):
+    #the questions of the step missed on a reading with nothing fuller after it: every explanation was tried
+    last = [v for v in ESCALATION if next_reading(step, v) is None]
+    wrong = StudentResponse.objects.filter(student=student, topic=topic, concept_id=step["concept_id"],
+                                           is_correct=False, variant__in=last)
+    return set(wrong.values_list("question_id", flat=True))
+
+
+def askable_questions(step, student, topic, package, reserve=False):
+    #the open questions still worth asking during this visit to the step: one missed on the
+    #last reading is left out, so the step goes on to its other questions instead of stopping.
+    #It comes back only when the student resumes this step after its detour, once the
+    #prerequisite was reviewed -- see first_question_on_arrival.
+    used_up = missed_on_last_reading(step, student, topic)
+    return [q for q in open_questions(step, student, topic, package, reserve) if q not in used_up]
+
+
+def first_question_on_arrival(step, student, topic, package, resuming):
+    #the question waiting when the student moves to a step. Resuming the step that sent them
+    #on a detour, the question they ran out of readings on is asked again -- that is what the
+    #detour was for. Anywhere else a used-up question is skipped: its explanation was already
+    #spoken, so asking it again would test memory, not understanding.
+    if resuming:
+        return first_open_question(step, student, topic, package)
+    askable = askable_questions(step, student, topic, package)
+    return askable[0] if askable else None
+
+
 def first_open_question(step, student, topic, package):
     #which question of the step to ask first when the student arrives there (None: listen only)
     open_ids = open_questions(step, student, topic, package)
     return open_ids[0] if open_ids else None
+
+
+LEAVES_THE_SEGMENT = {"advance", "resume", "complete"}  # regress leaves mid-segment: the student comes back to it
+
+
+def answer_text(question):
+    #the right answer, said the way the options are read: "B, Liquid" -- or "True" / "False"
+    right = str(question.get("correct_answer") or "").strip()
+    if question.get("format") == "TF":
+        return {"a": "True", "b": "False", "true": "True", "false": "False"}.get(right.lower(), right)
+    choices = question.get("choices") or []
+    texts = [str(choices.get(label, "")) for label in "ABCD"] if isinstance(choices, dict) else [str(c) for c in choices]
+    letter = normalize(question, right)
+    if letter in LETTERS and LETTERS.index(letter) < len(texts):
+        return f"{letter.upper()}, {texts[LETTERS.index(letter)]}"
+    return right
+
+
+def segment_review(step, student, topic, package):
+    #the step's questions this student missed and never got right, each with its answer and
+    #why. Heard once the segment is over -- never before, where it would give away a question
+    #still to come (the step's other questions share its facts).
+    answers = StudentResponse.objects.filter(student=student, topic=topic, concept_id=step["concept_id"])
+    missed = set(answers.filter(is_correct=False).values_list("question_id", flat=True))
+    right = set(answers.filter(is_correct=True).values_list("question_id", flat=True))
+    review = []
+    for question in step["questions"] + step.get("reserve_questions", []):
+        if question["id"] not in missed or question["id"] in right:
+            continue
+        key = package.answer_key.get(str(question["id"]), {})
+        review.append({"question_id": question["id"], "question": question["text"],
+                       "answer": answer_text(key), "explanation": key.get("explanation", "")})
+    if review:
+        logger.info("[Review] step %s finished: %d missed question(s) explained before moving on (%s)",
+                    step["position"], len(review), ", ".join(f"Q{item['question_id']}" for item in review))
+    return review
 
 
 def decide_after_listening(step, steps, return_to_position):
@@ -331,7 +414,8 @@ def apply_answer(response, package, progress, course):
             mastery_score=starting_mastery(step, response.student, baseline),
         )
 
-    guess = guess_for(response.question_format, weights)
+    question = package.answer_key.get(str(response.question_id), {})
+    guess = guess_for(response.question_format, weights, question.get("choices"), response.attempt_number)
     before = concept.mastery_score
     prediction, concept.mastery_score = bkt_update(before, response.is_correct, guess, weights.p_slip, weights.p_learn, weights.mastery_ceiling)
     concept.save()
@@ -344,8 +428,10 @@ def apply_answer(response, package, progress, course):
 
     update_baseline(baseline, response.is_correct, first_answer_on_concept, weights)
 
-    open_ids = open_questions(step, response.student, response.topic, package)
-    reserve_ids = open_questions(step, response.student, response.topic, package, reserve=True)
+    open_ids = askable_questions(step, response.student, response.topic, package)
+    reserve_ids = askable_questions(step, response.student, response.topic, package, reserve=True)
+    on_detour = progress.return_to_position is not None                      # read BEFORE the command moves the student
+    step_already_regressed = step["position"] in progress.regressed_positions
     result = decide(step, package.steps, progress.current_variant, response.is_correct,
                     response.question_id, response.question_format, open_ids, reserve_ids,
                     progress.return_to_position, progress.regressed_positions)
@@ -353,8 +439,15 @@ def apply_answer(response, package, progress, course):
     # Moving to another step---tell the phone which of its questions to ask first.
     if result["action"] in ("advance", "regress", "resume"):
         target = step_at(package.steps, result["next_step_position"])
-        result["next_question_id"] = first_open_question(target, response.student, response.topic, package)
+        result["next_question_id"] = first_question_on_arrival(target, response.student, response.topic, package,
+                                                               resuming=result["action"] == "resume")
 
+    # Leaving a finished segment: the student hears what they missed in it, and why.
+    if result["action"] in LEAVES_THE_SEGMENT:
+        result["review"] = segment_review(step, response.student, response.topic, package)
+
+    prerequisite_scores = list(ConceptMastery.objects.filter(student=response.student, concept_id__in=step["prerequisites"])
+                               .values_list("mastery_score", flat=True))
     Decision.objects.create(
         response=response,
         predicted_correct=prediction,
@@ -366,6 +459,16 @@ def apply_answer(response, package, progress, course):
         action=result["action"],
         next_step_position=result["next_step_position"],
         next_variant=result["next_variant"],
+        # the state as the engine saw it -- logging only, for phase 2
+        step_position=step["position"],
+        attempt_number=response.attempt_number,
+        misses_on_question=StudentResponse.objects.filter(student=response.student, topic=response.topic,
+                                                          question_id=response.question_id, is_correct=False).count(),
+        questions_left_in_step=len(open_ids),
+        prerequisite_mastery=sum(prerequisite_scores) / len(prerequisite_scores) if prerequisite_scores else None,
+        on_detour=on_detour,
+        step_already_regressed=step_already_regressed,
+        action_probability=1.0,
     )
     return result
 

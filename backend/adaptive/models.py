@@ -80,6 +80,17 @@ class Decision(models.Model):
     baseline_ability = models.FloatField() #the student's baseline at that moment
     baseline_calibrated = models.BooleanField()
 
+    #where the student was when the engine decided -- saved as it was then, since progress gets
+    #overwritten on the next answer. Logging only: nothing reads these yet (phase 2 learns from them)
+    step_position = models.PositiveIntegerField(null=True, blank=True)
+    attempt_number = models.PositiveIntegerField(default=1) #which try at this question
+    misses_on_question = models.PositiveIntegerField(default=0) #wrong answers on this question so far, this one included
+    questions_left_in_step = models.PositiveIntegerField(null=True, blank=True) #still worth asking in the step after this answer
+    prerequisite_mastery = models.FloatField(null=True, blank=True) #average mastery of the step's prerequisites met so far (None: none)
+    on_detour = models.BooleanField(default=False) #answered while reviewing a prerequisite
+    step_already_regressed = models.BooleanField(default=False) #this step already used its one detour
+    action_probability = models.FloatField(default=1.0) #how likely the policy was to pick this action -- the rules always do: 1.0
+
     #what it decided
     action = models.CharField(max_length=24, choices=Action.choices)
     next_step_position = models.PositiveIntegerField(null=True, blank=True) #None once completed
