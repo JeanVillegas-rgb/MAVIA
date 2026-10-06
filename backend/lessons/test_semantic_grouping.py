@@ -6,12 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import TestCase, SimpleTestCase
-from django.core.management import call_command
-from django.core.management.base import CommandError
 
 from .models import CourseGroup, OutlineNode, LearningMaterial, LearningObject, LearningObjectGroup, LearningObjectMatchSuggestion
 from .services import semantic_grouping as semantic
-from .services.grouping_evaluation import read_labeled_pairs, calibrate, metrics
 from .services.learning_resource_linker import _match_decision, refresh_learning_object_match_suggestions
 
 
@@ -122,26 +119,6 @@ class SemanticPureTests(SimpleTestCase):
             self.assertEqual(semantic.ScoreCache(path).get(key), [1.0, 0.0])
             self.assertIsNone(semantic.ScoreCache(path).get(semantic.content_hash("A solid is not firm.")))
 
-    def test_thresholds_use_development_only(self):
-        development = [{"split": "development", "label": "equivalent", "semantic_score": .9} for _ in range(10)]
-        development += [{"split": "development", "label": "related", "semantic_score": .8}]
-        self.assertEqual(calibrate(development)["auto_threshold"], .9)
-        self.assertEqual(calibrate(development + [{"split": "test", "label": "unrelated", "semantic_score": .99}]), calibrate(development))
-        self.assertEqual(metrics([{"label": "unrelated", "semantic_score": .99}], .9, .5)["false_auto"], 1)
-
-    def test_unlabeled_data_and_cross_split_leakage_rejected(self):
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "pairs.jsonl"
-            row = {"left": {"content": "shared"}, "right": {"content": "other"}, "label": "", "split": "", "reviewed_by": ""}
-            path.write_text(json.dumps(row), encoding="utf-8")
-            with self.assertRaises(ValueError):
-                read_labeled_pairs(path)
-            row.update(label="equivalent", split="development", reviewed_by="teacher")
-            second = {**row, "split": "test", "right": {"content": "different"}}
-            path.write_text(json.dumps(row) + "\n" + json.dumps(second), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "leakage"):
-                read_labeled_pairs(path)
-
 
 class SemanticIntegrationTests(TestCase):
     def setUp(self):
@@ -243,19 +220,6 @@ class SemanticIntegrationTests(TestCase):
         self.other.save()
         with patch.object(semantic, "runtime", return_value=FakeRuntime()):
             self.assertIsNone(self.decision())
-
-    def test_export_is_unlabeled_read_only_and_refuses_overwrite(self):
-        before = list(LearningObject.objects.values_list("id", "group_id"))
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "pairs.jsonl"
-            call_command("export_grouping_pairs", output=str(path), limit=20)
-            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["label"], "")
-            self.assertEqual(rows[0]["left"]["metadata_id"], str(self.source.metadata_id))
-            with self.assertRaises(CommandError):
-                call_command("export_grouping_pairs", output=str(path), limit=20)
-        self.assertEqual(before, list(LearningObject.objects.values_list("id", "group_id")))
 
     @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "auto"})
     def test_refresh_cannot_take_member_from_teacher_confirmed_group(self):

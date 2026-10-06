@@ -18,20 +18,15 @@ from .concept_units import concepts_for_topic
 from .course_criteria import course_topics, decide_course_pairs
 from .reasons import link_reason
 
-# 2026-10-03: two final checks found no rule whose automatic course links can be
-# trusted (docs/course-path-closest-evaluation-2026-10-03.md), so every derived
-# course link is stored as a suggestion; only a teacher's approval lets it reach
+# Every derived course link is stored as a suggestion; only a teacher's approval lets it reach
 # learners. The rule's own verdict stays in each link's evidence.
 DERIVED_STATUS = CourseConceptLink.Status.PENDING
 
 
-def refresh_course_links(course, embed=None, rule=None):
+def refresh_course_links(course, embed=None):
     """Re-derive the course's cross-topic links as suggestions, keeping every teacher decision."""
     topics = course_topics(course)
-    decisions = decide_course_pairs(
-        [list(concepts_for_topic(topic)) for topic in topics], embed=embed, rule=rule,
-        topic_titles=[topic.title for topic in topics],
-    )
+    decisions = decide_course_pairs([list(concepts_for_topic(topic)) for topic in topics], embed=embed)
     fresh = {(row["prerequisite"].id, row["dependent"].id): row for row in decisions}
 
     with transaction.atomic():

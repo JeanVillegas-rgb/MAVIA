@@ -192,15 +192,12 @@ def redundant_links(links):
     return redundant
 
 
-def order_with_links(concepts, links, confidence=None, build_on_latest=False):
+def order_with_links(concepts, links, confidence=None):
     """Kahn's topological sort over the links; returns ``(ordered, depth by id, ignored links)``.
 
     Loops are first broken at their least confident derived link. Among
     concepts ready at the same time the earliest in the topic's merged PDF
-    order goes first. ``build_on_latest`` first prefers the concept building
-    on the step placed most recently; it is off because it lowered Kendall's
-    tau on the development topics (79: 0.71 vs 1.00, 152: 0.73 vs 1.00, with
-    examples left out; docs/learning-path-v5-evaluation-2026-09-30.md).
+    order goes first.
     """
     position = {concept.id: index for index, concept in enumerate(concepts)}
     kept, ignored = break_cycles(
@@ -216,15 +213,11 @@ def order_with_links(concepts, links, confidence=None, build_on_latest=False):
     placed_at = {}
     remaining = {concept_id: len(prerequisites[concept_id]) for concept_id in position}
 
-    def priority(concept_id):
-        latest = max((placed_at[before] for before in prerequisites[concept_id]), default=-1)
-        return (latest if build_on_latest else -1, -position[concept_id])
-
     by_id = {concept.id: concept for concept in concepts}
     ordered = []
     while len(ordered) < len(concepts):
         ready = [concept_id for concept_id, count in remaining.items() if count == 0 and concept_id not in placed_at]
-        chosen = max(ready, key=priority)
+        chosen = min(ready, key=position.get)
         placed_at[chosen] = len(ordered)
         ordered.append(by_id[chosen])
         for following in successors[chosen]:

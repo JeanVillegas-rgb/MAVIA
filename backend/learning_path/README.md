@@ -60,5 +60,5 @@ python manage.py import_hand_check <answers.json> [--dry-run]   # a teacher's ye
 
 The first version ordered each PDF separately, with its own strong/medium/weak
 evidence rules and a `PrerequisiteEdge` table between learning objects. It was
-removed on 2026-09-14 once the topic-level path replaced it. The criteria
-versions since then (v3 to v7) are listed in `CRITERIA.md`.
+removed on 2026-09-14 once the topic-level path replaced it. The criteria in
+use (v6.2) are described in `CRITERIA.md`.
