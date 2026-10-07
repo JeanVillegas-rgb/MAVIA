@@ -114,6 +114,9 @@ def upload_course_outline(
 ) -> tuple[CourseGroup, bool]:
     """Store an outline source and merge its hierarchy into the course."""
     fingerprint = _file_sha256(outline_file)
+    print(
+        f"Fingerprint: {fingerprint}"
+    )
 
     existing_outline = _find_existing_outline(course, fingerprint)
     existing_material = _find_existing_material(course, outline_file, fingerprint)
@@ -248,6 +251,63 @@ def _find_existing_material(course: CourseGroup, pdf_file, fingerprint: str) -> 
     return None
 
 
+def _ensure_pdf_is_new(course: CourseGroup, pdf_file, fingerprint: str) -> None:
+    """Reject source bytes already stored as either outline or lesson material."""
+    existing_material = _find_existing_material(course, pdf_file, fingerprint)
+    existing_outline = _find_existing_outline(course, fingerprint)
+    if existing_material is not None or existing_outline is not None:
+        raise DuplicatePdfUploadError(
+            "This exact PDF has already been uploaded to this course."
+        )
+
+
+def _selected_outline_node(course: CourseGroup, node_id: int | None) -> OutlineNode | None:
+    if not node_id:
+        return None
+    try:
+        node = course.nodes.get(pk=node_id)
+    except OutlineNode.DoesNotExist as exc:
+        raise PdfProcessingUseCaseError(
+            "Selected outline node was not found for this course."
+        ) from exc
+    if node.children.exists():
+        raise PdfProcessingUseCaseError(
+            f'"{node.title}" is a module with topics under it. '
+            "Select one of its topics for this PDF."
+        )
+    return node
+
+
+def _selected_module_node(
+    course: CourseGroup,
+    module_id: int | None,
+    outline_node: OutlineNode | None,
+) -> OutlineNode | None:
+    if module_id:
+        try:
+            module = course.nodes.get(pk=module_id, parent__isnull=True)
+        except OutlineNode.DoesNotExist as exc:
+            raise PdfProcessingUseCaseError(
+                "Selected module was not found for this course."
+            ) from exc
+    elif outline_node is not None:
+        module = _top_level_module(outline_node)
+    elif not course_outline_is_approved(course):
+        raise PdfProcessingUseCaseError(
+            "Confirm the course outline first for automatic classification."
+        )
+    else:
+        module = None
+
+    if outline_node is not None and module is not None:
+        expected_module = _top_level_module(outline_node)
+        if expected_module.id != module.id:
+            raise PdfProcessingUseCaseError(
+                "Selected topic does not belong to the selected module."
+            )
+    return module
+
+
 def upload_learning_material(
     *,
     course: CourseGroup,
@@ -257,55 +317,11 @@ def upload_learning_material(
     module_node_id: int | None = None,
 ) -> tuple[LearningMaterial, bool]:
     """Create a lesson material, resolve its placement, and generate its outputs."""
-    outline_node = None
-    if outline_node_id:
-        try:
-            outline_node = course.nodes.get(pk=outline_node_id)
-        except OutlineNode.DoesNotExist as exc:
-            raise PdfProcessingUseCaseError(
-                "Selected outline node was not found for this course."
-            ) from exc
-        # A module with topics under it is a heading, not a place for a PDF:
-        # filed there, the PDF is grouped with none of its topics' PDFs and
-        # takes no part in their learning paths. Its title is often also its
-        # first topic's, which is how a module gets picked by mistake.
-        if outline_node.children.exists():
-            raise PdfProcessingUseCaseError(
-                f'"{outline_node.title}" is a module with topics under it. '
-                "Select one of its topics for this PDF."
-            )
-
-    module_node = None
-    if module_node_id:
-        try:
-            module_node = course.nodes.get(pk=module_node_id, parent__isnull=True)
-        except OutlineNode.DoesNotExist as exc:
-            raise PdfProcessingUseCaseError(
-                "Selected module was not found for this course."
-            ) from exc
-    elif outline_node is not None:
-        module_node = _top_level_module(outline_node)
-    elif not course_outline_is_approved(course):
-        raise PdfProcessingUseCaseError(
-            "Select a module or topic before uploading lesson material, or confirm "
-            "the course outline first for automatic classification."
-        )
-
-    if outline_node is not None and module_node is not None:
-        expected_module = _top_level_module(outline_node)
-        if expected_module.id != module_node.id:
-            raise PdfProcessingUseCaseError(
-                "Selected topic does not belong to the selected module."
-            )
+    outline_node = _selected_outline_node(course, outline_node_id)
+    module_node = _selected_module_node(course, module_node_id, outline_node)
 
     fingerprint = _file_sha256(pdf_file)
-
-    existing_material = _find_existing_material(course, pdf_file, fingerprint)
-    existing_outline = _find_existing_outline(course, fingerprint)
-    if existing_material is not None or existing_outline is not None:
-        raise DuplicatePdfUploadError(
-            "This exact PDF has already been uploaded to this course."
-        )
+    _ensure_pdf_is_new(course, pdf_file, fingerprint)
 
     material = LearningMaterial.objects.create(
         course=course,

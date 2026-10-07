@@ -6,7 +6,6 @@ import {
   acceptLearningObjectMatchSuggestion,
   applyRegrouping,
   confirmLearningObjects,
-  connectLearningObjects,
   createLearningObject,
   createTopicQuestion,
   deleteLearningMaterial,
@@ -27,11 +26,11 @@ import {
   rejectLearningObjectMatchSuggestion,
   assignVersionSlot,
   editVersionText,
+  removeVersion,
   generateObjectVersions,
   keepVersionText,
   moveObjectOut,
   moveObjectToConcept,
-  reorderObject,
   reviewQuestionPairing,
   startQuestionGeneration,
   startTopicQuestionGeneration,
@@ -738,6 +737,7 @@ function VersionSlotCard({
   onCancelEdit,
   onSave,
   onGenerate,
+  onDelete,
   // Written from Standard text that has since changed. Publishing waits until the
   // teacher keeps, edits or regenerates it.
   stale = false,
@@ -831,14 +831,21 @@ function VersionSlotCard({
           </div>
         ) : (
           <>
-            {(parts || []).length > 1
-              ? <BundleParts parts={parts} className="version-slot-text" />
+            {(parts || []).length > 0
+              ? <BundleParts parts={parts} className="version-slot-text" showSingleTitle />
               : <p className="version-slot-text">{text}</p>}
-            {!readOnly && (
+            {(!readOnly || onDelete) && (
               <div className="version-slot-actions">
-                <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onBeginEdit}>
-                  Edit wording
-                </button>
+                {!readOnly && (
+                  <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onBeginEdit}>
+                    Edit wording
+                  </button>
+                )}
+                {onDelete && (
+                  <button type="button" className="btn btn-danger btn-small" disabled={busy} onClick={onDelete}>
+                    {busy ? "Removing..." : "Remove version"}
+                  </button>
+                )}
               </div>
             )}
           </>
@@ -895,6 +902,7 @@ function VersionReviewPanel({
   onEditVersion,
   onKeepVersion,
   onRegenerateVersion,
+  onRemoveVersion,
 }) {
   const [chunkIndex, setChunkIndex] = useState(0);
   const [editingSlot, setEditingSlot] = useState(null);
@@ -1101,8 +1109,15 @@ function VersionReviewPanel({
             const candidateBundle = chunk.bundles?.find(
               (bundle) => Number(bundle.material) === Number(pending.material_id),
             );
-            const candidateText = candidateBundle?.learning_objects
-              ?.map((item) => item.content?.trim())
+            const candidateParts = (candidateBundle?.learning_objects || [candidate])
+              .map((item) => ({
+                id: item.id,
+                title: item.title,
+                text: item.content?.trim(),
+              }))
+              .filter((item) => item.text);
+            const candidateText = candidateParts
+              .map((item) => item.text)
               .filter(Boolean)
               .join("\n") || candidate.content;
             return (
@@ -1126,7 +1141,14 @@ function VersionReviewPanel({
                     Compare this PDF text with Standard before choosing a role.
                   </p>
                 )}
-                <blockquote>{candidateText}</blockquote>
+                <div className="version-pending-source">
+                  <BundleParts
+                    parts={candidateParts}
+                    fallback={candidateText}
+                    className="version-pending-parts"
+                    showSingleTitle
+                  />
+                </div>
                 <div className="version-slot-actions">
                   {["STANDARD", "SIMPLIFIED", "ELABORATED"].map((slot) => (
                     <button
@@ -1163,8 +1185,11 @@ function VersionReviewPanel({
             {["simplified", "elaborated"].map((slotKey) => {
               const entry = versions?.slots?.[slotKey];
               const generateKey = `version-generate-${versions?.representative_id}-${slotKey}`;
+              const deleteKey = entry
+                ? `version-delete-${slotKey}-${entry.id || entry.source_learning_object_id}`
+                : "";
               const busyKeys = entry
-                ? [`version-edit-${entry.id}`, `version-keep-${entry.id}`, generateKey]
+                ? [`version-edit-${entry.id}`, `version-keep-${entry.id}`, generateKey, deleteKey]
                 : [generateKey];
               return (
                 <VersionSlotCard
@@ -1173,6 +1198,7 @@ function VersionReviewPanel({
                   heading={slotKey === "simplified" ? "Simplified" : "Elaborated"}
                   entry={entry}
                   text={entry?.text}
+                  parts={entry?.objects}
                   originLabel={versionOriginLabel(entry, materialTitleFor(entry))}
                   busy={busyKeys.includes(busyAction)}
                   // A version a PDF supplies has no stored row to edit or keep:
@@ -1194,6 +1220,7 @@ function VersionReviewPanel({
                     if (done) setEditingSlot(null);
                   }}
                   onGenerate={() => onGenerate(versions.representative_id, slotKey.toUpperCase())}
+                  onDelete={entry?.text ? () => onRemoveVersion(entry, slotKey.toUpperCase()) : null}
                   actions={entry?.source_learning_object_id ? (
                     <VersionRoleSelect
                       sourceId={entry.source_learning_object_id}
@@ -2447,12 +2474,10 @@ function LearningObjectConnections({
   // which concept is being written rather than only that something is running.
   const [missingProgress, setMissingProgress] = useState(null);
   const [filter, setFilter] = useState("all");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [groupLabel, setGroupLabel] = useState("");
   // The open grouping review, and which of its proposals the teacher ticked.
   const [regroupPreview, setRegroupPreview] = useState(null);
   const [regroupSelectedIds, setRegroupSelectedIds] = useState([]);
+  const [versionRemoval, setVersionRemoval] = useState(null);
   const automaticClassificationRef = useRef("");
   // The bundle controls, keyed `${object id}-${action}`, and the one to focus
   // again once a correction has come back. See `bundleControlKey`.
@@ -2468,10 +2493,27 @@ function LearningObjectConnections({
 
   const materialSignature = useMemo(
     () => materials
+      // Automatic content-version classification is triggered by the PDF
+      // batch, not by teacher review edits. Group membership, role changes and
+      // Standard replacement must never look like a newly uploaded document.
+      .map((material) => (
+        `${material.id}:${material.file_sha256 || ""}:${Boolean(material.generated_json?.learning_objects_confirmed)}`
+      ))
+      .join("|"),
+    [materials],
+  );
+  // Compatibility with the earlier client-only guard. Accept it once and
+  // migrate it so installing this fix does not itself launch one extra run.
+  const legacyMaterialSignature = useMemo(
+    () => materials
       .map((material) => `${material.id}:${Boolean(material.generated_json?.learning_objects_confirmed)}:${material.learning_objects.map((item) => `${item.id}:${item.group}:${item.title}:${(item.content || "").length}`).join(",")}`)
       .join("|"),
     [materials],
   );
+  // A ref prevents duplicate runs while this screen stays mounted. Persisting
+  // the same signature prevents navigation away and back from treating the
+  // unchanged PDFs as a new batch and launching Gemma again.
+  const automaticClassificationStorageKey = `mavia:version-classification:${courseId}:${topicId}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -2487,7 +2529,6 @@ function LearningObjectConnections({
         });
         if (!cancelled) {
           setResources(data);
-          setSelectedIds([]);
         }
       } catch (err) {
         if (!cancelled) onError(err.message);
@@ -2559,13 +2600,6 @@ function LearningObjectConnections({
     () => new Map(materials.map((material) => [Number(material.id), material])),
     [materials],
   );
-  const groupByObjectId = useMemo(() => {
-    const result = new Map();
-    groups.forEach((group) => {
-      group.learning_objects.forEach((item) => result.set(item.id, group.id));
-    });
-    return result;
-  }, [groups]);
   // Keyboard focus across a bundle correction.
   //
   // Every correction replaces the whole payload, so the row the teacher just
@@ -2615,22 +2649,8 @@ function LearningObjectConnections({
   const visibleGroups = groups.filter((group) => {
     if (filter === "connected" && variationCount(group) <= 1) return false;
     if (filter === "single" && variationCount(group) !== 1) return false;
-    const query = searchTerm.trim().toLocaleLowerCase();
-    if (!query) return true;
-    const searchableText = [
-      group.display_title,
-      group.label,
-      ...group.learning_objects.flatMap((item) => [
-        item.title,
-        item.content,
-        item.section_title,
-        materialById.get(Number(item.material))?.filename,
-      ]),
-      ...group.questions.map((question) => question.prompt),
-    ].filter(Boolean).join(" ").toLocaleLowerCase();
-    return searchableText.includes(query);
+    return true;
   });
-  const selectedGroupCount = new Set(selectedIds.map((id) => groupByObjectId.get(id))).size;
   // Grouped objects edited since their grouping was decided. Counted by the
   // server without running any model, so it is cheap to show on every load.
   const regroupChangedCount = resources?.regrouping?.changed_count || 0;
@@ -2676,7 +2696,6 @@ function LearningObjectConnections({
       setResources(data.resources);
       setRegroupPreview(null);
       setRegroupSelectedIds([]);
-      setSelectedIds([]);
       const { applied = [], unpublished } = data.summary || {};
       if (unpublished || applied.length) {
         // Publication state and group membership live on the course the page
@@ -2698,7 +2717,6 @@ function LearningObjectConnections({
   }
 
   useEffect(() => {
-    if (reviewStep === "questions") setSelectedIds([]);
     if (reviewStep !== "versions") automaticClassificationRef.current = "";
   }, [reviewStep]);
 
@@ -2717,38 +2735,40 @@ function LearningObjectConnections({
     // of new content and a failure reaches the teacher instead of retrying
     // itself.
     const runKey = `${topicId}:${materialSignature}`;
-    if (automaticClassificationRef.current === runKey) return;
-    automaticClassificationRef.current = runKey;
-    generateAllVersions();
-  }, [reviewStep, loading, busyAction, topicId, materialSignature, unclassifiedGroupSignature]);
-
-  function toggleSelection(objectId) {
-    if (reviewStep !== "objects") return;
-    setSelectedIds((current) => (
-      current.includes(objectId)
-        ? current.filter((id) => id !== objectId)
-        : [...current, objectId]
-    ));
-  }
-
-  async function connectSelected() {
-    if (reviewStep !== "objects" || selectedIds.length < 2) return;
-    setBusyAction("connect");
-    onError("");
-    onMessage("");
+    let storedSignature = "";
     try {
-      const data = await connectLearningObjects(courseId, topicId, selectedIds, groupLabel);
-      setResources(data);
-      setSelectedIds([]);
-      setGroupLabel("");
-      setFilter("connected");
-      onMessage("Selected learning objects are now connected as content variations.");
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setBusyAction("");
+      storedSignature = window.localStorage.getItem(automaticClassificationStorageKey) || "";
+    } catch {
+      // Restricted/private browser storage is optional; the in-memory guard
+      // still prevents duplicate calls while this page remains mounted.
     }
-  }
+    if (automaticClassificationRef.current === runKey || storedSignature === materialSignature) return;
+    if (storedSignature && storedSignature === legacyMaterialSignature) {
+      try {
+        window.localStorage.setItem(automaticClassificationStorageKey, materialSignature);
+      } catch {
+        // The in-memory guard remains available if browser storage is blocked.
+      }
+      automaticClassificationRef.current = runKey;
+      return;
+    }
+    automaticClassificationRef.current = runKey;
+    try {
+      window.localStorage.setItem(automaticClassificationStorageKey, materialSignature);
+    } catch {
+      // See the read above. Classification still works without persistence.
+    }
+    generateAllVersions();
+  }, [
+    reviewStep,
+    loading,
+    busyAction,
+    topicId,
+    materialSignature,
+    legacyMaterialSignature,
+    unclassifiedGroupSignature,
+    automaticClassificationStorageKey,
+  ]);
 
   // Every correction to an automatic bundle runs through one handler shape:
   // call, replace the payload, say what happened. Buttons only -- the teachers
@@ -2762,9 +2782,6 @@ function LearningObjectConnections({
     try {
       const data = await call();
       setResources(data);
-      // The object is not where it was, so a tick left on it would make the
-      // next "Connect selected objects" act on a stale selection.
-      setSelectedIds((current) => current.filter((id) => id !== item.id));
       onMessage(withUnpublishedNote(describe, data));
     } catch (err) {
       onError(err.message);
@@ -2810,15 +2827,6 @@ function LearningObjectConnections({
       () => moveObjectToConcept(courseId, topicId, item.id, groupId),
       `“${item.title}” was moved to “${groupLabelText}”.`,
       bundleControlKey(item, "move-to"),
-    );
-  }
-
-  function moveObjectWithinBundle(item, direction) {
-    return runBundleCorrection(
-      item,
-      () => reorderObject(courseId, topicId, item.id, direction),
-      `“${item.title}” moved ${direction} in its file’s bundle.`,
-      bundleControlKey(item, direction),
     );
   }
 
@@ -2877,6 +2885,15 @@ function LearningObjectConnections({
     onMessage("");
     try {
       const data = await assignVersionSlot(courseId, topicId, learningObjectId, slot);
+      // This request is a teacher decision about the current PDF batch. Record
+      // the batch before rendering the response so the automatic effect cannot
+      // mistake the changed review state for a new upload and launch Gemma.
+      automaticClassificationRef.current = `${topicId}:${materialSignature}`;
+      try {
+        window.localStorage.setItem(automaticClassificationStorageKey, materialSignature);
+      } catch {
+        // Private/restricted storage is optional; the in-memory guard remains.
+      }
       setResources(data);
       onMessage(
         `Set as the ${slot.toLowerCase()} version.`
@@ -3100,6 +3117,38 @@ function LearningObjectConnections({
     }
   }
 
+  function requestVersionRemoval(entry, slot) {
+    const label = slot === "SIMPLIFIED" ? "Simplified" : "Elaborated";
+    setVersionRemoval({ entry, slot, label });
+  }
+
+  async function confirmVersionRemoval() {
+    if (!versionRemoval) return false;
+    const { entry, slot, label } = versionRemoval;
+    const key = `version-delete-${slot.toLowerCase()}-${entry.id || entry.source_learning_object_id}`;
+    setBusyAction(key);
+    onError("");
+    onMessage("");
+    try {
+      const data = await removeVersion(courseId, topicId, {
+        slot,
+        variantId: entry.id,
+        sourceLearningObjectId: entry.origin === "source_pdf"
+          ? entry.source_learning_object_id
+          : null,
+      });
+      setResources(data);
+      setVersionRemoval(null);
+      onMessage(`${label} version removed. You can generate or assign another version.`);
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function reviewQuestion(question, decision, learningObjectGroupId = null) {
     setBusyAction(`question-${decision}-${question.id}`);
     onError("");
@@ -3263,31 +3312,15 @@ function LearningObjectConnections({
                 </button>
               ))}
             </div>
-            <div className="connection-toolbar-tools">
-              <label className="connection-search">
-                <span className="sr-only">Search learning-object groups</span>
-                <input
-                  type="search"
-                  value={searchTerm}
-                  placeholder="Search concept or PDF"
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                />
-              </label>
-              <span className="connection-selection-count" aria-live="polite">
-                {selectedIds.length} selected
-              </span>
-            </div>
           </div>
 
           {!visibleGroups.length ? (
             <div className="connection-empty">
               {confirmedSourceCount === 0
                 ? "Confirm the extracted learning objects in a lesson file before reviewing connections."
-                : searchTerm.trim()
-                  ? "No concepts match your search."
-                  : filter === "connected"
-                    ? "No grouped concepts match this view. Open “Standalone” and connect equivalent objects."
-                    : "No learning-object groups match this filter."}
+                : filter === "connected"
+                  ? "No grouped concepts match this view. Open “Standalone” and move an object into the matching concept."
+                  : "No learning-object groups match this filter."}
             </div>
           ) : (
             <div className="connection-group-list">
@@ -3315,7 +3348,6 @@ function LearningObjectConnections({
                         const fileName = bundleMaterial?.filename
                           || bundleMaterial?.title
                           || `PDF ${bundle.material}`;
-                        const lastIndex = bundle.learning_objects.length - 1;
                         return (
                           <section
                             className="concept-bundle"
@@ -3339,20 +3371,6 @@ function LearningObjectConnections({
                                 const moving = busyAction === `move-${item.id}`;
                                 return (
                                   <div className="connection-object-row" key={item.id}>
-                                    {reviewStep === "objects" && (
-                                      <label className="connection-object-select">
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedIds.includes(item.id)}
-                                          aria-disabled={Boolean(busyAction)}
-                                          onChange={() => {
-                                            if (busyAction) return;
-                                            toggleSelection(item.id);
-                                          }}
-                                        />
-                                        <span className="sr-only">Select {item.title}</span>
-                                      </label>
-                                    )}
                                     <div className="connection-object-copy">
                                       <div className="connection-object-title-row">
                                         <span className="connection-object-order">
@@ -3398,11 +3416,6 @@ function LearningObjectConnections({
                                       // effect above puts focus back on the control that was
                                       // pressed once the corrected payload has rendered.
                                       <div className="concept-bundle-actions">
-                                        {/* Two questions, so two labelled groups. These used to be one row
-                                            of four controls where "Move out" and "Move to..." both read as
-                                            "move" -- one makes a new concept, the other joins an existing
-                                            one -- and the arrows sat beside them looking as though they
-                                            changed concepts too, when they only reorder within one file. */}
                                         <div
                                           className="concept-bundle-action-group"
                                           role="group"
@@ -3445,39 +3458,6 @@ function LearningObjectConnections({
                                             </select>
                                           </label>
                                         </div>
-                                        <div
-                                          className="concept-bundle-action-group is-order"
-                                          role="group"
-                                          aria-label={`Where "${item.title}" sits in ${fileName}`}
-                                        >
-                                          <span className="concept-bundle-action-label" aria-hidden="true">Order in this file</span>
-                                          <button
-                                            type="button"
-                                            className="btn btn-secondary btn-small concept-bundle-nudge"
-                                            ref={registerBundleControl(bundleControlKey(item, "up"))}
-                                            aria-disabled={Boolean(busyAction) || itemIndex === 0}
-                                            aria-label={`Move "${item.title}" earlier in ${fileName}`}
-                                            onClick={() => {
-                                              if (busyAction || itemIndex === 0) return;
-                                              moveObjectWithinBundle(item, "up");
-                                            }}
-                                          >
-                                            <span aria-hidden="true">↑</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="btn btn-secondary btn-small concept-bundle-nudge"
-                                            ref={registerBundleControl(bundleControlKey(item, "down"))}
-                                            aria-disabled={Boolean(busyAction) || itemIndex === lastIndex}
-                                            aria-label={`Move "${item.title}" later in ${fileName}`}
-                                            onClick={() => {
-                                              if (busyAction || itemIndex === lastIndex) return;
-                                              moveObjectWithinBundle(item, "down");
-                                            }}
-                                          >
-                                            <span aria-hidden="true">↓</span>
-                                          </button>
-                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -3488,37 +3468,6 @@ function LearningObjectConnections({
                         );
                       })}
                     </div>
-
-                    {group.questions.length > 0 && (
-                      <div className="connection-question-list">
-                        <div className="connection-question-heading">
-                          <span aria-hidden="true">?</span>
-                          <div>
-                            <h5>Questions paired with this concept</h5>
-                            <small>{group.questions.length} linked question{group.questions.length === 1 ? "" : "s"}</small>
-                          </div>
-                        </div>
-                        {group.questions.map((question) => {
-                          const link = question.learning_object_links.find(
-                            (item) => Number(item.learning_object_group_id) === Number(group.id),
-                          );
-                          const pairingLabel = link?.review_status === "teacher_confirmed"
-                            ? "Teacher confirmed"
-                            : "Automatically paired";
-                          return (
-                            <div className="connection-question-row" key={question.id}>
-                              <span aria-hidden="true">Q</span>
-                              <div>
-                                <strong>{question.prompt}</strong>
-                                <small>
-                                  {pairingLabel} with {link?.learning_object_title || "this concept"}
-                                </small>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </article>
                 );
               })}
@@ -3528,47 +3477,6 @@ function LearningObjectConnections({
         </>
       )}
 
-      {!loading && reviewStep === "objects" && selectedIds.length > 0 && (
-        <aside className="connection-selection-dock" aria-label="Selected learning objects">
-          <div className="connection-selection-dock-heading">
-            <div>
-              <strong>{selectedIds.length} object{selectedIds.length === 1 ? "" : "s"} selected</strong>
-              <small>
-                {selectedIds.length < 2
-                  ? "Select one more learning object."
-                  : selectedGroupCount < 2
-                    ? "These objects already belong to one group."
-                    : "Ready to connect as variations."}
-              </small>
-            </div>
-            <button
-              type="button"
-              className="connection-clear-selection"
-              disabled={Boolean(busyAction)}
-              onClick={() => setSelectedIds([])}
-            >
-              Clear
-            </button>
-          </div>
-          <label>
-            Concept label <span>(optional)</span>
-            <input
-              value={groupLabel}
-              disabled={busyAction === "connect"}
-              placeholder="Example: Shape"
-              onChange={(event) => setGroupLabel(event.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={selectedIds.length < 2 || Boolean(busyAction)}
-            onClick={connectSelected}
-          >
-            {busyAction === "connect" ? "Connecting…" : "Connect selected objects"}
-          </button>
-        </aside>
-      )}
       </section>
       </>
       )}
@@ -3618,6 +3526,7 @@ function LearningObjectConnections({
           onEditVersion={saveVersionText}
           onKeepVersion={keepVersion}
           onRegenerateVersion={regenerateVersion}
+          onRemoveVersion={requestVersionRemoval}
         />
       )}
       {reviewStep === "questions" && (
@@ -3692,6 +3601,58 @@ function LearningObjectConnections({
           onError={onError}
           onMessage={onMessage}
         />
+      )}
+      {versionRemoval && createPortal(
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busyAction) setVersionRemoval(null);
+          }}
+        >
+          <div
+            className="modal-card delete-material-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="remove-version-title"
+            aria-describedby="remove-version-description"
+          >
+            <div className="delete-modal-heading">
+              <span className="delete-modal-icon" aria-hidden="true">!</span>
+              <div>
+                <h3 id="remove-version-title">Remove {versionRemoval.label} version?</h3>
+                <p id="remove-version-description">This adaptive slot will become empty.</p>
+              </div>
+            </div>
+            <div className="delete-material-summary">
+              <strong>{versionRemoval.label}</strong>
+              <span>
+                {versionRemoval.entry.origin === "source_pdf"
+                  ? "The PDF's original learning content will remain. Only its version role will be removed."
+                  : "The generated wording will be deleted. You can generate another version later."}
+              </span>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={Boolean(busyAction)}
+                onClick={() => setVersionRemoval(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={Boolean(busyAction)}
+                onClick={confirmVersionRemoval}
+              >
+                {busyAction ? "Removing..." : "Remove version"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
     </div>
@@ -4029,7 +3990,6 @@ function LearningObjectForm({ initialValue = null, submitLabel, busy, onCancel, 
 function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, onReviewConnections }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [reviewEditMode, setReviewEditMode] = useState(false);
   const [selectedId, setSelectedId] = useState(material.learning_objects[0]?.id || null);
   const [busyAction, setBusyAction] = useState("");
   const [activeTab, setActiveTab] = useState("content");
@@ -4047,7 +4007,10 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
   const lessonPlaylist = generatedJson.lesson_playlist || [];
   const lessonAudioGenerated = Boolean(generatedJson.lesson_audio_generated);
   const audioCount = lessonPlaylist.filter((item) => item.audio_url).length;
-  const canEditLearningObjects = !learningObjectsConfirmed || reviewEditMode;
+  // Confirmation locks the extracted list. Downstream grouping, versions,
+  // questions and audio all depend on these rows, so the material must not
+  // silently return to an editable draft after approval.
+  const canEditLearningObjects = !learningObjectsConfirmed;
   const selectedObject = material.learning_objects.find((item) => item.id === selectedId);
   const imagesMissingDescription = material.learning_objects.filter(
     (item) => isImageLearningObject(item) && !item.content?.trim(),
@@ -4068,7 +4031,6 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
 
   useEffect(() => {
     if (learningObjectsConfirmed) {
-      setReviewEditMode(false);
       setCreating(false);
       setEditingId(null);
     }
@@ -4082,7 +4044,6 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
       const updatedCourse = await createLearningObject(courseId, material.id, data);
       onCourseChange(updatedCourse);
       setCreating(false);
-      setReviewEditMode(true);
       const updatedMaterial = updatedCourse.materials?.find((item) => item.id === material.id);
       const createdObject = updatedMaterial?.learning_objects?.[updatedMaterial.learning_objects.length - 1];
       if (createdObject) setSelectedId(createdObject.id);
@@ -4102,7 +4063,6 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
       const updatedCourse = await updateLearningObject(courseId, material.id, objectId, data);
       onCourseChange(updatedCourse);
       setEditingId(null);
-      setReviewEditMode(true);
       setSelectedId(objectId);
       onMessage("Learning object updated. Confirm again when the list is final.");
     } catch (err) {
@@ -4200,11 +4160,11 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
   }
 
   function editMissingImageDescription() {
+    if (learningObjectsConfirmed) return;
     const imageObject = imagesMissingDescription[0];
     if (!imageObject) return;
     setShowAudioWarning(false);
     setActiveTab("content");
-    setReviewEditMode(true);
     setSelectedId(imageObject.id);
     setEditingId(imageObject.id);
   }
@@ -4321,18 +4281,9 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
             </div>
             <div className="generated-item-actions">
               <span className={`status-pill ${learningObjectsConfirmed ? "status-completed" : "status-processing"}`}>
-                {learningObjectsConfirmed && !reviewEditMode ? "Confirmed" : "Needs review"}
+                {learningObjectsConfirmed ? "Confirmed" : "Needs review"}
               </span>
-              {learningObjectsConfirmed && !reviewEditMode ? (
-                <button
-                  className="btn btn-secondary btn-small"
-                  type="button"
-                  disabled={Boolean(busyAction)}
-                  onClick={() => setReviewEditMode(true)}
-                >
-                  Edit learning objects
-                </button>
-              ) : (
+              {!learningObjectsConfirmed && (
                 <button
                   className="btn btn-secondary btn-small"
                   type="button"

@@ -122,19 +122,8 @@ export function deleteCourse(id) {
   return request(`/courses/${id}/`, { method: "DELETE" });
 }
 
-export function uploadCourseOutline(courseId, formData) {
-  return request(`/courses/${courseId}/upload-outline/`, {
-    method: "POST",
-    body: formData,
-  });
-}
-
 export function confirmCourseOutline(courseId) {
   return request(`/courses/${courseId}/confirm-outline/`, { method: "POST" });
-}
-
-export function deleteCourseOutline(courseId) {
-  return request(`/courses/${courseId}/delete-outline/`, { method: "DELETE" });
 }
 
 export function createOutlineNode(courseId, data) {
@@ -245,45 +234,9 @@ export function generateAudioPlaylist(courseId, materialId, scope = "all") {
   );
 }
 
-export function updateClassifiedBlock(courseId, materialId, blockId, data) {
-  return request(
-    `/courses/${courseId}/materials/${materialId}/classified-blocks/${blockId}/`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    }
-  );
-}
-
 export function fetchLearningResources(courseId, nodeId) {
   return request(
     `/courses/${courseId}/outline-nodes/${nodeId}/learning-resources/`
-  );
-}
-
-export function connectLearningObjects(courseId, nodeId, learningObjectIds, label = "") {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/connect-learning-objects/`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        learning_object_ids: learningObjectIds,
-        ...(label.trim() ? { label: label.trim() } : {}),
-      }),
-    }
-  );
-}
-
-export function separateLearningObject(courseId, nodeId, learningObjectId) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/separate-learning-object/`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ learning_object_id: learningObjectId }),
-    }
   );
 }
 
@@ -302,17 +255,6 @@ export function moveObjectToConcept(courseId, nodeId, learningObjectId, groupId)
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ group_id: groupId }),
-    },
-  );
-}
-
-export function reorderObject(courseId, nodeId, learningObjectId, direction) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/reorder/`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ direction }),
     },
   );
 }
@@ -493,6 +435,22 @@ export function editVersionText(courseId, nodeId, variantId, narration) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ narration }),
+  });
+}
+
+export function removeVersion(courseId, nodeId, {
+  slot,
+  variantId = null,
+  sourceLearningObjectId = null,
+}) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/versions/`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slot,
+      variant_id: variantId,
+      source_learning_object_id: sourceLearningObjectId,
+    }),
   });
 }
 

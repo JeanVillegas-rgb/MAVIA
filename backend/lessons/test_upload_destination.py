@@ -56,6 +56,17 @@ class UploadDestinationTests(TestCase):
         self.assertEqual(material.outline_node, self.topic)
         generate.assert_called_once()
 
+    def test_unconfirmed_outline_requests_confirmation_only(self):
+        with patch("lessons.features.pdf_processing.use_cases.generate_material_outputs") as generate:
+            with self.assertRaisesMessage(
+                PdfProcessingUseCaseError,
+                "Confirm the course outline first for automatic classification.",
+            ):
+                upload_learning_material(course=self.course, pdf_file=self._pdf())
+
+        generate.assert_not_called()
+        self.assertFalse(LearningMaterial.objects.exists())
+
     def test_same_lesson_pdf_bytes_are_rejected_in_the_same_course(self):
         with patch("lessons.features.pdf_processing.use_cases.generate_material_outputs") as generate:
             upload_learning_material(

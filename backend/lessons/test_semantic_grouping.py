@@ -71,6 +71,17 @@ class SemanticPureTests(SimpleTestCase):
                 semantic.rank_groups(text, [a], {4: [a]}, runtime_instance=engine)
             self.assertEqual(engine.inputs, [])
 
+    def test_precompute_embeddings_caches_unique_supported_content(self):
+        engine = FakeRuntime()
+
+        count = semantic.precompute_embeddings(
+            ["  first idea  ", "first idea", "", "TOO LONG", "second idea"],
+            runtime_instance=engine,
+        )
+
+        self.assertEqual(count, 2)
+        self.assertEqual(engine.inputs, ["first idea", "second idea"])
+
     @patch.dict(os.environ, {
         "SEMANTIC_GROUPING_CALIBRATION": "",
         "SEMANTIC_GROUPING_AUTO_THRESHOLD": "",
@@ -152,6 +163,20 @@ class SemanticIntegrationTests(TestCase):
         runtime.assert_not_called()
         policy.assert_not_called()
         self.assertFalse(LearningObjectMatchSuggestion.objects.filter(pk=pending.pk).exists())
+
+    @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "auto"})
+    def test_first_confirmed_pdf_precomputes_embeddings_without_candidates(self):
+        self.other.generated_json = {"learning_objects_confirmed": False}
+        self.other.save(update_fields=["generated_json"])
+        engine = FakeRuntime()
+
+        with patch.object(semantic, "runtime", return_value=engine):
+            refresh_learning_object_match_suggestions(self.material)
+
+        self.assertEqual(engine.inputs, ["base definition"])
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.group_id, self.source_group.id)
+        self.assertFalse(LearningObjectMatchSuggestion.objects.exists())
 
     @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "review", "SEMANTIC_GROUPING_CALIBRATION": ""})
     def test_review_mode_never_auto_groups(self):

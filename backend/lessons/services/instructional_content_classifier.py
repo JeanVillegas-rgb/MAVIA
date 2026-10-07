@@ -316,13 +316,24 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
     usable_drawings = usable(drawing_rects)
 
     regions = []
-    captions = [
-        item
-        for item in text_blocks
-        # "Figure 2:", "Figure 5A:", "Fig. 3B." -- modules letter related figures.
-        if re.match(r"^\s*(?:figure|fig\.?)\s*\d+[A-Za-z]?\s*[.:]", item["text"], flags=re.IGNORECASE)
-        and len(item["text"].split()) <= 20
-    ]
+    def is_figure_caption(text):
+        words = len((text or "").split())
+        # Numbered captions are normally short. Accessible PDFs also place a
+        # fuller authored alternative directly below a diagram using
+        # "Diagram description:"; that text may reasonably span two lines.
+        return bool(
+            re.match(
+                r"^\s*(?:figure|fig\.?)\s*\d+[A-Za-z]?\s*[.:]",
+                text or "",
+                flags=re.IGNORECASE,
+            )
+            and words <= 20
+        ) or bool(
+            re.match(r"^\s*diagram\s+description\s*:", text or "", flags=re.IGNORECASE)
+            and words <= 60
+        )
+
+    captions = [item for item in text_blocks if is_figure_caption(item["text"])]
 
     def above_in_same_column(rects, caption_rect):
         # A figure sits directly above its caption, in the same column. On a
@@ -340,6 +351,13 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
 
     for caption in captions:
         caption_rect = caption["rect"]
+        accessibility_caption = bool(
+            re.match(
+                r"^\s*diagram\s+description\s*:",
+                caption["text"],
+                flags=re.IGNORECASE,
+            )
+        )
         # A picture beats a drawn shape: page furniture -- banners, boxes,
         # rules -- is drawn too, and is only the figure when nothing else is.
         nearby_visuals = (
@@ -401,7 +419,11 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
         if visual_bbox.width < page_rect.width * 0.15 or visual_bbox.height < 18:
             continue
 
-        title_candidates = [
+        # An accessibility description sits below a diagram but the prose
+        # immediately above that diagram explains the lesson; it is not a
+        # figure title or an internal panel label. Pulling it into the crop
+        # removes the exact instructional text the figure is meant to support.
+        title_candidates = [] if accessibility_caption else [
             item
             for item in text_blocks
             if item["rect"].y1 <= visual_bbox.y0 + 2
@@ -419,18 +441,19 @@ def find_captioned_figure_regions(page, page_dict: dict | None = None) -> list[d
             figure_title["rect"].y0
             if figure_title else visual_bbox.y0 - page_rect.height * 0.04
         )
-        for item in text_blocks:
-            rect = item["rect"]
-            center_x = (rect.x0 + rect.x1) / 2
-            if (
-                item is not caption
-                and label_top <= rect.y0
-                and rect.y1 <= caption_rect.y0 + 2
-                and visual_bbox.x0 - 10 <= center_x <= visual_bbox.x1 + 10
-                and rect.width <= page_rect.width * 0.5
-            ):
-                crop_bbox.x0 = min(crop_bbox.x0, rect.x0)
-                crop_bbox.x1 = max(crop_bbox.x1, rect.x1)
+        if not accessibility_caption:
+            for item in text_blocks:
+                rect = item["rect"]
+                center_x = (rect.x0 + rect.x1) / 2
+                if (
+                    item is not caption
+                    and label_top <= rect.y0
+                    and rect.y1 <= caption_rect.y0 + 2
+                    and visual_bbox.x0 - 10 <= center_x <= visual_bbox.x1 + 10
+                    and rect.width <= page_rect.width * 0.5
+                ):
+                    crop_bbox.x0 = min(crop_bbox.x0, rect.x0)
+                    crop_bbox.x1 = max(crop_bbox.x1, rect.x1)
         crop_bbox.include_rect(caption_rect)
         if figure_title:
             crop_bbox.include_rect(figure_title["rect"])

@@ -43,6 +43,15 @@ class CaptionTests(SimpleTestCase):
 
         self.assertFalse(_is_image_caption(text))
 
+    def test_accessible_diagram_description_is_a_caption(self):
+        text = (
+            "Diagram description: particles in a liquid are drawn as dots that "
+            "are close together but scattered in an irregular, flowing "
+            "arrangement rather than a neat grid, showing movement."
+        )
+
+        self.assertTrue(_is_image_caption(text))
+
 
 class FigureCropTests(SimpleTestCase):
     def _two_column_page(self):
@@ -107,3 +116,37 @@ class FigureCropTests(SimpleTestCase):
             self.assertIn(title, regions[0]["visible_text"])
         self.assertNotIn("Learning Objectives", regions[0]["visible_text"])
         self.assertNotIn("Why Mixtures", regions[0]["visible_text"])
+
+    def test_accessible_diagram_description_finds_vector_figure(self):
+        document = fitz.open()
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 80), "2. Solids", fontsize=14)
+        page.insert_text(
+            (72, 105),
+            "Particles are packed tightly in a fixed pattern.",
+            fontsize=10,
+        )
+        page.draw_rect(fitz.Rect(72, 130, 540, 270), color=(0, 0, 0))
+        for row in range(4):
+            for column in range(8):
+                page.draw_circle(
+                    fitz.Point(100 + column * 55, 155 + row * 30),
+                    7,
+                    color=(0, 0, 0),
+                    fill=(0, 0, 0),
+                )
+        caption = (
+            "Diagram description: particles in a solid are drawn as evenly spaced dots "
+            "arranged in tidy rows and columns, like a grid, showing a fixed pattern."
+        )
+        page.insert_textbox(fitz.Rect(80, 278, 535, 315), caption, fontsize=8)
+        self.addCleanup(document.close)
+
+        regions = find_captioned_figure_regions(page)
+
+        self.assertEqual(len(regions), 1)
+        self.assertEqual(regions[0]["caption"].split(), caption.split())
+        crop = fitz.Rect(regions[0]["bbox"])
+        self.assertGreater(crop.y0, 110)
+        self.assertGreaterEqual(crop.y1, 300)
+        self.assertNotIn("Particles are packed tightly", regions[0]["visible_text"])

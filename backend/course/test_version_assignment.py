@@ -751,18 +751,44 @@ class BundleRoleTests(TestCase):
 
         self.assertEqual(outcome["bundle_roles"], {self.second.id: "ELABORATED"})
 
-    def test_unassigned_pdf_can_become_standard_without_forcing_old_standard_into_a_slot(self):
+    @patch("course.version_assignment.review_gemma_role")
+    @patch("course.version_assignment.classify_group_versions")
+    def test_recommended_pdf_becoming_standard_swaps_roles_without_reclassification(
+        self, classify, review,
+    ):
+        classify.return_value = {
+            self.standard.id: {"slot": "ORIGINAL", "confidence": 0.95, "reason": "Baseline."},
+            self.simple_lead.id: {
+                "slot": "SIMPLIFIED", "confidence": 0.55, "reason": "Likely simpler."
+            },
+        }
+        review.return_value = {
+            "accepted": False,
+            "slot": "SIMPLIFIED",
+            "issues": ["Teacher should decide."],
+            "concerns": [],
+            "measures": {},
+        }
+        initial = assign_group_versions(self.group, use_llm=True)
+        self.assertTrue(initial["classification_complete"])
+        self.assertEqual(initial["needs_confirmation"][0]["material_id"], self.second.id)
+        recommended_slot = initial["needs_confirmation"][0]["llm_slot"]
+
         assign_source_as_representative(self.group, self.simple_lead)
 
         self.group.refresh_from_db()
         self.standard.refresh_from_db()
         self.simple_lead.refresh_from_db()
         self.assertEqual(self.group.version_selection["standard_material_id"], self.second.id)
-        self.assertEqual(self.group.version_selection["bundle_roles"], {})
-        self.assertIsNone(self.standard.represented_by_id)
+        self.assertEqual(
+            self.group.version_selection["bundle_roles"],
+            {str(self.first.id): recommended_slot},
+        )
+        self.assertEqual(self.standard.represented_by_id, self.simple_lead.id)
         self.assertIsNone(self.simple_lead.represented_by_id)
         outcome = assign_group_versions(self.group)
-        self.assertEqual(outcome["needs_confirmation"][0]["material_id"], self.first.id)
+        self.assertTrue(outcome["classification_complete"])
+        self.assertEqual(outcome["needs_confirmation"], [])
 
     def test_the_standard_bundle_is_reported_in_document_order(self):
         extra = LearningObject.objects.create(

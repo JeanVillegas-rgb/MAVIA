@@ -13,14 +13,13 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from user.permissions import IsTeacherOrAdmin
 
-from course.models import LessonVariant
+from course.models import LessonVariant, standard_bundle_for
 from course.bulk_version_generation import classify_all_source_versions
 from course.variant_generator import (
     STANDARD_FALLBACK_GENERATOR,
     _fingerprint as version_fingerprint,
     fill_missing_bundle_slots,
     fill_missing_slots,
-    generate_standalone_variants,
 )
 from question_generation.models import GenerationRun
 from .services.topic_publish import confirmed_materials_for, run_topic_publish
@@ -31,6 +30,7 @@ from course.version_assignment import (
     bundle_roles,
     bundle_role_provenance,
     prune_bundle_role,
+    remove_source_from_slot,
     release_from_group,
 )
 from .services.concept_bundles import (
@@ -125,7 +125,6 @@ from .services.question_workflow import (
     duplicate_for_topic,
     duplicate_in_topic,
     enriched_question_values,
-    question_fingerprint,
     sync_question_to_adaptive,
 )
 
@@ -1866,6 +1865,66 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         variant.assigned_by = LessonVariant.AssignedBy.TEACHER
         variant.save(update_fields=["source_fingerprint", "assigned_by"])
         return Response(self._learning_resources_payload(node, request))
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/versions",
+    )
+    def remove_version(self, request, pk=None, node_id=None):
+        """Empty a Simplified/Elaborated slot without deleting PDF content."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        slot = str(request.data.get("slot") or "").upper()
+        if slot not in ("SIMPLIFIED", "ELABORATED"):
+            return Response(
+                {"detail": "slot must be SIMPLIFIED or ELABORATED."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        source_id = request.data.get("source_learning_object_id")
+        variant_id = request.data.get("variant_id")
+        if source_id:
+            try:
+                source = LearningObject.objects.select_related("group", "material").get(
+                    pk=source_id,
+                    material__outline_node=node,
+                )
+                if source.group_id is None:
+                    raise ValueError("Only a grouped PDF version can be removed from this slot")
+                remove_source_from_slot(source.group, source, slot)
+            except LearningObject.DoesNotExist:
+                return Response({"detail": "PDF version not found."}, status=status.HTTP_404_NOT_FOUND)
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        elif variant_id:
+            try:
+                variant = LessonVariant.objects.select_related("learning_object__group").get(
+                    pk=variant_id,
+                    variant=slot,
+                    learning_object__material__outline_node=node,
+                )
+            except (LessonVariant.DoesNotExist, TypeError, ValueError):
+                return Response({"detail": "Generated version not found."}, status=status.HTTP_404_NOT_FOUND)
+            standard_objects = standard_bundle_for(variant.learning_object)
+            LessonVariant.objects.filter(
+                learning_object__in=standard_objects,
+                variant=slot,
+                origin=LessonVariant.Origin.GENERATED,
+            ).delete()
+        else:
+            return Response(
+                {"detail": "Choose the version to remove."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payload = self._learning_resources_payload(node, request)
+        payload["version_removal"] = {"slot": slot}
+        return Response(payload)
 
     @action(
         detail=True,

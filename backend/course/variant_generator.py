@@ -1,4 +1,4 @@
-"""Generate grounded adaptive text variants for standalone learning objects."""
+"""Generate grounded adaptive text variants for learning objects."""
 
 import hashlib
 import json
@@ -13,16 +13,32 @@ from django.utils import timezone
 
 from config.console import name
 from config.groq_client import generate as groq_generate
-from lessons.models import LearningObject
-
 from .models import LessonVariant
 
 
 logger = logging.getLogger(__name__)
 
+PRIMARY_VARIANT_SLOTS = ("SIMPLIFIED", "ELABORATED")
+
 
 class VariantGenerationError(RuntimeError):
     pass
+
+
+def _generation_result(*, generated=(), skipped=(), errors=()):
+    """Return one consistent result shape from every generation exit path."""
+    return {
+        "generated": list(generated),
+        "skipped": list(skipped),
+        "errors": list(errors),
+    }
+
+
+def _requested_slots(target_slots):
+    requested = tuple(target_slots or PRIMARY_VARIANT_SLOTS)
+    if any(slot not in PRIMARY_VARIANT_SLOTS for slot in requested):
+        raise ValueError("Unknown adaptive version slot")
+    return requested
 
 
 def _version_word_limits(source_word_count):
@@ -324,142 +340,13 @@ def _request_variants_once(learning_object, model, feedback=""):
         raise VariantGenerationError(f"{model} request failed: {exc}") from exc
 
 
-def _confirmed_objects_for_topic(outline_node):
-    return list(
-        LearningObject.objects.filter(
-            material__outline_node=outline_node,
-            material__generated_json__learning_objects_confirmed=True,
-        )
-        .select_related("material", "group")
-        .order_by("material_id", "order", "id")
-    )
-
-
-def generate_standalone_variants(outline_node):
-    """Generate two cached variants for every confirmed singleton group.
-
-    Group cardinality is calculated using confirmed text objects only. A null
-    group is also standalone. Generated rows on objects that later become
-    grouped are removed so natural variants remain authoritative.
-    """
-    if not settings.ADAPTIVE_VARIANT_GENERATION_ENABLED:
-        return {"generated_count": 0, "cached_count": 0, "errors": []}
-
-    objects = _confirmed_objects_for_topic(outline_node)
-    group_sizes = {}
-    for learning_object in objects:
-        if learning_object.group_id is not None:
-            group_sizes[learning_object.group_id] = group_sizes.get(learning_object.group_id, 0) + 1
-
-    adaptable_objects = [item for item in objects if (item.content or "").strip()]
-    standalone = [
-        item for item in adaptable_objects
-        if item.group_id is None or group_sizes.get(item.group_id, 0) == 1
-    ]
-    standalone_ids = {item.id for item in standalone}
-    grouped_ids = [item.id for item in adaptable_objects if item.id not in standalone_ids]
-    if grouped_ids:
-        LessonVariant.objects.filter(
-            learning_object_id__in=grouped_ids,
-        ).exclude(source_fingerprint="").delete()
-
-    model = settings.ADAPTIVE_VARIANT_LLM_MODEL
-    generated_count = 0
-    cached_count = 0
-    errors = []
-
-    # Decide what needs generating (DB reads on this thread), then fan the
-    # Ollama calls out. A publish run is dominated by N sequential calls to a
-    # local model; those calls touch no ORM state, so they parallelise cleanly
-    # while every write stays on this thread.
-    pending = []
-    for learning_object in standalone:
-        fingerprint = _fingerprint(learning_object)
-        cached = LessonVariant.objects.filter(
-            learning_object=learning_object,
-            variant__in=("SIMPLIFIED", "ELABORATED"),
-            source_fingerprint=fingerprint,
-            generator_model=model,
-        ).count()
-        if cached == 2:
-            cached_count += 2
-            continue
-        pending.append((learning_object, fingerprint))
-
-    outcomes = _request_variants_bulk(
-        [obj for obj, _ in pending], model, settings.ADAPTIVE_VARIANT_CONCURRENCY
-    )
-
-    for learning_object, fingerprint in pending:
-        outcome = outcomes[learning_object.id]
-        if isinstance(outcome, VariantGenerationError):
-            logger.warning(
-                "[Versions] %s  writing versions failed (%s): %s  (object %s)",
-                name(learning_object.title),
-                model,
-                outcome,
-                learning_object.id,
-            )
-            errors.append({"learning_object_id": learning_object.id, "detail": str(outcome)})
-            continue
-
-        with transaction.atomic():
-            for variant, narration in outcome.items():
-                LessonVariant.objects.update_or_create(
-                    learning_object=learning_object,
-                    variant=variant,
-                    defaults={
-                        "narration": narration,
-                        "audio_url": "",
-                        "source_fingerprint": fingerprint,
-                        "generator_model": (
-                            STANDARD_FALLBACK_GENERATOR if variant in _fallback_slots(outcome) else model
-                        ),
-                        "generated_at": timezone.now(),
-                    },
-                )
-            generated_count += len(outcome)
-
-    return {
-        "generated_count": generated_count,
-        "cached_count": cached_count,
-        "errors": errors,
-    }
-
-
-def _request_variants_bulk(learning_objects, model, concurrency):
-    """``{learning_object_id: variants dict | VariantGenerationError}``.
-
-    Threads here do network I/O only -- no ORM access -- so Django's per-thread
-    connections and SQLite's write lock never come into play. Order does not
-    matter: the caller writes results back in its own order.
-    """
-    if not learning_objects:
-        return {}
-
-    def _one(learning_object):
-        try:
-            return learning_object.id, _request_variants(learning_object, model)
-        except VariantGenerationError as exc:
-            return learning_object.id, exc
-
-    workers = max(1, min(concurrency, len(learning_objects)))
-    if workers == 1:
-        return dict(_one(obj) for obj in learning_objects)
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return dict(pool.map(_one, learning_objects))
-
-
 STALE_VERSION_DETAIL = (
     "The Standard text changed after this version was written. "
     "Check it in Content versions: keep it as is, edit it, or regenerate it."
 )
 
 
-def stale_generated_versions(learning_object, slots=("SIMPLIFIED", "ELABORATED")):
+def stale_generated_versions(learning_object, slots=PRIMARY_VARIANT_SLOTS):
     """Generated versions written from different text than the object has now.
 
     A generated version is a rewrite of the Standard text at the moment it was
@@ -486,31 +373,29 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
     are discarded and written again instead.
     """
     if not settings.ADAPTIVE_VARIANT_GENERATION_ENABLED:
-        return {"generated": [], "skipped": [], "errors": []}
+        return _generation_result()
     if not (learning_object.content or "").strip():
-        return {"generated": [], "skipped": [], "errors": []}
+        return _generation_result()
 
-    requested = tuple(target_slots or ("SIMPLIFIED", "ELABORATED"))
-    if any(slot not in ("SIMPLIFIED", "ELABORATED") for slot in requested):
-        raise ValueError("Unknown adaptive version slot")
+    requested = _requested_slots(target_slots)
 
     stale = stale_generated_versions(learning_object, requested)
     if stale.exists():
         if not replace_stale:
-            return {"generated": [], "skipped": [], "errors": [{
+            return _generation_result(errors=[{
                 "learning_object_id": learning_object.id,
                 "slots": sorted(stale.values_list("variant", flat=True)),
                 "detail": STALE_VERSION_DETAIL,
-            }]}
+            }])
         stale.delete()
     existing = set(
         learning_object.variants.filter(
-            variant__in=("SIMPLIFIED", "ELABORATED"),
+            variant__in=PRIMARY_VARIANT_SLOTS,
         ).values_list("variant", flat=True)
     )
     missing = [slot for slot in requested if slot not in existing]
     if not missing:
-        return {"generated": [], "skipped": sorted(existing), "errors": []}
+        return _generation_result(skipped=sorted(existing))
 
     model = settings.ADAPTIVE_VARIANT_LLM_MODEL
     fingerprint = _fingerprint(learning_object)
@@ -524,11 +409,10 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
             exc,
             learning_object.id,
         )
-        return {
-            "generated": [],
-            "skipped": sorted(existing),
-            "errors": [{"learning_object_id": learning_object.id, "detail": str(exc)}],
-        }
+        return _generation_result(
+            skipped=sorted(existing),
+            errors=[{"learning_object_id": learning_object.id, "detail": str(exc)}],
+        )
 
     generated = []
     with transaction.atomic():
@@ -552,7 +436,7 @@ def fill_missing_slots(learning_object, target_slots=None, *, replace_stale=Fals
             )
             generated.append(slot)
 
-    return {"generated": generated, "skipped": sorted(existing), "errors": []}
+    return _generation_result(generated=generated, skipped=sorted(existing))
 
 
 def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
@@ -578,33 +462,33 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
 
     bundles = version_bundles(group)
     standard = bundles.get("STANDARD") or []
-    outcome = assign_group_versions(group)
-    if outcome.get("standard_replacement_needed"):
-        return {
-            "generated": [], "skipped": [],
-            "errors": [{"learning_object_id": None, "detail": "Choose a replacement Standard PDF before generating versions."}],
-        }
-    pending_ids = {entry["material_id"] for entry in outcome["needs_confirmation"]}
+    assignment = assign_group_versions(group)
+    if assignment.get("standard_replacement_needed"):
+        return _generation_result(errors=[{
+            "learning_object_id": None,
+            "detail": "Choose a replacement Standard PDF before generating versions.",
+        }])
+    pending_ids = {entry["material_id"] for entry in assignment["needs_confirmation"]}
     # Covered only by a PDF version learners are actually given; a flagged or
     # unconfirmed one is not, so the written version is still needed.
     served = served_version_bundles(group)
     supplied = {
         role for material_id, role in bundle_roles(group).items()
-        if role in ("SIMPLIFIED", "ELABORATED") and material_id not in pending_ids
+        if role in PRIMARY_VARIANT_SLOTS and material_id not in pending_ids
         and role in served
     }
     requested = [
-        slot for slot in (target_slots or ("SIMPLIFIED", "ELABORATED"))
+        slot for slot in _requested_slots(target_slots)
         if slot not in supplied
     ]
     generated, skipped, errors = [], [], []
     if not requested:
-        return {"generated": generated, "skipped": sorted(supplied), "errors": errors}
+        return _generation_result(skipped=sorted(supplied))
     for learning_object in standard:
-        outcome = fill_missing_slots(
+        object_result = fill_missing_slots(
             learning_object, requested, replace_stale=replace_stale,
         )
-        generated.extend(outcome["generated"])
-        skipped.extend(outcome["skipped"])
-        errors.extend(outcome["errors"])
-    return {"generated": generated, "skipped": skipped, "errors": errors}
+        generated.extend(object_result["generated"])
+        skipped.extend(object_result["skipped"])
+        errors.extend(object_result["errors"])
+    return _generation_result(generated=generated, skipped=skipped, errors=errors)

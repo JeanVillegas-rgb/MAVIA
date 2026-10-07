@@ -48,8 +48,8 @@ You cannot read the code without these. The guide explains each with a picture.
 - **Bundle** — all the objects of **one** PDF inside one concept, in that PDF's
   order. A concept holds one bundle per PDF. This is the idea that trips
   everyone up: a concept is *not* one object per file.
-- **Version** — what a bundle is used for: Normal, Simplified, Elaborated or
-  Extra.
+- **Version** — what a bundle is used for: Normal, Simplified, or Elaborated.
+  A source that fits neither role remains unassigned for teacher review.
 
 ### Only if you are working on that area
 
