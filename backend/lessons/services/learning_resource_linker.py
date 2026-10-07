@@ -1110,10 +1110,11 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
     from .unit_matching import reconcile_numbered_parts
     reconcile_numbered_parts(material.outline_node)
     from . import semantic_grouping
+    semantic_runtime = None
     if semantic_grouping.mode() != "legacy":
         try:
             semantic_grouping.policy()
-            semantic_grouping.runtime()
+            semantic_runtime = semantic_grouping.runtime()
         except Exception as exc:
             logger.exception("[Grouping] PDF %s  the similarity model is unavailable; the review queue is left as it was", material.id)
             data = dict(material.generated_json or {})
@@ -1127,6 +1128,27 @@ def refresh_learning_object_match_suggestions(material: LearningMaterial) -> Non
         material.learning_objects.select_related("material", "group").order_by("order", "id")
     )
     semantic_active = semantic_grouping.mode() != "legacy"
+    if semantic_active:
+        try:
+            cached_count = semantic_grouping.precompute_embeddings(
+                (item.content for item in learning_objects),
+                runtime_instance=semantic_runtime,
+            )
+            logger.info(
+                "[Grouping] PDF %s  cached embeddings for %s confirmed learning objects",
+                material.id,
+                cached_count,
+            )
+        except Exception as exc:
+            logger.exception(
+                "[Grouping] PDF %s  confirmed embeddings could not be cached; the review queue is left as it was",
+                material.id,
+            )
+            data = dict(material.generated_json or {})
+            data["grouping_warning"] = f"Confirmed content could not be prepared for comparison for {material.title}: {exc}"
+            material.generated_json = data
+            material.save(update_fields=["generated_json"])
+            return
     matcher = semantic_grouping.semantic_decision if semantic_active else _match_decision
     started = perf_counter()
     tally = Counter()

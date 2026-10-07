@@ -47,6 +47,10 @@ ROLES = PRIMARY_SLOTS
 # Provenance for a bundle pushed out of a primary slot by a teacher's newer
 # choice. The displaced bundle no longer has a version role.
 DISPLACED_BY_TEACHER = "displaced_by_teacher"
+# The teacher deliberately removed this PDF from an adaptive slot. Its source
+# objects remain teaching content, but automatic classification must not put it
+# straight back into the slot on the next page load.
+REMOVED_BY_TEACHER = "removed_by_teacher"
 
 
 def _displaced_provenance(current):
@@ -477,7 +481,10 @@ def assign_group_versions(group, *, use_llm=False):
     unresolved = [
         material_id
         for material_id in candidate_ids
-        if stored_provenance.get(material_id) != LessonVariant.AssignedBy.TEACHER
+        if stored_provenance.get(material_id) not in (
+            LessonVariant.AssignedBy.TEACHER,
+            REMOVED_BY_TEACHER,
+        )
         and not classification_complete
     ]
     if use_llm and unresolved and not classifications and original_selected:
@@ -604,7 +611,7 @@ def assign_group_versions(group, *, use_llm=False):
     claimed = {}
     for material_id in (*teacher_ids, *automatic_ids):
         proposal = by_material[material_id]
-        if stored_provenance.get(material_id) == DISPLACED_BY_TEACHER:
+        if stored_provenance.get(material_id) in (DISPLACED_BY_TEACHER, REMOVED_BY_TEACHER):
             continue
         if material_id in teacher_ids:
             slot = stored_roles[material_id]
@@ -649,6 +656,9 @@ def assign_group_versions(group, *, use_llm=False):
         proposal = by_material[material_id]
         role = roles.get(material_id)
         entry = {**_public(proposal), "slot": role}
+        if stored_provenance.get(material_id) == REMOVED_BY_TEACHER:
+            kept_as_own_step.append(entry)
+            continue
         if material_id in persisted:
             if role in PRIMARY_SLOTS:
                 assigned.append({**entry, "persisted": True})
@@ -665,9 +675,9 @@ def assign_group_versions(group, *, use_llm=False):
     stored_role_json = {str(key): value for key, value in roles.items()}
     stored_provenance_json = {str(key): value for key, value in provenance.items()}
     stored_provenance_json.update({
-        str(material_id): DISPLACED_BY_TEACHER
+        str(material_id): stored_provenance.get(material_id)
         for material_id in candidate_ids
-        if stored_provenance.get(material_id) == DISPLACED_BY_TEACHER
+        if stored_provenance.get(material_id) in (DISPLACED_BY_TEACHER, REMOVED_BY_TEACHER)
         and material_id not in roles
     })
     # Only a run that was actually asked to classify writes a role down. A
@@ -814,6 +824,39 @@ def assign_source_to_slot(representative, source, slot):
 
 
 @transaction.atomic
+def remove_source_from_slot(group, source, slot):
+    """Remove a PDF bundle's adaptive role without deleting its source text."""
+    if slot not in PRIMARY_SLOTS:
+        raise ValueError("Only Simplified or Elaborated can be removed")
+    if source.group_id != group.id:
+        raise ValueError("The selected source is not in this concept group")
+    group.refresh_from_db(fields=["version_selection"])
+    if bundle_roles(group).get(source.material_id) != slot:
+        raise ValueError(f"This PDF is not the current {slot.title()} version")
+
+    selection = dict(group.version_selection or {})
+    roles = dict(selection.get("bundle_roles") or {})
+    provenance = dict(selection.get("bundle_roles_assigned_by") or {})
+    decided_at = dict(selection.get("bundle_roles_decided_at") or {})
+    key = str(source.material_id)
+    roles.pop(key, None)
+    decided_at.pop(key, None)
+    provenance[key] = REMOVED_BY_TEACHER
+    selection.update({
+        "bundle_roles": roles,
+        "bundle_roles_assigned_by": provenance,
+        "bundle_roles_decided_at": decided_at,
+    })
+    group.version_selection = selection
+    group.save(update_fields=["version_selection"])
+
+    # The PDF still teaches the concept as its own step; it simply no longer
+    # supplies an adaptive version of the Standard bundle.
+    group.learning_objects.filter(material_id=source.material_id).update(represented_by=None)
+    return source
+
+
+@transaction.atomic
 def assign_source_as_representative(group, source):
     """Record a teacher's explicit choice of a replacement Standard PDF."""
     group.refresh_from_db(fields=["version_selection"])
@@ -826,18 +869,22 @@ def assign_source_as_representative(group, source):
         raise ValueError("The selected source is not in this concept group")
     if source.id == representative_id and not replacement_needed:
         selection = dict(group.version_selection or {})
-        if selection.get("standard_material_id") != source.material_id:
-            # The first-upload rule has already made this the visible Standard,
-            # but an older LLM choice may still be stored. Confirming it must
-            # also clear roles judged against that older baseline.
+        if (
+            selection.get("standard_material_id") != source.material_id
+            or selection.get("standard_assigned_by") != LessonVariant.AssignedBy.TEACHER
+        ):
+            # Confirming the already-visible Standard is a teacher override,
+            # not a request to discard completed role classification.
+            roles = dict(selection.get("bundle_roles") or {})
+            provenance = dict(selection.get("bundle_roles_assigned_by") or {})
+            roles.pop(str(source.material_id), None)
+            provenance.pop(str(source.material_id), None)
             selection.update({
                 "standard_material_id": source.material_id,
                 "standard_assigned_by": LessonVariant.AssignedBy.TEACHER,
-                "bundle_roles": {},
-                "bundle_roles_assigned_by": {},
+                "bundle_roles": roles,
+                "bundle_roles_assigned_by": provenance,
             })
-            selection.pop("roles_signature", None)
-            selection.pop("classification_assignments", None)
             group.version_selection = selection
             group.save(update_fields=["version_selection"])
         return source
@@ -845,6 +892,21 @@ def assign_source_as_representative(group, source):
     bundles = _eligible_bundles(group)
     standard_id = state["standard_material_id"]
     previous_slot = None if replacement_needed else bundle_roles(group).get(source.material_id)
+    if previous_slot not in PRIMARY_SLOTS and not replacement_needed:
+        # A failed validation remains a recommendation until the teacher rules
+        # on it. If the teacher makes that PDF Standard, use its recommended
+        # role for the former Standard so the action is a direct swap rather
+        # than unnecessarily restarting classification for the whole concept.
+        recommendation = next(
+            (
+                item.get("slot") or item.get("llm_slot") or item.get("readability_slot")
+                for item in (*state.get("assigned", []), *state.get("needs_confirmation", []))
+                if item.get("material_id") == source.material_id
+            ),
+            None,
+        )
+        if recommendation in PRIMARY_SLOTS:
+            previous_slot = recommendation
 
     new_standard = bundles[source.material_id]
     # Generated wording was grounded in the old Standard and must be regenerated
@@ -882,8 +944,14 @@ def assign_source_as_representative(group, source):
         "bundle_roles": roles,
         "bundle_roles_assigned_by": provenance,
     })
-    selection.pop("roles_signature", None)
-    selection.pop("classification_assignments", None)
+    # Keep a completed classification completed. Choosing Standard is a direct
+    # teacher override: it changes which bundle is the baseline and swaps the
+    # former baseline into the selected bundle's role. It must not send every
+    # PDF through Gemma again. A missing/deleted Standard remains the exception
+    # because no valid comparison state survives that deletion.
+    if replacement_needed:
+        selection.pop("roles_signature", None)
+        selection.pop("classification_assignments", None)
     group.version_selection = selection
     group.save(update_fields=["version_selection"])
 

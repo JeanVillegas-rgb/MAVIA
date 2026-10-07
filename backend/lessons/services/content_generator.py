@@ -811,7 +811,7 @@ def _rank_outline_nodes_by_tfidf(
     title: str,
     text: str,
 ) -> list[tuple[OutlineNode, float]]:
-    """Return deterministic topic candidates and their cosine scores."""
+
     nodes = list(course.nodes.all().order_by("depth", "order", "id"))
     if not nodes:
         return []
@@ -837,6 +837,11 @@ def _rank_outline_nodes_by_tfidf(
         return []
 
     scores = cosine_similarity(matrix[0:1], matrix[1:]).flatten()
+    for node, score in zip(nodes, scores):
+        print(
+            f"Compared with Topic: {node.title}"
+            f"\nCosine Similarity: {float(score):.4f}"
+        )
 
     return sorted(
         [(node, float(score)) for node, score in zip(nodes, scores)],
@@ -2544,9 +2549,14 @@ def _plain_heading_has_following_body_content(blocks: list[dict], start_index: i
 # and use a colon as often as a period; missing either left the caption to be
 # read as a heading, and "Figure 5A: Speed" became a lesson chunk's title.
 _CAPTION_LABEL = re.compile(r"\s*(?:figure|fig\.?)\s*\d+[A-Za-z]?\s*[.:]\s*", re.IGNORECASE)
+_DIAGRAM_DESCRIPTION_LABEL = re.compile(
+    r"\s*diagram\s+description\s*:\s*",
+    re.IGNORECASE,
+)
 # A caption is a line or two. A longer block that opens like one is prose
 # that happens to start with a figure reference, and must not be skipped.
 _MAX_CAPTION_WORDS = 20
+_MAX_DIAGRAM_DESCRIPTION_WORDS = 60
 
 
 def _image_caption_title(text: str) -> str | None:
@@ -2561,7 +2571,13 @@ def _image_caption_title(text: str) -> str | None:
 
 
 def _is_image_caption(text: str) -> bool:
-    return bool(_CAPTION_LABEL.match(text or "")) and len((text or "").split()) <= _MAX_CAPTION_WORDS
+    words = len((text or "").split())
+    return (
+        bool(_CAPTION_LABEL.match(text or "")) and words <= _MAX_CAPTION_WORDS
+    ) or (
+        bool(_DIAGRAM_DESCRIPTION_LABEL.match(text or ""))
+        and words <= _MAX_DIAGRAM_DESCRIPTION_WORDS
+    )
 
 
 def _format_section_content(parts: list[str]) -> str:
@@ -2833,12 +2849,13 @@ def build_section_learning_objects(classified_blocks: list[dict], image_descript
         caption = (image.get("caption") or "").strip()
         provided_title = (image.get("title") or "").strip()
         caption_title = _image_caption_title(caption) if caption else None
+        accessibility_caption = bool(_DIAGRAM_DESCRIPTION_LABEL.match(caption))
         title_from_section = False
         if provided_title:
             title = provided_title[:255]
         elif caption_title:
             title = caption_title
-        elif caption:
+        elif caption and not accessibility_caption:
             title = _title_from_teacher_text(caption, "Extracted image")
         else:
             title_from_section = True

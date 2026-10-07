@@ -103,6 +103,55 @@ class VersionReviewTests(TestCase):
         self.group.refresh_from_db()
         self.assertEqual(bundle_roles(self.group), {self.second.material_id: "ELABORATED"})
 
+    def test_teacher_can_remove_pdf_supplied_version_without_deleting_source_text(self):
+        assignment_url = (
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/"
+            "version-assignment/"
+        )
+        self.client.post(
+            assignment_url,
+            {"learning_object_id": self.second.id, "slot": "ELABORATED"},
+            format="json",
+        )
+
+        response = self.client.delete(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/versions/",
+            {
+                "slot": "ELABORATED",
+                "source_learning_object_id": self.second.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.group.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertEqual(bundle_roles(self.group), {})
+        self.assertIsNone(self.second.represented_by_id)
+        self.assertTrue(LearningObject.objects.filter(pk=self.second.id).exists())
+        # Loading the page again must not automatically restore the removed role.
+        refreshed = self._resources().data["learning_object_groups"][0]
+        self.assertNotIn("elaborated", refreshed["versions"]["slots"])
+
+    def test_teacher_can_remove_generated_version(self):
+        generated = LessonVariant.objects.create(
+            learning_object=self.first,
+            variant="SIMPLIFIED",
+            narration="A simpler explanation.",
+            origin=LessonVariant.Origin.GENERATED,
+        )
+
+        response = self.client.delete(
+            f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/versions/",
+            {"slot": "SIMPLIFIED", "variant_id": generated.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(LessonVariant.objects.filter(pk=generated.id).exists())
+        group = response.data["learning_object_groups"][0]
+        self.assertNotIn("simplified", group["versions"]["slots"])
+
     def test_assignment_flags_the_assigned_object(self):
         self.client.post(
             f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/",
@@ -178,17 +227,17 @@ class VersionReviewTests(TestCase):
             {self.second.material_id: "SIMPLIFIED"},
         )
 
-    def test_unassigned_source_can_become_standard_and_old_standard_needs_review(self):
+    def test_unassigned_source_can_become_standard_as_direct_override(self):
         url = f"/api/courses/{self.course.id}/outline-nodes/{self.node.id}/version-assignment/"
         response = self.client.post(
             url, {"learning_object_id": self.second.id, "slot": "STANDARD"}, format="json"
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["version_assignment"]["needs_review"], self.first.id)
+        self.assertIsNone(response.data["version_assignment"]["needs_review"])
         self.group.refresh_from_db()
         self.assertEqual(self.group.version_selection["standard_material_id"], self.second.material_id)
-        self.assertEqual(bundle_roles(self.group), {})
+        self.assertEqual(bundle_roles(self.group), {self.first.material_id: "ELABORATED"})
 
     def test_object_outside_the_topic_is_rejected(self):
         other_course = CourseGroup.objects.create(title="Other")

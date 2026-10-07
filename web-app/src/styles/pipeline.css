@@ -5700,12 +5700,17 @@ button {
   font-size: 0.9rem;
 }
 
-.version-pending-decision blockquote {
+.version-pending-decision blockquote,
+.version-pending-source {
   margin: 0 0 0.6rem;
   padding-left: 0.75rem;
   border-left: 3px solid #ddd3bd;
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.version-pending-source .bundle-parts {
+  margin-top: 0;
 }
 
 .version-archived-block {
@@ -7043,7 +7048,7 @@ button {
    untouched: this is layout only. */
 .concept-bundle .connection-object-row,
 .concept-bundle .connection-object-row:last-child {
-  grid-template-columns: 2rem minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .concept-bundle .concept-bundle-actions {

@@ -114,6 +114,9 @@ def upload_course_outline(
 ) -> tuple[CourseGroup, bool]:
     """Store an outline source and merge its hierarchy into the course."""
     fingerprint = _file_sha256(outline_file)
+    print(
+        f"Fingerprint: {fingerprint}"
+    )
 
     existing_outline = _find_existing_outline(course, fingerprint)
     existing_material = _find_existing_material(course, outline_file, fingerprint)
@@ -287,8 +290,7 @@ def upload_learning_material(
         module_node = _top_level_module(outline_node)
     elif not course_outline_is_approved(course):
         raise PdfProcessingUseCaseError(
-            "Select a module or topic before uploading lesson material, or confirm "
-            "the course outline first for automatic classification."
+            "Confirm the course outline first for automatic classification."
         )
 
     if outline_node is not None and module_node is not None:

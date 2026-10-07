@@ -336,6 +336,27 @@ def runtime():
         return SemanticRuntime(download=True)
 
 
+def precompute_embeddings(texts, *, runtime_instance=None):
+    """Cache embeddings for the supported, unique learning-object texts.
+
+    This prepares confirmed content for later comparisons. It intentionally
+    does not create or validate a concept group: semantic corroboration still
+    requires another confirmed PDF.
+    """
+    engine = runtime_instance or runtime()
+    supported = []
+    seen = set()
+    for text in texts:
+        text = normalized(text)
+        if not text or text in seen or not engine.supports(text):
+            continue
+        supported.append(text)
+        seen.add(text)
+    if supported:
+        engine.embeddings(supported)
+    return len(supported)
+
+
 def rank_groups(content, candidates, members_by_group, *, runtime_instance=None, thresholds=None):
     """Shortlist groups by content embeddings; score EVERY member of each.
 

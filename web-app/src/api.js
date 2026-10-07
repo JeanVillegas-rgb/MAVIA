@@ -496,6 +496,22 @@ export function editVersionText(courseId, nodeId, variantId, narration) {
   });
 }
 
+export function removeVersion(courseId, nodeId, {
+  slot,
+  variantId = null,
+  sourceLearningObjectId = null,
+}) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/versions/`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slot,
+      variant_id: variantId,
+      source_learning_object_id: sourceLearningObjectId,
+    }),
+  });
+}
+
 // Publishing runs in the background; this is how its progress is followed.
 // Pass the highest seq already seen so each poll returns only what is new.
 export function fetchGenerationRunEvents(runId, after = 0) {
