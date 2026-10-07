@@ -20,7 +20,6 @@ from course.variant_generator import (
     _fingerprint as version_fingerprint,
     fill_missing_bundle_slots,
     fill_missing_slots,
-    generate_standalone_variants,
 )
 from question_generation.models import GenerationRun
 from .services.topic_publish import confirmed_materials_for, run_topic_publish
@@ -126,7 +125,6 @@ from .services.question_workflow import (
     duplicate_for_topic,
     duplicate_in_topic,
     enriched_question_values,
-    question_fingerprint,
     sync_question_to_adaptive,
 )
 

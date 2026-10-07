@@ -552,14 +552,14 @@ renames it everywhere.
 learning objects in order.
 
 `LessonVariant` holds an alternative telling of one learning object. The
-variant slot is `SIMPLIFIED`, `ELABORATED`, or `EXTRA`, and each row carries the
+variant slot is `SIMPLIFIED` or `ELABORATED`, and each row carries the
 narration text and the URL of its generated audio. `origin` distinguishes a
 variant taken from another source PDF's own wording from one written by the
 model, and `assigned_by` records whether the slot was proposed by the
 readability heuristic, proposed by the model and validated by readability rules,
 or confirmed by a teacher. A database constraint allows at most one simplified
-and one elaborated version per learning object; `EXTRA` is unconstrained,
-because a fourth PDF may legitimately supply several. The **Normal** version is
+and one elaborated version per learning object. Unmatched PDF wording remains
+unassigned for teacher review. The **Normal** version is
 not a `LessonVariant` row at all — it is the learning object's own content, read
 out of the material's generated playlist.
 
@@ -968,8 +968,8 @@ uniqueness constraint.
 | Column | Type | Key | Notes |
 |---|---|---|---|
 | id | integer | PK | |
-| learning_object_id | integer | FK | UK with variant unless `EXTRA` |
-| variant | varchar(20) | | `ELABORATED` \| `SIMPLIFIED` \| `EXTRA` |
+| learning_object_id | integer | FK | UK with variant |
+| variant | varchar(20) | | `ELABORATED` \| `SIMPLIFIED` |
 | narration | text | | |
 | audio_url | varchar(255) | | |
 | source_fingerprint | varchar(64) | | |
@@ -1193,9 +1193,8 @@ membership) without duplicating title or ordering, which are read through the
 wrapped row.
 
 `course_lessonvariant` stores alternative narrations of a learning object. Its
-constraint is a partial unique index on `(learning_object_id, variant)` applied
-only where `variant != 'EXTRA'`: an object may have one simplified and one
-elaborated version, but any number of extras. Note that there is **no row for
+constraint is a unique index on `(learning_object_id, variant)`: an object may
+have one simplified and one elaborated version. Note that there is **no row for
 the Normal version** — that text is the learning object's own content, read from
 the material's `generated_json` playlist.
 
