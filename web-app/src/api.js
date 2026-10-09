@@ -310,13 +310,6 @@ export function deleteTopicQuestion(courseId, nodeId, questionId) {
   );
 }
 
-export function deleteTopicLearningObject(courseId, nodeId, objectId) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${objectId}/`,
-    { method: "DELETE" }
-  );
-}
-
 export function publishTopic(courseId, nodeId) {
   return request(`/courses/${courseId}/outline-nodes/${nodeId}/publish/`, {
     method: "POST",

@@ -12,7 +12,6 @@ import {
   deleteLearningObject,
   keepQuestionBank,
   labelTopicQuestions,
-  deleteTopicLearningObject,
   deleteTopicQuestion,
   fetchCourse,
   fetchLearningResources,
@@ -2084,64 +2083,19 @@ function RunProgress({
   );
 }
 
-function PublishPanel({
-  courseId,
-  topicId,
-  topic,
-  groups,
-  materialById,
-  confirmedSourceCount,
-  busyAction,
-  onReviewStepChange,
-  onResourcesChange,
-  onCourseChange,
-  onError,
-  onMessage,
-}) {
-  const [deletingKey, setDeletingKey] = useState("");
-
-  async function runDeletion(key, confirmText, successText, action) {
-    if (!window.confirm(confirmText)) return;
-    setDeletingKey(key);
-    onError("");
-    onMessage("");
-    try {
-      onResourcesChange(await action());
-      onMessage(successText);
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setDeletingKey("");
-    }
-  }
-
-  function handleDeleteObject(item) {
-    const label = item.title || "this learning object";
-    return runDeletion(
-      `object-${item.id}`,
-      `Delete "${label}"? It is removed from the course permanently.`,
-      `Deleted learning object "${label}".`,
-      () => deleteTopicLearningObject(courseId, topicId, item.id),
-    );
-  }
-
-  function handleDeleteQuestion(question) {
-    return runDeletion(
-      `question-${question.id}`,
-      `Delete this question? It is removed from every concept it is paired with.
-
-${question.prompt}`,
-      "Question deleted.",
-      () => deleteTopicQuestion(courseId, topicId, question.id),
-    );
-  }
-
+// Read-only: what learners will get. Content and questions are changed in the
+// steps that own them, where the teacher sees what a change affects.
+function PublishPanel({ groups, materialById, busyAction, onReviewStepChange }) {
   return (
     <section className="connection-review-panel publish-review-panel" aria-labelledby="publish-panel-title">
       <div className="connection-review-heading">
         <div>
           <span className="connection-eyebrow">Final review</span>
           <h3 id="publish-panel-title">Content and questions</h3>
+          <p>
+            Check what learners will get. To change a version, go back to Content versions;
+            to change a question, go back to Question pairs.
+          </p>
         </div>
         <span className="connection-source-count">
           {groups.length} concept{groups.length === 1 ? "" : "s"}
@@ -2210,21 +2164,6 @@ ${question.prompt}`,
                                 {object.kind === "image" && (
                                   <span className="publish-object-kind">figure</span>
                                 )}
-                                {/* Deleting removes the object from the lesson,
-                                    so it is offered where the object is shown,
-                                    and only where the object really lives --
-                                    a generated segment is not an object. */}
-                                {slot.source !== "generated" && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-danger btn-small"
-                                    disabled={Boolean(busyAction) || Boolean(deletingKey)}
-                                    aria-label={`Delete "${object.title}"`}
-                                    onClick={() => handleDeleteObject(object)}
-                                  >
-                                    {deletingKey === `object-${object.id}` ? "Deleting..." : "Delete"}
-                                  </button>
-                                )}
                               </div>
                               <FormattedLearningObjectContent
                                 content={object.text || ""}
@@ -2252,14 +2191,6 @@ ${question.prompt}`,
                         <div className="publish-item-heading">
                           <span aria-hidden="true">Q</span>
                           <strong>{question.prompt}</strong>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-small"
-                            disabled={Boolean(busyAction) || Boolean(deletingKey)}
-                            onClick={() => handleDeleteQuestion(question)}
-                          >
-                            {deletingKey === `question-${question.id}` ? "Deleting..." : "Delete"}
-                          </button>
                         </div>
                         {Boolean(question.choices?.length) && (
                           <ul className="publish-question-choices">
@@ -2287,7 +2218,7 @@ ${question.prompt}`,
         <button
           type="button"
           className="btn btn-secondary"
-          disabled={Boolean(busyAction) || Boolean(deletingKey)}
+          disabled={Boolean(busyAction)}
           onClick={() => onReviewStepChange("questions")}
         >
           Back to question pairs
@@ -2295,7 +2226,7 @@ ${question.prompt}`,
         <button
           type="button"
           className="btn btn-primary"
-          disabled={Boolean(busyAction) || Boolean(deletingKey)}
+          disabled={Boolean(busyAction)}
           onClick={() => onReviewStepChange("path")}
         >
           Next: review learning path
@@ -3574,18 +3505,10 @@ function LearningObjectConnections({
       )}
       {reviewStep === "publish" && (
         <PublishPanel
-          courseId={courseId}
-          topicId={topicId}
-          topic={topic}
           groups={groups}
           materialById={materialById}
-          confirmedSourceCount={confirmedSourceCount}
           busyAction={busyAction}
           onReviewStepChange={onReviewStepChange}
-          onResourcesChange={setResources}
-          onCourseChange={onCourseChange}
-          onError={onError}
-          onMessage={onMessage}
         />
       )}
       {reviewStep === "path" && (
