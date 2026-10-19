@@ -266,7 +266,7 @@ class StartTopicGenerationView(APIView):
         if outline_node is None:
             return Response({"error": "Topic not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        node_ids, skipped = [], []
+        node_ids = []
         groups = LearningObjectGroup.objects.filter(outline_node=outline_node).order_by("id")
         for group in groups:
             member = group.learning_objects.filter(
@@ -276,13 +276,11 @@ class StartTopicGenerationView(APIView):
                 continue
             standard, standard_error = _standard_question_source(member)
             if standard_error:
-                skipped.append(f"{group.label}: {standard_error}")
                 continue
             node_ids.append(standard.id)
         if not node_ids:
             return Response(
-                {"error": "This topic has no concept with a Standard version to generate from.",
-                 "skipped": skipped},
+                {"error": "This topic has no concept with a Standard version to generate from."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -297,7 +295,7 @@ class StartTopicGenerationView(APIView):
             target=_run_topic_pipeline, args=(run.id, node_ids), daemon=True,
         ).start()
         return Response(
-            {"run_id": run.id, "concept_count": len(node_ids), "skipped": skipped},
+            {"run_id": run.id, "concept_count": len(node_ids)},
             status=status.HTTP_201_CREATED,
         )
 
