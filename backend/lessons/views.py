@@ -13,11 +13,12 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from user.permissions import IsTeacherOrAdmin
 
-from course.models import LessonVariant, standard_bundle_for
+from course.models import BUNDLE_GENERATOR_PREFIX, LessonVariant, complete_generated_rows, standard_bundle_for
 from course.bulk_version_generation import classify_all_source_versions
-from course.variant_generator import (
+from course.generate_variation import (
     STANDARD_FALLBACK_GENERATOR,
     _fingerprint as version_fingerprint,
+    _object_fingerprint,
     fill_missing_bundle_slots,
     fill_missing_slots,
 )
@@ -46,7 +47,6 @@ from .models import (
     LearningMaterial,
     LearningObject,
     LearningObjectGroup,
-    LearningObjectMatchSuggestion,
     OutlineNode,
     Question,
     QuestionLearningObjectLink,
@@ -58,6 +58,7 @@ from .features.pdf_processing.serializers import (
 )
 from .features.pdf_processing.use_cases import (
     DuplicatePdfUploadError,
+    PdfProcessingUnavailableError,
     PdfProcessingUseCaseError,
     confirm_course_outline,
     regenerate_learning_material,
@@ -72,38 +73,27 @@ from .serializers import (
     LearningMaterialSerializer,
     LearningObjectMutationSerializer,
     LearningObjectReorderSerializer,
-    LearningObjectMatchSuggestionSerializer,
     LearningObjectSerializer,
     OutlineNodeMutationSerializer,
     OutlineNodeSerializer,
     QuestionSerializer,
 )
-from .services.audio_generator import AudioGenerationError, generate_material_audio_playlist
-from .services.content_generator import (
-    apply_classification_override,
+from .services.audio_generator import (
+    AudioGenerationError,
     build_lesson_playlist,
     build_narration_script_from_learning_objects,
-    is_structural_metadata_label,
+    generate_material_audio_playlist,
 )
-from .services.instructional_content_classifier import CLASSIFICATION_CATEGORIES
-from .services.learning_resource_linker import (
+from .services.block_classifier import is_structural_metadata_label
+from .services.question_linker import (
     CONFIRMED_QUESTION_PAIRING_STATUSES,
-    learning_objects_are_confirmed,
-    learning_object_match_debug_configuration,
     question_pairing_debug_configuration,
-    question_snapshots,
-    record_teacher_match_decision,
-    refresh_material_learning_relationships,
     refresh_question_learning_object_links,
 )
-from .services.reconfirm_review import (
-    FIRST_CONFIRMED_KEY,
-    approved_placements,
-    keep_in_place,
-    rehearse,
-    was_confirmed_before,
+from .services.concept_grouper import (
+    learning_objects_are_confirmed,
+    refresh_material_learning_relationships,
 )
-from .services.unit_matching import place_unit, unpublish_topic
 from question_generation.services.bank_status import (
     bank_out_of_date,
     keep_bank,
@@ -111,12 +101,6 @@ from question_generation.services.bank_status import (
     settle_bank_owner,
 )
 from question_generation.services.pipeline import question_minimum
-from .services.regrouping import (
-    RegroupingUnavailable,
-    apply_regrouping,
-    changed_learning_objects,
-    propose_regrouping,
-)
 from .services.question_workflow import (
     TIERS,
     counts_toward_minimum,
@@ -125,8 +109,10 @@ from .services.question_workflow import (
     duplicate_for_topic,
     duplicate_in_topic,
     enriched_question_values,
+    question_snapshots,
     sync_question_to_adaptive,
 )
+from .services.source_review import finalize_source_review, source_review_is_finalized
 
 
 logger = logging.getLogger(__name__)
@@ -223,10 +209,6 @@ def _run_all_versions_in_background(run_id, node_id):
         run.save(update_fields=["status", "finished_at"])
 
 
-class SuggestionAcceptError(ValueError):
-    """A match suggestion accept that cannot be carried out as asked."""
-
-
 class CourseGroupViewSet(viewsets.ModelViewSet):
     permission_classes = [IsTeacherOrAdmin]
     queryset = CourseGroup.objects.prefetch_related(
@@ -236,6 +218,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         "materials__questions__learning_object_links__learning_object",
     ).all()
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    @staticmethod
+    def _source_lock_response(node):
+        if node is not None and source_review_is_finalized(node):
+            return Response(
+                {"detail": "Lesson sources for this subtopic are finalized and can no longer be changed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return None
 
     def get_serializer_class(self):
         if self.action in {"list"}:
@@ -443,23 +434,17 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 slot_rows[role.lower()] = entry
 
             if standard_objects:
-                # A generated version is written one object of the Standard
-                # bundle at a time, so it is read back the same way. Reading
-                # only the lead's row showed one segment of four.
+                # Jean writes one generated explanation for the complete
+                # Standard bundle and stores it on the lead object.
                 by_id = {item.id: item for item in standard_objects}
                 position = {item.id: index for index, item in enumerate(standard_objects)}
                 generated = defaultdict(list)
                 for row in LessonVariant.objects.filter(learning_object__in=standard_objects):
                     generated[row.variant].append(row)
-                for variant, rows in generated.items():
-                    rows.sort(key=lambda row: position.get(row.learning_object_id, len(position)))
-                    if variant not in ("SIMPLIFIED", "ELABORATED"):
-                        continue
-                    # A version short of its bundle is reported missing rather
-                    # than served: three quarters of a version reads as a whole
-                    # one to a learner who cannot see the page.
-                    if len(rows) < len(standard_objects):
-                        continue
+                for variant, rows in complete_generated_rows(
+                    standard_objects,
+                    [row for rows in generated.values() for row in rows],
+                ).items():
                     fallback_count = sum(
                         row.generator_model == STANDARD_FALLBACK_GENERATOR
                         and row.assigned_by != LessonVariant.AssignedBy.TEACHER
@@ -500,7 +485,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                             row.origin == LessonVariant.Origin.GENERATED
                             and row.source_fingerprint
                             and row.source_fingerprint
-                            != version_fingerprint(by_id[row.learning_object_id])
+                            != (
+                                version_fingerprint(by_id[row.learning_object_id])
+                                if row.generator_model.startswith(BUNDLE_GENERATOR_PREFIX)
+                                else _object_fingerprint(by_id[row.learning_object_id])
+                            )
                             for row in rows
                         ),
                     }
@@ -585,27 +574,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 if (material.generated_json or {}).get("grouping_warning")
             ],
             "outline_node": OutlineNodeSerializer(node, context={"request": request}).data,
-            # A database comparison only -- no model runs here -- so the page
-            # knows whether "Review grouping changes" is worth enabling.
-            "regrouping": {"changed_count": len(changed_learning_objects(node))},
             "learning_object_groups": groups,
             "question_minimum": minimum,
-            "matching_debug": learning_object_match_debug_configuration(),
             "question_pairing_debug": question_pairing_debug_configuration(),
             "question_pairings": QuestionSerializer(
                 all_questions,
-                many=True,
-                context={"request": request},
-            ).data,
-            "match_suggestions": LearningObjectMatchSuggestionSerializer(
-                node.learning_object_match_suggestions.filter(
-                    status=LearningObjectMatchSuggestion.Status.PENDING,
-                    source_learning_object__material__generated_json__learning_objects_confirmed=True,
-                    candidate_learning_object__material__generated_json__learning_objects_confirmed=True,
-                ).select_related(
-                    "source_learning_object__material",
-                    "candidate_learning_object__material",
-                ),
                 many=True,
                 context={"request": request},
             ).data,
@@ -616,7 +589,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "payload_build_ms": elapsed_ms,
             "group_count": len(groups),
             "question_count": len(all_questions),
-            "suggestion_count": len(payload["match_suggestions"]),
         }
         return payload
 
@@ -650,6 +622,36 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
+        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/finalize-sources",
+    )
+    def finalize_sources(self, request, pk=None, node_id=None):
+        """Permanently lock a reviewed topic before version processing."""
+        course = self.get_object()
+        try:
+            node = course.nodes.get(pk=node_id)
+        except OutlineNode.DoesNotExist:
+            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        lesson_materials = list(
+            node.materials.filter(learning_objects__isnull=False).distinct()
+        )
+        if not lesson_materials:
+            return Response(
+                {"detail": "Upload and confirm at least one lesson PDF before finalizing."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if any(not learning_objects_are_confirmed(material) for material in lesson_materials):
+            return Response(
+                {"detail": "Confirm every lesson PDF before finalizing the source set."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        finalize_source_review(node, user=request.user)
+        return self._serialize_course_detail(course, request)
+
+    @action(
+        detail=True,
+        methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/connect-learning-objects",
     )
     def connect_learning_objects(self, request, pk=None, node_id=None):
@@ -662,6 +664,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Outline node not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(node):
+            return locked
 
         raw_ids = request.data.get("learning_object_ids")
         if not isinstance(raw_ids, list) or len(set(raw_ids)) < 2:
@@ -750,10 +754,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         self._refresh_relationship_snapshots(
             {item.material for item in learning_objects}
         )
-        for index, first in enumerate(learning_objects):
-            for second in learning_objects[index + 1:]:
-                record_teacher_match_decision(first, second, accepted=True)
-
         return Response(self._learning_resources_payload(node, request))
 
     @action(
@@ -771,6 +771,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Outline node not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(node):
+            return locked
 
         raw_id = request.data.get("learning_object_id")
         try:
@@ -820,12 +822,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         if old_group and not old_group.learning_objects.exists():
             old_group.delete()
 
-        for old_member in old_group_members:
-            record_teacher_match_decision(
-                learning_object,
-                old_member,
-                accepted=False,
-            )
         self._refresh_relationship_snapshots(
             {learning_object.material, *(member.material for member in old_group_members)},
             recompute=False,
@@ -843,105 +839,12 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             return None, None
         return node, learning_object
 
-    def _leave_old_group(self, learning_object):
-        """Who stays behind in the concept this object is leaving.
-
-        Call this **before** the object's group changes. Undoing the old
-        concept's version links is ``place_unit``'s job -- it does the same for
-        the automatic and accept-a-card paths, which do not come through here
-        -- so this only reports the companions the caller still has to record a
-        teacher decision against.
-        """
-        old_group = learning_object.group
-        return list(
-            old_group.learning_objects.exclude(pk=learning_object.id).select_related("material")
-        ) if old_group else []
-
     def _bundle_correction_response(self, node, learning_object, request, companions=()):
         self._refresh_relationship_snapshots(
             {learning_object.material, *(member.material for member in companions)},
             recompute=False,
         )
         return Response(self._learning_resources_payload(node, request))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)/move-out",
-    )
-    def move_learning_object_out(self, request, pk=None, node_id=None, object_id=None):
-        """Take one object out of its bundle and let it teach a concept alone."""
-        course = self.get_object()
-        node, learning_object = self._node_and_object(course, node_id, object_id)
-        if learning_object is None:
-            return Response({"detail": "Learning object not found."}, status=status.HTTP_404_NOT_FOUND)
-        if not learning_objects_are_confirmed(learning_object.material):
-            return Response(
-                {"detail": "Confirm this learning object before reviewing connections."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if learning_object.group_id and learning_object.group.learning_objects.count() == 1:
-            return Response(self._learning_resources_payload(node, request))
-        companions = self._leave_old_group(learning_object)
-        target = LearningObjectGroup.objects.create(
-            outline_node=node,
-            # One object on its own keeps its own title (design 3.5):
-            # naming it after the heading it sat under gave every object of a
-            # shared section the same concept name.
-            label=bundle_label([learning_object])[:255],
-        )
-        place_unit([learning_object], target)
-        # Alone in its group now, it would otherwise be filed back under its
-        # section's concept on the next automatic pass.
-        learning_object.kept_apart_from_section = True
-        learning_object.save(update_fields=["kept_apart_from_section"])
-        # A teacher breaking a bundle up is a decision, not a gap in the
-        # evidence: without recording it the next automatic pass would place
-        # the object straight back. Only cross-PDF pairs are decided -- two
-        # objects of one file say nothing about whether the files agree.
-        for companion in companions:
-            if companion.material_id != learning_object.material_id:
-                record_teacher_match_decision(learning_object, companion, accepted=False)
-        unpublish_topic(node)
-        return self._bundle_correction_response(node, learning_object, request, companions)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)/move-to",
-    )
-    def move_learning_object_to(self, request, pk=None, node_id=None, object_id=None):
-        """Move one object into another concept of the same topic."""
-        course = self.get_object()
-        node, learning_object = self._node_and_object(course, node_id, object_id)
-        if learning_object is None:
-            return Response({"detail": "Learning object not found."}, status=status.HTTP_404_NOT_FOUND)
-        if not learning_objects_are_confirmed(learning_object.material):
-            return Response(
-                {"detail": "Confirm this learning object before reviewing connections."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            group_id = int(request.data.get("group_id"))
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "group_id must be an integer."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        # Scoped to the node: a concept from another topic would carry the
-        # object out of the lesson it belongs to.
-        target = node.learning_object_groups.filter(pk=group_id).first()
-        if target is None:
-            return Response(
-                {"detail": "That concept is not part of this topic."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        companions = []
-        if learning_object.group_id != target.id:
-            companions = self._leave_old_group(learning_object)
-            place_unit([learning_object], target)
-            unpublish_topic(node)
-        return self._bundle_correction_response(node, learning_object, request, companions)
 
     @action(
         detail=True,
@@ -958,6 +861,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         node, learning_object = self._node_and_object(course, node_id, object_id)
         if learning_object is None:
             return Response({"detail": "Learning object not found."}, status=status.HTTP_404_NOT_FOUND)
+        if locked := self._source_lock_response(node):
+            return locked
         if not learning_objects_are_confirmed(learning_object.material):
             return Response(
                 {"detail": "Confirm this learning object before reviewing connections."},
@@ -1005,274 +910,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             if item.order != place:
                 LearningObject.objects.filter(pk=item.id).update(order=place)
         return self._bundle_correction_response(node, learning_object, request)
-
-    @action(
-        detail=True,
-        methods=["get"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/regrouping",
-    )
-    def regrouping_preview(self, request, pk=None, node_id=None):
-        """Where each edited object now belongs. Proposes only; changes nothing."""
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            proposals = propose_regrouping(node)
-        except RegroupingUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        return Response({"proposals": proposals, "published": node.published})
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/regrouping/apply",
-    )
-    def regrouping_apply(self, request, pk=None, node_id=None):
-        """Carry out the proposals the teacher ticked."""
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        raw_ids = request.data.get("learning_object_ids", [])
-        if not isinstance(raw_ids, list):
-            return Response(
-                {"detail": "learning_object_ids must be a list."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            chosen = [int(value) for value in raw_ids]
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "Every learning_object_id must be an integer."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            summary = apply_regrouping(node, chosen)
-        except RegroupingUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-        if summary["affected_material_ids"]:
-            # Recompute, unlike Connect: a separated object may now have a
-            # pairing worth suggesting, and question links follow the groups.
-            self._refresh_relationship_snapshots(
-                set(LearningMaterial.objects.filter(pk__in=summary["affected_material_ids"]))
-            )
-        node.refresh_from_db()
-        return Response({
-            "summary": summary,
-            "resources": self._learning_resources_payload(node, request),
-        })
-
-    def _get_node_match_suggestion(self, course, node, suggestion_id):
-        try:
-            return LearningObjectMatchSuggestion.objects.select_related(
-                "source_learning_object__material",
-                "source_learning_object__group",
-                "candidate_learning_object__material",
-                "candidate_learning_object__group",
-            ).get(
-                pk=suggestion_id,
-                outline_node=node,
-                source_learning_object__material__course=course,
-                candidate_learning_object__material__course=course,
-            )
-        except LearningObjectMatchSuggestion.DoesNotExist:
-            return None
-
-    @staticmethod
-    def _record_suggestion_decision(suggestion, source, candidate, *, accepted):
-        """Record a teacher decision on a suggestion, including unit suggestions.
-
-        ``record_teacher_match_decision`` ignores pairs of different kinds, and
-        a unit suggestion may pair an image with text; its row is written
-        directly with the same evidence keys, keeping its extras.
-        """
-        if not (suggestion.source_extra_ids or suggestion.candidate_extra_ids):
-            if record_teacher_match_decision(source, candidate, accepted=accepted) is not None:
-                return
-        suggestion.status = (
-            LearningObjectMatchSuggestion.Status.ACCEPTED
-            if accepted
-            else LearningObjectMatchSuggestion.Status.REJECTED
-        )
-        suggestion.evidence = {
-            **(suggestion.evidence or {}),
-            "teacher_reviewed": True,
-            "teacher_decision": "accepted" if accepted else "rejected",
-        }
-        suggestion.save(update_fields=["status", "evidence", "updated_at"])
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/match-suggestions/(?P<suggestion_id>[^/.]+)/accept",
-    )
-    def accept_match_suggestion(self, request, pk=None, node_id=None, suggestion_id=None):
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response(
-                {"detail": "Outline node not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        suggestion = self._get_node_match_suggestion(course, node, suggestion_id)
-        if suggestion is None:
-            return Response(
-                {"detail": "Match suggestion not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        source = suggestion.source_learning_object
-        candidate = suggestion.candidate_learning_object
-        if not all(
-            learning_objects_are_confirmed(item.material)
-            for item in (source, candidate)
-        ):
-            return Response(
-                {"detail": "Confirm both learning objects before reviewing this connection."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            unpublished = self._accept_suggestion(node, suggestion, source, candidate)
-        except SuggestionAcceptError as exc:
-            # Raised inside the transaction, so nothing was moved or saved.
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        # Placement unpublishes with an UPDATE, so the cached node is stale and
-        # the payload would still report the topic as published.
-        node.refresh_from_db()
-        payload = self._learning_resources_payload(node, request)
-        payload["unpublished"] = unpublished
-        return Response(payload)
-
-    @transaction.atomic
-    def _accept_suggestion(self, node, suggestion, source, candidate):
-        """Place (for units), connect and record the decision in one transaction."""
-        unpublished = False
-        if suggestion.source_extra_ids or suggestion.candidate_extra_ids:
-            from .services.unit_matching import (
-                place_unit,
-                rejected_across_sides,
-                unpublish_topic,
-            )
-
-            # Each side is its own PDF's run, so an extra id belongs to the
-            # material of the side that lists it. Built as sets, so an id
-            # repeated within or across the two lists cannot inflate the count.
-            source_ids = {suggestion.source_learning_object_id, *suggestion.source_extra_ids}
-            candidate_ids = {suggestion.candidate_learning_object_id, *suggestion.candidate_extra_ids}
-            sides = []
-            for ids, primary in ((source_ids, source), (candidate_ids, candidate)):
-                members = list(
-                    LearningObject.objects.filter(
-                        pk__in=ids,
-                        material_id=primary.material_id,
-                        material__outline_node=node,
-                    )
-                )
-                if len(members) != len(ids):
-                    raise SuggestionAcceptError(
-                        "This suggestion is out of date. Refresh the page and review it again."
-                    )
-                sides.append(members)
-            source_objects, candidate_objects = sides
-            objects = [*source_objects, *candidate_objects]
-            # Checked before anything moves: a teacher may have declined a pair
-            # this unit would put into one concept.
-            if rejected_across_sides(source_objects, candidate_objects, exclude_pk=suggestion.pk):
-                raise SuggestionAcceptError("A teacher declined connecting these objects; review it first.")
-            place_unit(objects, source.group or candidate.group or LearningObjectGroup.objects.create(
-                outline_node=node,
-                label=(
-                    bundle_label(source_objects) or bundle_label(candidate_objects)
-                )[:255],
-            ))
-            unpublished = unpublish_topic(node)
-            source.refresh_from_db()
-            candidate.refresh_from_db()
-        suggestion.status = LearningObjectMatchSuggestion.Status.ACCEPTED
-        suggestion.save(update_fields=["status", "updated_at"])
-        target_group = source.group or LearningObjectGroup.objects.create(
-            outline_node=node,
-            # Named the way every other concept is named. A bundle of two
-            # or more takes its heading; this one object takes its own title,
-            # so objects sharing a section do not all become one name.
-            label=(bundle_label([source]) or source.title)[:255],
-        )
-        old_group = candidate.group
-        if old_group and old_group.id != target_group.id:
-            release_from_group(
-                candidate,
-                list(old_group.learning_objects.exclude(pk=candidate.pk)),
-            )
-        if not target_group.learning_objects.filter(
-            material_id=candidate.material_id,
-        ).exclude(pk=candidate.pk).exists():
-            # This PDF contributes nothing to the concept yet, so any role
-            # stored against it is a ruling about text that has since left --
-            # see `place_unit`, which guards the same way.
-            prune_bundle_role(target_group, candidate.material_id)
-        candidate.group = target_group
-        candidate.mark_grouping_current()
-        candidate.save(update_fields=["group", "grouping_content_hash"])
-        source.group = target_group
-        source.mark_grouping_current()
-        source.save(update_fields=["group", "grouping_content_hash"])
-        if old_group and old_group.id != target_group.id and not old_group.learning_objects.exists():
-            old_group.delete()
-
-        # The explicit teacher decision is already authoritative. Only update
-        # handoff snapshots; rescoring every object and question made each click slow.
-        self._refresh_relationship_snapshots(
-            {source.material, candidate.material},
-            recompute=False,
-        )
-        self._record_suggestion_decision(suggestion, source, candidate, accepted=True)
-        return unpublished
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/match-suggestions/(?P<suggestion_id>[^/.]+)/reject",
-    )
-    def reject_match_suggestion(self, request, pk=None, node_id=None, suggestion_id=None):
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response(
-                {"detail": "Outline node not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        suggestion = self._get_node_match_suggestion(course, node, suggestion_id)
-        if suggestion is None:
-            return Response(
-                {"detail": "Match suggestion not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        if not all(
-            learning_objects_are_confirmed(item.material)
-            for item in (
-                suggestion.source_learning_object,
-                suggestion.candidate_learning_object,
-            )
-        ):
-            return Response(
-                {"detail": "Confirm both learning objects before reviewing this connection."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        self._record_suggestion_decision(
-            suggestion,
-            suggestion.source_learning_object,
-            suggestion.candidate_learning_object,
-            accepted=False,
-        )
-        return Response(self._learning_resources_payload(node, request))
 
     @action(
         detail=True,
@@ -1582,6 +1219,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Outline node not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(node):
+            return locked
 
         try:
             learning_object = LearningObject.objects.select_related("material", "group").get(
@@ -1826,7 +1465,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
         variant.narration = narration
         variant.audio_url = ""
-        from course.variant_generator import _fingerprint
+        from course.generate_variation import _fingerprint
         variant.source_fingerprint = _fingerprint(variant.learning_object)
         # origin records where the wording came from and stays put; assigned_by
         # is what records that a teacher has since had a hand in it.
@@ -2287,9 +1926,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         response.status_code = status.HTTP_200_OK if reused else status.HTTP_201_CREATED
         return response
 
+    #pdf upload
     @action(detail=True, methods=["post"], url_path="upload-pdf")
     def upload_pdf(self, request, pk=None):
-        """Accept one PDF and automatically route outlines and lesson materials."""
         course = self.get_object()
         had_hierarchy = OutlineNode.objects.filter(course_id=course.pk).exists()
         input_serializer = CoursePdfUploadInputSerializer(data=request.data)
@@ -2306,6 +1945,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             )
         except DuplicatePdfUploadError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PdfProcessingUnavailableError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "retryable": True,
+                    "uploaded_material_id": exc.material_id,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except PdfProcessingUseCaseError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2359,6 +2007,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             )
         except DuplicatePdfUploadError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PdfProcessingUnavailableError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "retryable": True,
+                    "uploaded_material_id": exc.material_id,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except PdfProcessingUseCaseError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2387,6 +2044,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Learning material not found for this course."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(material.outline_node):
+            return locked
 
         if material.pdf_file:
             material.pdf_file.delete(save=False)
@@ -2432,10 +2091,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         # Publish the confirmation state before relationship refresh so the
         # linker can never use draft learning objects as candidates.
         generated_json = material.generated_json or {}
-        if confirmed or generated_json.get("learning_objects_confirmed"):
-            # Kept when the PDF goes back to draft, so confirming it again
-            # is known to be a reconfirm and is reviewed first.
-            generated_json.setdefault(FIRST_CONFIRMED_KEY, timezone.now().isoformat())
         generated_json["learning_objects_confirmed"] = confirmed
         generated_json["learning_objects_confirmed_at"] = timezone.now().isoformat() if confirmed else None
         material.generated_json = generated_json
@@ -2489,6 +2144,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Learning material not found for this course."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(material.outline_node):
+            return locked
         try:
             regenerate_learning_material(material=material)
         except PdfProcessingUseCaseError as exc:
@@ -2508,6 +2165,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Learning material not found for this course."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(material.outline_node):
+            return locked
 
         serializer = LearningObjectMutationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -2543,6 +2202,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Learning material not found for this course."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(material.outline_node):
+            return locked
 
         serializer = LearningObjectReorderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -2581,38 +2242,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Learning material not found for this course."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(material.outline_node):
+            return locked
         if not material.learning_objects.exists():
             return Response(
                 {"detail": "Add at least one learning object before confirming."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Confirming an edited PDF again can move objects of the approved
-        # PDFs. Without the teacher's answer ("keep": the ids to leave where
-        # they are), the confirmation is rehearsed and what it would change
-        # is returned instead.
-        keep = request.data.get("keep")
-        rehearsed = keep is None and was_confirmed_before(material)
-        if rehearsed:
-            # Kept when nothing approved moves, so it is not run twice.
-            changes = rehearse(material, lambda: self._set_learning_objects_confirmed(material, True))
-            if changes:
-                return Response({"approved_changes": changes, "confirmed": False})
-        try:
-            kept_ids = [int(item) for item in keep or []]
-        except (TypeError, ValueError):
-            return Response({"detail": "keep must be a list of learning object ids."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        before = approved_placements(material) if kept_ids else {}
-
-        if not rehearsed:
-            self._set_learning_objects_confirmed(material, True)
-        if kept_ids:
-            keep_in_place(material, kept_ids, before)
-            self._refresh_relationship_snapshots(
-                LearningMaterial.objects.filter(learning_objects__id__in=kept_ids).distinct(),
-                recompute=False,
-            )
+        self._set_learning_objects_confirmed(material, True)
         response = self._serialize_course_detail(course, request)
         response.data["image_description_generation"] = {
             "generated_count": 0,
@@ -2660,40 +2298,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["patch"],
-        url_path=r"materials/(?P<material_id>[^/.]+)/classified-blocks/(?P<block_id>[^/.]+)",
-    )
-    def classified_block_detail(self, request, pk=None, material_id=None, block_id=None):
-        course = self.get_object()
-        material = self._get_course_material(course, material_id)
-        if material is None:
-            return Response(
-                {"detail": "Learning material not found for this course."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        category = request.data.get("category")
-        if category and category not in CLASSIFICATION_CATEGORIES:
-            return Response({"detail": "Unsupported classification category."}, status=status.HTTP_400_BAD_REQUEST)
-
-        include_in_narration = request.data.get("include_in_narration", None)
-        if include_in_narration is not None and not isinstance(include_in_narration, bool):
-            return Response({"detail": "include_in_narration must be true or false."}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            apply_classification_override(
-                material,
-                block_id=int(block_id),
-                category=category,
-                include_in_narration=include_in_narration,
-            )
-        except (TypeError, ValueError) as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        return self._serialize_course_detail(course, request)
-
-    @action(
-        detail=True,
         methods=["patch", "delete"],
         url_path=r"materials/(?P<material_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)",
     )
@@ -2705,6 +2309,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 {"detail": "Learning material not found for this course."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if locked := self._source_lock_response(material.outline_node):
+            return locked
 
         try:
             learning_object = material.learning_objects.get(pk=object_id)

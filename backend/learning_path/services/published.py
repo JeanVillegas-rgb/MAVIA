@@ -165,8 +165,8 @@ def _versions(parts, group=None):
     """Standard / simplified / elaborated for one telling of a concept.
 
     Standard is every object of the telling, joined. Simplified and Elaborated
-    are generated per object; a rung short of any object is left out rather
-    than half-served, so the player falls back to Standard instead. The helpers
+    are generated for the whole bundle; older per-object rows are served only
+    when every object has one. The helpers
     are the lesson package's own, imported rather than copied, so that rule
     exists in one place.
 

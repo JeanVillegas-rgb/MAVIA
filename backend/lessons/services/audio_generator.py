@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -16,6 +17,86 @@ logger = logging.getLogger(__name__)
 
 class AudioGenerationError(RuntimeError):
     pass
+
+
+def _same_label(left, right):
+    normalize = lambda value: re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
+    return normalize(left) == normalize(right)
+
+
+def _spoken_text(text):
+    """Make extracted content natural and unambiguous when read by TTS."""
+    spoken = str(text or "")
+    for pattern, replacement in (
+        (r"\s*(?:\u2192|->|=>)\s*", " to "),
+        (r"\s*\u2264\s*", " less than or equal to "),
+        (r"\s*\u2265\s*", " greater than or equal to "),
+        (r"\s*\u2260\s*", " is not equal to "),
+    ):
+        spoken = re.sub(pattern, replacement, spoken)
+    spoken = re.sub(r"(?<=[\d)])\s*=\s*(?=[\d(])", " equals ", spoken)
+    spoken = re.sub(r"\s*=\s*", " means ", spoken)
+    lines = [re.sub(r"^\s*[\u2022\u25cf\u25aa\u25a0\u25e6*\-\u2013]\s*", "", line).strip()
+             for line in spoken.splitlines()]
+    lines = [line for line in lines if line]
+    for index, line in enumerate(lines[:-1]):
+        if not re.search(r"[.!?:;,\-\u2013\u2014]$", line) and not lines[index + 1][:1].islower():
+            lines[index] = f"{line}."
+    spoken = "\n".join(lines).strip()
+    if spoken and not re.search(r"[.!?][\"')\]]?$", spoken):
+        spoken += "."
+    return spoken
+
+
+def build_narration_script_from_learning_objects(learning_objects):
+    """Convert ordered learning objects to the stable audio-script schema."""
+    narration = []
+    previous_section = ""
+    for item in learning_objects:
+        section = (item.get("section_title") or "").strip()
+        title = (item.get("title") or "").strip()
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        if section:
+            if section != previous_section:
+                content = (
+                    f"{section}. {content}"
+                    if _same_label(title, section)
+                    else f"In {section}. {title}: {content}"
+                )
+            elif title:
+                content = f"{title}: {content}"
+        elif title and not _same_label(title, content):
+            content = f"{title}. {content}"
+        narration.append({
+            "order": len(narration) + 1,
+            "type": item.get("type"),
+            "learning_object_id": item.get("learning_object_id"),
+            "section_title": section,
+            "title": title,
+            "page": item.get("source_page"),
+            "content": _spoken_text(content),
+            "source": item.get("source"),
+            "source_block_id": item.get("source_block_id"),
+            "image_index": item.get("image_index"),
+        })
+        previous_section = section
+    return narration
+
+
+def build_lesson_playlist(narration_script):
+    """Create the ordered audio-player entries for a narration script."""
+    return [
+        {
+            "order": index,
+            "title": item.get("title") or (item.get("content") or "Untitled content")[:100].strip(" ."),
+            "type": item.get("type"),
+            "learning_object_id": item.get("learning_object_id"),
+            "narration_item_order": item.get("order"),
+        }
+        for index, item in enumerate(narration_script)
+    ]
 
 
 def _powershell_quote(value: str) -> str:
@@ -361,8 +442,6 @@ def generate_bundle_version_audio(material: LearningMaterial) -> dict:
     lesson one, because these objects are not steps of this material's lesson;
     putting them there would teach the concept twice.
     """
-    from .content_generator import build_narration_script_from_learning_objects
-
     objects = bundle_version_objects(material)
     generated_json = material.generated_json or {}
     if not objects:

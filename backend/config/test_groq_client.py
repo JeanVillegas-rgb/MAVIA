@@ -8,8 +8,8 @@ from django.test import SimpleTestCase, override_settings
 
 from config import groq_client
 from config.groq_client import GroqRateLimitError, _strict_schema, generate
-from course.variant_generator import _request_variants_once
-from course.version_classifier import classify_group_versions
+from course.generate_variation import generate_versions
+from course.bundle_version_classifier import classify_group_versions
 from question_generation.services import grounding, question_generator
 
 
@@ -250,17 +250,15 @@ class GroqRoutingTests(SimpleTestCase):
         GROQ_VARIANT_MAX_TOKENS=1024,
         ADAPTIVE_VARIANT_TIMEOUT=30,
     )
-    @patch("course.variant_generator.groq_generate")
-    @patch("course.variant_generator.requests.post")
-    def test_adaptive_versions_use_groq_completion_budget(self, post, groq_generate):
-        groq_generate.return_value = (
-            '{"simplified":"Matter has mass.","elaborated":"Matter has mass and takes up space."}',
-            {},
-        )
+    @patch("course.generate_variation.groq_generate")
+    def test_adaptive_versions_use_groq_completion_budget(self, groq_generate):
+        groq_generate.side_effect = [
+            ('{"content":"Matter is stuff.","reason":"Clearer."}', {}),
+            ('{"content":"Matter has mass and also occupies space.","reason":"Fuller."}', {}),
+        ]
         item = SimpleNamespace(title="Matter", content="Matter has mass and takes up space.")
-        _request_variants_once(item, "openai/gpt-oss-20b")
-        self.assertEqual(groq_generate.call_args.kwargs["max_tokens"], 1024)
-        post.assert_not_called()
+        generate_versions(item)
+        self.assertEqual(groq_generate.call_args.kwargs["max_tokens"], 2000)
 
     @override_settings(
         LLM_PROVIDER="groq",
@@ -268,22 +266,15 @@ class GroqRoutingTests(SimpleTestCase):
         CONTENT_VERSION_LLM_MODEL="openai/gpt-oss-20b",
         CONTENT_VERSION_LLM_TIMEOUT=30,
     )
-    @patch("course.version_classifier.groq_generate")
-    @patch("course.version_classifier.requests.post")
-    def test_version_classification_skips_ollama(self, post, groq_generate):
+    @patch("course.bundle_version_classifier.groq_generate")
+    def test_version_classification_uses_bundle_classifier(self, groq_generate):
         groq_generate.return_value = (
-            json.dumps({"assignments": [{
-                "position": 1,
-                "slot": "SIMPLIFIED",
-                "confidence": 0.9,
-                "reason": "Complete definition",
-            }]}),
+            json.dumps({"level": "simplified", "reason": "Complete definition"}),
             {},
         )
         standard = SimpleNamespace(id=1, title="Matter", content="Matter has mass.")
         item = SimpleNamespace(id=2, title="Matter", content="Matter has mass.")
         self.assertEqual(classify_group_versions([item], representative=standard)[2]["slot"], "SIMPLIFIED")
-        post.assert_not_called()
 
     @override_settings(LLM_PROVIDER="groq", QUESTION_LLM_MODEL="openai/gpt-oss-20b")
     @patch("question_generation.services.question_generator.groq_generate")

@@ -18,7 +18,7 @@ from lessons.models import (
     QuestionLearningObjectLink,
 )
 from lessons.services.question_workflow import mirror_generated_questions
-from lessons.tests import authenticated_api_client
+from lessons.test_utils import authenticated_api_client
 
 from .models import GeneratedQuestion
 from .services.bank_status import bank_out_of_date, keep_bank, out_of_date_groups, text_fingerprint

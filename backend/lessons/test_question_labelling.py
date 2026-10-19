@@ -10,14 +10,13 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from .models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode, Question
+from .models import CourseGroup, LearningMaterial, OutlineNode, Question
 from .services import question_workflow
-from .services.learning_resource_linker import (
-    attach_orphan_objects_to_their_section,
+from .services.question_workflow import (
     detected_question_payloads,
     synchronize_detected_questions,
 )
-from .tests import authenticated_api_client
+from .test_utils import authenticated_api_client
 
 BLOCK = {
     "category": "assessment",
@@ -109,36 +108,3 @@ class QuestionLabellingTests(TestCase):
 
         question.refresh_from_db()
         self.assertEqual(question.thinking_order, "LOT")
-
-
-class MoveOutStaysOutTests(TestCase):
-    """A part the teacher took out of its concept is not filed back under its section."""
-
-    def test_a_moved_out_part_is_not_folded_back(self):
-        client = authenticated_api_client()
-        course = CourseGroup.objects.create(title="Science")
-        node = OutlineNode.objects.create(course=course, title="States of matter")
-        pdf = LearningMaterial.objects.create(
-            course=course, outline_node=node, title="Lesson 1",
-            status=LearningMaterial.Status.COMPLETED,
-            generated_json={"learning_objects_confirmed": True},
-        )
-
-        def add(title, order):
-            return LearningObject.objects.create(
-                material=pdf, title=title, section_title="Matter", content=f"{title} text.", order=order,
-                group=LearningObjectGroup.objects.create(outline_node=node, label=title),
-            )
-
-        matter, solid = add("Matter", 0), add("Solid", 1)
-        attach_orphan_objects_to_their_section(pdf)
-        solid.refresh_from_db()
-        self.assertEqual(solid.group_id, matter.group_id)
-
-        client.post(
-            f"/api/courses/{course.id}/outline-nodes/{node.id}/learning-objects/{solid.id}/move-out/"
-        )
-        attach_orphan_objects_to_their_section(pdf)
-
-        solid.refresh_from_db()
-        self.assertNotEqual(solid.group_id, matter.group_id)

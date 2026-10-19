@@ -1,6 +1,10 @@
 import { useState } from "react";
 
 const GROUP_COLORS = ["blue", "green", "violet", "amber"];
+const HIDDEN_RELATED_INFO_KEYS = new Set([
+  "source_review_finalized_at",
+  "source_review_finalized_by",
+]);
 
 function countDescendants(node) {
   return (node.children || []).reduce((total, child) => total + 1 + countDescendants(child), 0);
@@ -9,6 +13,7 @@ function countDescendants(node) {
 function flattenRelatedInfo(value) {
   if (!value || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([key, item]) => {
+    if (HIDDEN_RELATED_INFO_KEYS.has(key)) return [];
     const label = key.replace(/_/g, " ");
     if (Array.isArray(item)) {
       return item.filter(Boolean).map((entry) => ({ label, value: String(entry) }));

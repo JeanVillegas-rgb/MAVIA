@@ -1,6 +1,6 @@
 """The sentence encoder the learning path reads meaning with.
 
-The same pinned model grouping uses (lessons/services/semantic_grouping.py),
+The same pinned model lesson processing uses (lessons/services/embedding_service.py),
 loaded here so the two pipelines can change independently. CPU only, offline
 once downloaded. Vectors are normalised, so a dot product is the cosine.
 """

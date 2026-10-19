@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 from django.test import TestCase
 from rest_framework import status
-from lessons.tests import authenticated_api_client
+from lessons.test_utils import authenticated_api_client
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 from lessons.services.audio_generator import generate_material_audio_playlist

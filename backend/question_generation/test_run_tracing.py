@@ -12,7 +12,7 @@ from django.test import TestCase
 from rest_framework import status
 
 from lessons.models import CourseGroup, LearningMaterial, LearningObject
-from lessons.tests import authenticated_api_client
+from lessons.test_utils import authenticated_api_client
 
 from .models import GenerationEvent, GenerationRun
 from .tracing import run_tracer

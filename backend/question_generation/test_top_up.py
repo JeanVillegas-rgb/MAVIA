@@ -266,7 +266,7 @@ class TopicRoundTests(_ConceptTestCase):
 class StartTopicGenerationTests(_ConceptTestCase):
     def setUp(self):
         super().setUp()
-        from lessons.tests import authenticated_api_client
+        from lessons.test_utils import authenticated_api_client
 
         self.client = authenticated_api_client()
         self.unclassified = LearningObjectGroup.objects.create(

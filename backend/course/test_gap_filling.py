@@ -5,7 +5,7 @@ from django.test import TestCase, override_settings
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, OutlineNode
 
 from .models import LessonVariant
-from .variant_generator import VariantGenerationError, fill_missing_slots
+from .generate_variation import VariantGenerationError, fill_missing_slots
 
 
 @override_settings(
@@ -21,7 +21,7 @@ class GapFillingTests(TestCase):
             material=material, title="Solid", content="A solid holds its shape and does not flow.", order=0
         )
 
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation._request_variants")
     def test_fills_both_slots_when_none_exist(self, request_variants):
         request_variants.return_value = {"SIMPLIFIED": "Solid keeps shape.", "ELABORATED": "A solid holds a fixed shape."}
 
@@ -31,7 +31,7 @@ class GapFillingTests(TestCase):
         self.assertEqual(self.obj.variants.count(), 2)
         self.assertTrue(all(row.origin == "generated" for row in self.obj.variants.all()))
 
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation._request_variants")
     def test_only_fills_the_missing_slot(self, request_variants):
         LessonVariant.objects.create(
             learning_object=self.obj, variant="ELABORATED", narration="Real teacher text", origin="source_pdf"
@@ -47,7 +47,7 @@ class GapFillingTests(TestCase):
             "Real teacher text",
         )
 
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation._request_variants")
     def test_never_overwrites_source_pdf_text(self, request_variants):
         LessonVariant.objects.create(
             learning_object=self.obj, variant="SIMPLIFIED", narration="Human wording", origin="source_pdf"
@@ -61,7 +61,7 @@ class GapFillingTests(TestCase):
         request_variants.assert_not_called()
         self.assertEqual(result["generated"], [])
 
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation._request_variants")
     def test_failure_leaves_the_slot_empty_and_is_reported(self, request_variants):
         request_variants.side_effect = VariantGenerationError("Gemma did not return valid JSON.")
 

@@ -1,21 +1,10 @@
-"""The teacher's Generate button must cover the whole Standard bundle.
-
-A concept's Standard version can be several objects of one PDF -- a comparison
-section written as Shape, Volume, Particle arrangement and Flow. The review
-screen shows a slot as written only once every one of them has a version, but
-the button generated for the representative alone. So it wrote one row of four,
-the screen went on saying "Not written yet", and pressing it again found that
-object already done and wrote nothing. The slot could never be filled.
-
-The bulk path already used the bundle-aware generator; only this button did not.
-"""
+"""The Generate button writes one complete version of a multi-object bundle."""
 
 from unittest.mock import patch
 
 from django.test import TestCase
 
 from course.models import LessonVariant
-from course.testing import without_measurements
 from course.version_assignment import assign_group_versions
 
 from .models import (
@@ -25,12 +14,11 @@ from .models import (
     LearningObjectGroup,
     OutlineNode,
 )
-from .tests import authenticated_api_client
+from .test_utils import authenticated_api_client
 
 
 class GenerateButtonBundleTests(TestCase):
     def setUp(self):
-        without_measurements(self)
         self.client = authenticated_api_client()
         self.course = CourseGroup.objects.create(title="Science")
         self.topic = OutlineNode.objects.create(course=self.course, title="States")
@@ -78,9 +66,9 @@ class GenerateButtonBundleTests(TestCase):
             {"slot": slot}, format="json",
         )
 
-    def test_every_object_of_the_standard_bundle_gets_the_version(self):
-        with patch("course.variant_generator._request_variants") as request:
-            request.return_value = {"SIMPLIFIED": "Short.", "ELABORATED": "Longer."}
+    def test_complete_standard_bundle_gets_one_generated_version(self):
+        with patch("course.generate_variation.generate_level") as request:
+            request.return_value = {"content": "All four properties explained simply.", "reason": "Clearer."}
             response = self.generate()
 
         self.assertEqual(response.status_code, 200, getattr(response, "data", None))
@@ -89,12 +77,14 @@ class GenerateButtonBundleTests(TestCase):
                 learning_object__in=self.standard, variant="SIMPLIFIED",
             ).values_list("learning_object_id", flat=True)
         )
-        self.assertEqual(written, {item.id for item in self.standard})
+        self.assertEqual(written, {self.standard[0].id})
+        self.assertIn("Solids keep their shape", request.call_args.kwargs["baseline_text"])
+        self.assertIn("Liquids and gases can flow", request.call_args.kwargs["baseline_text"])
 
     def test_a_second_press_does_not_leave_the_slot_half_written(self):
-        """The stuck state: one row written, three missing, and no way forward."""
-        with patch("course.variant_generator._request_variants") as request:
-            request.return_value = {"SIMPLIFIED": "Short.", "ELABORATED": "Longer."}
+        """A second press keeps the complete version without another LLM call."""
+        with patch("course.generate_variation.generate_level") as request:
+            request.return_value = {"content": "All four properties explained simply.", "reason": "Clearer."}
             self.generate()
             self.generate()
 
@@ -102,13 +92,14 @@ class GenerateButtonBundleTests(TestCase):
             LessonVariant.objects.filter(
                 learning_object__in=self.standard, variant="SIMPLIFIED",
             ).count(),
-            len(self.standard),
+            1,
         )
+        request.assert_called_once()
 
     def test_a_role_a_pdf_already_supplies_is_not_generated_over(self):
         """Elaborated comes from the second PDF, so nothing should write it."""
-        with patch("course.variant_generator._request_variants") as request:
-            request.return_value = {"SIMPLIFIED": "Short.", "ELABORATED": "Longer."}
+        with patch("course.generate_variation.generate_level") as request:
+            request.return_value = {"content": "Longer.", "reason": "Fuller."}
             self.generate(slot="ELABORATED")
 
         self.assertFalse(

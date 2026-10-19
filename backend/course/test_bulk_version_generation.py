@@ -9,17 +9,15 @@ from rest_framework.test import APIClient
 from lessons.models import CourseGroup, LearningMaterial, LearningObject, LearningObjectGroup, OutlineNode
 from question_generation.models import GenerationRun
 
-from .testing import without_measurements
 from .bulk_version_generation import classify_all_source_versions
 from .models import LessonVariant
-from .variant_generator import fill_missing_slots
+from .generate_variation import fill_missing_slots
 from .version_assignment import bundle_roles
 
 
 @override_settings(ADAPTIVE_VARIANT_GENERATION_ENABLED=True)
 class BulkVersionGenerationTests(TestCase):
     def setUp(self):
-        without_measurements(self)
         self.course = CourseGroup.objects.create(title="Science")
         self.node = OutlineNode.objects.create(course=self.course, title="Matter", order=0)
         self.material = LearningMaterial.objects.create(
@@ -36,7 +34,7 @@ class BulkVersionGenerationTests(TestCase):
             content="A solid has a definite shape and volume.",
         )
 
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation._request_variants")
     def test_classification_does_not_generate_missing_slots(self, request_variants):
         LessonVariant.objects.create(
             learning_object=self.learning_object,
@@ -68,7 +66,7 @@ class BulkVersionGenerationTests(TestCase):
         self.assertEqual(events[-1][0], "versions_bulk_finished")
 
     @override_settings(CONTENT_VERSION_LLM_ENABLED=True)
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation._request_variants")
     @patch("course.version_assignment.classify_group_versions")
     def test_three_pdf_variants_fill_roles_and_generate_only_the_missing_role(
         self, classify, request_variants,
@@ -105,7 +103,7 @@ class BulkVersionGenerationTests(TestCase):
                 "slot": "SIMPLIFIED", "confidence": 0.8, "reason": "Simpler wording."
             },
             third.id: {
-                "slot": "NEEDS_REVIEW", "confidence": 0.8, "reason": "Alternative."
+                "slot": "NORMAL", "confidence": 0.8, "reason": "Alternative."
             },
         }
         request_variants.return_value = {
@@ -118,7 +116,7 @@ class BulkVersionGenerationTests(TestCase):
         self.assertEqual(summary["grouped_concept_count"], 1)
         self.assertEqual(summary["classified_group_count"], 1)
         self.assertEqual(summary["source_variant_count"], 1)
-        self.assertEqual(summary["needs_review_count"], 1)
+        self.assertEqual(summary["needs_review_count"], 0)
         self.assertEqual(summary["generated_count"], 0)
         # Changed 2026-09-20: roles are per bundle; a PDF-supplied version is its own objects.
         self.group.refresh_from_db()

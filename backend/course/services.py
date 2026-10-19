@@ -1,29 +1,20 @@
-from .models import LessonVariant, bundle_segments, standard_bundle_for
+from .models import LessonVariant, bundle_segments, complete_generated_rows, standard_bundle_for
 from .version_assignment import served_version_bundles
 
 
 def _generated_versions(objects):
     """``{role: {"segments": [...], "origin": ...}}`` written for this bundle.
 
-    A generated version is written per object of the Standard bundle, so its
-    segments line up with the Standard ones. A role that is short of the bundle
-    -- one object's generation failed, or the bundle grew after the wording was
-    written -- is left out entirely rather than served. Half a track reads as a
-    complete lesson to a student who cannot see the page, so the version is
-    reported missing instead, which is the state the publish gate and the
-    teacher's review screen already know how to show.
+    Jean writes one generated explanation for the complete Standard bundle.
+    It is stored on the bundle's lead object as MAVIA's compatibility anchor.
     """
-    versions = {}
-    for item in objects:
-        for row in item.variants.all():
-            if row.variant not in ("SIMPLIFIED", "ELABORATED"):
-                continue
-            version = versions.setdefault(row.variant, {"segments": [], "origin": row.origin})
-            version["segments"].append({"text": row.narration, "audio_url": row.audio_url})
+    rows = [row for item in objects for row in item.variants.all()]
     return {
-        role: version
-        for role, version in versions.items()
-        if len(version["segments"]) >= len(objects)
+        slot: {
+            "segments": [{"text": row.narration, "audio_url": row.audio_url} for row in complete],
+            "origin": complete[0].origin,
+        }
+        for slot, complete in complete_generated_rows(objects, rows).items()
     }
 
 

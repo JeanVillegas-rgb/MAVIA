@@ -24,13 +24,10 @@ from .models import (
     Question,
     QuestionLearningObjectLink,
 )
-from .services.learning_resource_linker import (
-    refresh_question_learning_object_links,
-    synchronize_detected_questions,
-)
-from .services.question_workflow import mirror_generated_questions
+from .services.question_linker import refresh_question_learning_object_links
+from .services.question_workflow import mirror_generated_questions, synchronize_detected_questions
 from .test_question_pairing import WordVectorEncoder
-from .tests import authenticated_api_client
+from .test_utils import authenticated_api_client
 
 
 @patch.dict(os.environ, {"SEMANTIC_GROUPING_MODE": "legacy"})
@@ -111,7 +108,7 @@ class GeneratedQuestionSafetyTests(TestCase):
         self._assert_intact(self.gas_question, self.gas)
 
     @patch(
-        "lessons.services.learning_resource_linker._question_encoder",
+        "lessons.services.question_linker._question_encoder",
         new=lambda: WordVectorEncoder(),
     )
     def test_extracted_questions_are_still_paired(self):

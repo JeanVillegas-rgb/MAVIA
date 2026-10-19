@@ -20,7 +20,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from course.models import LessonVariant
-from course.variant_generator import STANDARD_FALLBACK_GENERATOR
+from course.generate_variation import STANDARD_FALLBACK_GENERATOR
 from course.version_assignment import set_bundle_role
 from lessons.models import (
     CourseGroup,

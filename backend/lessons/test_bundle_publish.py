@@ -18,7 +18,6 @@ from django.utils import timezone
 
 from course.models import LessonVariant
 from course.services import _build_chunk
-from course.testing import without_measurements
 from course.version_assignment import set_bundle_role
 from learning_path.models import LearningPathStep
 
@@ -51,7 +50,6 @@ class TwoPdfPublishTests(TestCase):
     """One PDF supplies Simplified; the other is the Standard wording."""
 
     def setUp(self):
-        without_measurements(self)
         media_root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, media_root, ignore_errors=True)
         media = override_settings(MEDIA_ROOT=media_root, MEDIA_URL="/media/")
@@ -73,11 +71,12 @@ class TwoPdfPublishTests(TestCase):
         self.images.return_value = {"generated_count": 0, "errors": []}
         self.addCleanup(images.stop)
 
-        variants = patch("course.variant_generator._request_variants")
+        variants = patch("course.generate_variation.generate_level")
         self.request_variants = variants.start()
-        self.request_variants.return_value = {
-            "SIMPLIFIED": "Written simply.",
-            "ELABORATED": "Written at length, with more detail than the original.",
+        self.request_variants.side_effect = lambda **kwargs: {
+            "content": "Written simply." if kwargs["target_level"] == "simplified"
+                       else "Written at length, with more detail than the original.",
+            "reason": "Compared with the baseline.",
         }
         self.addCleanup(variants.stop)
 
@@ -188,9 +187,9 @@ class TwoPdfPublishTests(TestCase):
             )
 
     def test_a_generated_role_is_still_required_where_no_pdf_supplies_it(self):
-        from course.variant_generator import VariantGenerationError
+        from course.generate_variation import VariationWriterError
 
-        self.request_variants.side_effect = VariantGenerationError("no JSON")
+        self.request_variants.side_effect = VariationWriterError("no JSON")
 
         summary = self._run()
 

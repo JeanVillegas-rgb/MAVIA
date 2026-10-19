@@ -51,11 +51,11 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_marks_the_topic_published(self, request_variants, audio, images):
         images.return_value = {"generated_count": 0, "errors": []}
         audio.return_value = {"generated_count": 1}
-        request_variants.return_value = {"SIMPLIFIED": "a", "ELABORATED": "b"}
+        request_variants.side_effect = lambda **kwargs: {"content": kwargs["target_level"] + " text", "reason": "Adjusted."}
 
         summary = self._run()
 
@@ -66,12 +66,12 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_reports_incomplete_versions(self, request_variants, audio, images):
-        from course.variant_generator import VariantGenerationError
+        from course.generate_variation import VariationWriterError
         images.return_value = {"generated_count": 0, "errors": []}
         audio.return_value = {"generated_count": 0}
-        request_variants.side_effect = VariantGenerationError("Gemma did not return valid JSON.")
+        request_variants.side_effect = VariationWriterError("Gemma did not return valid JSON.")
 
         summary = self._run()
 
@@ -83,12 +83,12 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_a_blocked_publish_stops_before_making_audio(self, request_variants, audio, images):
         """Audio took 104 of 106 seconds of a publish already known to fail."""
-        from course.variant_generator import VariantGenerationError
+        from course.generate_variation import VariationWriterError
         images.return_value = {"generated_count": 0, "errors": []}
-        request_variants.side_effect = VariantGenerationError("Gemma did not return valid JSON.")
+        request_variants.side_effect = VariationWriterError("Gemma did not return valid JSON.")
 
         summary = self._run()
 
@@ -100,11 +100,11 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_audio_failure_does_not_publish(self, request_variants, audio, images):
         from .services.audio_generator import AudioGenerationError
         images.return_value = {"generated_count": 0, "errors": []}
-        request_variants.return_value = {"SIMPLIFIED": "a", "ELABORATED": "b"}
+        request_variants.side_effect = lambda **kwargs: {"content": kwargs["target_level"] + " text", "reason": "Adjusted."}
         audio.side_effect = AudioGenerationError("Audio unavailable")
         summary = self._run()
         self.assertFalse(summary["published"])
@@ -115,7 +115,7 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_already_settled_content_costs_nothing(self, request_variants, audio, images):
         from course.models import LessonVariant
         images.return_value = {"generated_count": 0, "errors": []}
@@ -133,11 +133,11 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_emits_a_phase_event_for_each_stage(self, request_variants, audio, images):
         images.return_value = {"generated_count": 0, "errors": []}
         audio.return_value = {"generated_count": 0}
-        request_variants.return_value = {"SIMPLIFIED": "a", "ELABORATED": "b"}
+        request_variants.side_effect = lambda **kwargs: {"content": kwargs["target_level"] + " text", "reason": "Adjusted."}
 
         self._run()
 
@@ -152,11 +152,11 @@ class TopicPublishServiceTests(TestCase):
 
     @patch("lessons.services.topic_publish.populate_missing_image_descriptions")
     @patch("lessons.services.topic_publish.generate_material_audio_playlist")
-    @patch("course.variant_generator._request_variants")
+    @patch("course.generate_variation.generate_level")
     def test_progress_events_carry_position_and_total(self, request_variants, audio, images):
         images.return_value = {"generated_count": 0, "errors": []}
         audio.return_value = {"generated_count": 0}
-        request_variants.return_value = {"SIMPLIFIED": "a", "ELABORATED": "b"}
+        request_variants.side_effect = lambda **kwargs: {"content": kwargs["target_level"] + " text", "reason": "Adjusted."}
 
         self._run()
 

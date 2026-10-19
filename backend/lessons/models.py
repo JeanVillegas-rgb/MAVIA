@@ -97,6 +97,9 @@ class OutlineNode(models.Model):
     depth = models.PositiveSmallIntegerField(default=0)
     published = models.BooleanField(default=False)
     published_at = models.DateTimeField(null=True, blank=True)
+    embedding = models.JSONField(default=list, blank=True)
+    embedding_model = models.CharField(max_length=255, blank=True)
+    embedding_text_hash = models.CharField(max_length=64, blank=True)
 
     class Meta:
         ordering = ["depth", "order", "id"]
@@ -136,6 +139,10 @@ class LearningMaterial(models.Model):
     pdf_file = models.FileField(upload_to="learning_materials/")
     file_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     extracted_text = models.TextField(blank=True)
+    extracted_blocks = models.JSONField(default=list, blank=True)
+    page_count = models.PositiveIntegerField(default=0)
+    draft_learning_objects = models.JSONField(default=list, blank=True)
+    object_embeddings = models.JSONField(default=dict, blank=True)
     generated_json = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=20,
@@ -221,6 +228,7 @@ class LearningObject(models.Model):
         related_name="represents",
         on_delete=models.SET_NULL,
     )
+    draft_id = models.CharField(max_length=64, blank=True)
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.TEXT)
     section_title = models.CharField(max_length=255, blank=True)
     title = models.CharField(max_length=255)
@@ -230,6 +238,8 @@ class LearningObject(models.Model):
     source_page = models.PositiveIntegerField(null=True, blank=True)
     source_block_id = models.PositiveIntegerField(null=True, blank=True)
     source_excerpt = models.TextField(blank=True)
+    parts = models.JSONField(default=list, blank=True)
+    embedding = models.JSONField(default=list, blank=True)
     order = models.PositiveIntegerField(default=0)
     # The fingerprint of this object's text when its group membership was last
     # decided. Group membership is deliberately sticky -- a background refresh
@@ -237,11 +247,6 @@ class LearningObject(models.Model):
     # to a grouped object could never be noticed. A mismatch is what enables
     # the teacher's "Review grouping changes" action.
     grouping_content_hash = models.CharField(max_length=64, blank=True, default="")
-    # Set when a teacher, reconfirming an edited PDF, chose to keep this part
-    # out of its section. Alone in its group, it would otherwise be folded
-    # straight back into the section on the next automatic pass.
-    kept_apart_from_section = models.BooleanField(default=False)
-
     class Meta:
         ordering = ["order", "id"]
 

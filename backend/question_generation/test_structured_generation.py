@@ -34,6 +34,7 @@ TF_ITEM = {
 }
 
 
+@override_settings(LLM_PROVIDER="ollama")
 class StructuredOutputTests(SimpleTestCase):
     def test_ollama_call_sends_a_json_schema(self):
         with patch("question_generation.services.question_generator.requests.post") as post:

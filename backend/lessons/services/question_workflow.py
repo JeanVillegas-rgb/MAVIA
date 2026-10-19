@@ -6,9 +6,67 @@ import re
 
 from django.db import models, transaction
 
-from lessons.models import Question, QuestionLearningObjectLink
+from lessons.models import LearningMaterial, Question, QuestionLearningObjectLink
+from .block_classifier import detect_instructional_document_role
+from .concept_grouper import normalize_learning_object_title
 
 logger = logging.getLogger(__name__)
+
+
+_QUESTION_CONTAINER_LABELS = {
+    "ask", "assessment", "assessments", "check your knowledge",
+    "check your understanding", "directions", "exercise", "exercises",
+    "instructions", "knowledge check", "practice", "practice questions",
+    "question", "questions", "quiz", "review questions", "teacher check",
+    "test", "true false", "true or false", "worksheet",
+}
+
+
+CONFIRMED_PAIRING_STATUSES = (
+    QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
+    QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
+)
+
+
+def question_snapshots(material: LearningMaterial) -> list[dict]:
+    """Return the stable question handoff stored with a processed PDF."""
+    snapshots = []
+    questions = material.questions.prefetch_related(
+        "learning_object_links__learning_object__group"
+    ).order_by("order", "id")
+    for question in questions:
+        links = [
+            {
+                "learning_object_id": link.learning_object_id,
+                "learning_object_group_id": link.learning_object.group_id,
+                "relevance_score": link.relevance_score,
+                "method": link.method,
+                "is_primary": link.is_primary,
+                "review_status": link.review_status,
+            }
+            for link in question.learning_object_links.all()
+            if link.review_status in CONFIRMED_PAIRING_STATUSES
+        ]
+        snapshots.append({
+            "id": question.id,
+            "prompt": question.prompt,
+            "source_type": question.source_type,
+            "question_type": question.question_type,
+            "choices": question.choices,
+            "correct_answer": question.correct_answer,
+            "bloom_level": question.bloom_level,
+            "thinking_order": question.thinking_order,
+            "difficulty": question.difficulty,
+            "category": question.category,
+            "validation_status": question.validation_status,
+            "validation_issues": question.validation_issues,
+            "order": question.order,
+            "source_page": question.source_page,
+            "source_block_id": question.source_block_id,
+            "source_excerpt": question.source_excerpt,
+            "learning_object_links": links,
+        })
+    return snapshots
 
 
 def normalized_question_text(text: str) -> str:
@@ -425,3 +483,184 @@ def mirror_generated_questions(node, generated_questions):
                 "review_status": QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
             },
         )
+
+
+def _is_answer_line(text):
+    label = normalize_learning_object_title(text)
+    return bool(
+        re.match(
+            r"^(?:a\s*:|(?:answer|answers|correct answer|expected answer|"
+            r"sample answer|suggested answer)\b(?:\s*[:.-])?)",
+            (text or "").strip(),
+            flags=re.IGNORECASE,
+        )
+        or label in {
+            "answer", "answers", "correct answer", "expected answer",
+            "sample answer", "suggested answer",
+        }
+    )
+
+
+def _clean_question_line(text):
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return re.sub(r"^[A-Za-z]?\s*[\x00-\x1f\u2022\u25cf\u25aa]+\s*", "", text).strip()
+
+
+def _is_form_identity_line(text):
+    label = normalize_learning_object_title(text)
+    fields = {"date", "name", "score", "section", "student"}
+    return bool(re.search(r"_{3,}", text or "") and len(set(label.split()) & fields) >= 2)
+
+
+def _is_question_line(text, *, allow_numbered_statement=False):
+    stripped = _clean_question_line(text)
+    if not stripped or _is_answer_line(stripped) or _is_form_identity_line(stripped):
+        return False
+    if stripped.endswith("?"):
+        return True
+    if re.match(r"^(?:q\s*:|q\d+\b|question\s+\d+\b)", stripped, re.I):
+        return True
+    numbered = re.sub(r"^\d+[.)]\s*", "", stripped)
+    if allow_numbered_statement and numbered != stripped:
+        return True
+    if numbered != stripped and re.match(
+        r"^(?:answer|calculate|choose|classify|compare|define|describe|discuss|"
+        r"explain|give|identify|list|match|name|select|solve|state|write)\b",
+        numbered,
+        re.I,
+    ):
+        return True
+    if re.search(r"_{3,}", stripped):
+        return bool(
+            numbered != stripped
+            or (stripped[:1].isupper() and len(normalize_learning_object_title(stripped).split()) >= 2)
+        )
+    return len(re.findall(r"(?:^|\s)[A-Da-d][.)]\s+", stripped)) >= 2
+
+
+def _starts_new_question(text):
+    cleaned = re.sub(r"^\d+[.)]\s*", "", _clean_question_line(text))
+    return bool(re.match(
+        r"^(?:q\s*:|question\s+\d+\b|who|what|when|where|why|how|which|whose|"
+        r"whom|is|are|am|do|does|did|can|could|will|would|should|has|have|had|"
+        r"may|might|were|was|answer|calculate|choose|classify|compare|define|"
+        r"describe|discuss|explain|give|identify|list|match|name|select|solve|"
+        r"state|write)\b",
+        cleaned,
+        re.I,
+    ))
+
+
+def _question_prompts_from_block(text, *, allow_numbered_statements=False):
+    """Extract authored questions without headings or supplied answers."""
+    lines = [_clean_question_line(line) for line in (text or "").splitlines()]
+    lines = [line for line in lines if line]
+    prompts, current = [], []
+
+    def flush():
+        if current:
+            prompt = "\n".join(current).strip()
+            if _is_question_line(prompt, allow_numbered_statement=allow_numbered_statements):
+                prompts.append(prompt)
+            current.clear()
+
+    for line in lines:
+        label = normalize_learning_object_title(line)
+        if label in _QUESTION_CONTAINER_LABELS:
+            continue
+        if _is_answer_line(line):
+            flush()
+            continue
+        question_only = re.split(
+            r"\s+(?:A|Answer)\s*:\s*", line, maxsplit=1, flags=re.I,
+        )[0].strip()
+        starts = _is_question_line(
+            question_only,
+            allow_numbered_statement=allow_numbered_statements,
+        )
+        phrase = _starts_new_question(question_only)
+        numbered = bool(re.match(r"^\d+[.)]\s*", question_only))
+        choice = bool(re.match(r"^[A-Da-d][.)]\s+", question_only))
+        if numbered and current:
+            flush()
+        if phrase and current and _clean_question_line("\n".join(current)).endswith("?"):
+            flush()
+        if starts or phrase or (current and choice):
+            current.append(question_only)
+        elif current and not re.match(r"^(?:expected|correct|sample|suggested)\s+answer\b", label):
+            current.append(question_only)
+    flush()
+    return prompts
+
+
+def detected_question_payloads(classified_blocks):
+    """Return database-ready questions extracted from classified PDF blocks."""
+    payloads = []
+    is_assessment = detect_instructional_document_role(classified_blocks or []) == "assessment"
+    seen = set()
+    for block in classified_blocks or []:
+        category = block.get("category")
+        contextual = is_assessment and category in {"lesson_content", "needs_review"}
+        if category != "assessment" and not contextual:
+            continue
+        for prompt in _question_prompts_from_block(
+            block.get("text") or "",
+            allow_numbered_statements=contextual,
+        ):
+            excerpt = block.get("text") or prompt
+            values = enriched_question_values(
+                **parse_question_structure(prompt, excerpt),
+                classify=False,
+            )
+            fingerprint = values["content_fingerprint"]
+            if not fingerprint or fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            payloads.append({
+                **values,
+                "source_type": Question.SourceType.PDF,
+                "source_page": block.get("page"),
+                "source_block_id": block.get("block_id"),
+                "source_excerpt": excerpt,
+            })
+    return payloads
+
+
+@transaction.atomic
+def synchronize_detected_questions(material, classified_blocks):
+    """Synchronize extracted PDF questions and rebuild their concept links."""
+    existing = {
+        question.content_fingerprint or question_fingerprint(question.prompt): question
+        for question in material.questions.all()
+    }
+    retained_ids = []
+    payloads = detected_question_payloads(classified_blocks)
+    if payloads:
+        logger.info(
+            "[Upload] PDF %s  %s printed question(s) found; labelled in the Questions step",
+            material.id,
+            len(payloads),
+        )
+    for order, payload in enumerate(payloads):
+        key = payload["content_fingerprint"]
+        question = existing.get(key) or duplicate_in_topic(material, key)
+        if question is None:
+            question = Question.objects.create(material=material, order=order, **payload)
+        elif question.material_id != material.id:
+            continue
+        else:
+            fields = [
+                field for field, value in payload.items()
+                if not (field in LABEL_FIELDS and not value)
+            ]
+            for field in fields:
+                setattr(question, field, payload[field])
+            question.order = order
+            question.save(update_fields=[*fields, "order"])
+        retained_ids.append(question.id)
+    material.questions.filter(source_type=Question.SourceType.PDF).exclude(
+        id__in=retained_ids,
+    ).delete()
+    from .question_linker import refresh_question_learning_object_links
+
+    refresh_question_learning_object_links(material)

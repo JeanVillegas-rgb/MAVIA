@@ -24,7 +24,13 @@ from course.version_assignment import (
 )
 from lessons.models import OutlineNode
 from lessons.services.concept_bundles import bundle_label, ordered_members
-from lessons.services.unit_matching import unpublish_topic
+
+
+def unpublish_topic(topic):
+    return bool(
+        OutlineNode.objects.filter(pk=topic.pk, published=True)
+        .update(published=False, published_at=None)
+    )
 
 
 class Command(BaseCommand):

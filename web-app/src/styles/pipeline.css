@@ -227,12 +227,7 @@ button {
 }
 
 .btn:disabled,
-/* The bundle controls stay in the tab order while they cannot be used, so a
-   screen reader still reads their names; they look the part all the same.
-   The "Move to..." control is a <select>, not a `.btn`, but it sits in the
-   same row and needs the same disabled look. */
-.btn[aria-disabled="true"],
-.concept-bundle-move-to select[aria-disabled="true"] {
+.btn[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -3814,57 +3809,6 @@ button {
   padding: 0 0.8rem;
 }
 
-.concept-bundle-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 0.4rem 1.1rem;
-}
-
-/* The row's controls answer two different questions -- which concept this
-   object belongs to, and where it sits inside this one file -- so they are
-   grouped and each group says which. Flat, they read as four similar buttons
-   and the arrows looked as though they moved objects between concepts. */
-.concept-bundle-action-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.concept-bundle-action-label {
-  color: var(--mv-muted);
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.concept-bundle-action-group.is-order {
-  padding-left: 0.9rem;
-  border-left: 1px solid var(--mv-border);
-}
-
-@media (max-width: 720px) {
-  .concept-bundle-action-group.is-order {
-    padding-left: 0;
-    border-left: none;
-  }
-}
-
-.concept-bundle-move-to select {
-  padding: 0.3rem 0.45rem;
-  border: 1px solid var(--mv-border-strong);
-  border-radius: 7px;
-  background: #ffffff;
-  font-size: 0.78rem;
-}
-
-.concept-bundle-nudge {
-  min-width: 2.1rem;
-  line-height: 1;
-}
-
 .connection-object-row:hover {
   background: #fbfdfd;
 }
@@ -5700,17 +5644,12 @@ button {
   font-size: 0.9rem;
 }
 
-.version-pending-decision blockquote,
-.version-pending-source {
+.version-pending-decision blockquote {
   margin: 0 0 0.6rem;
   padding-left: 0.75rem;
   border-left: 3px solid #ddd3bd;
   font-size: 0.9rem;
   line-height: 1.5;
-}
-
-.version-pending-source .bundle-parts {
-  margin-top: 0;
 }
 
 .version-archived-block {
@@ -6289,156 +6228,6 @@ button {
   .question-generation-board-heading { display: grid; }
   .question-generation-board-heading .btn { width: 100%; }
   .saved-question-actions { justify-content: flex-end; }
-}
-
-/* Review grouping changes. The notice sits under the step-1 heading; it is
-   quiet when nothing was edited and draws the eye when something was. */
-.regrouping-notice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  margin: 0.6rem 0 0.2rem;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid #e3e8ef;
-  border-radius: 10px;
-  background: var(--mv-panel);
-}
-
-.regrouping-notice p {
-  margin: 0;
-  color: #5f6f7f;
-  font-size: 0.86rem;
-}
-
-.regrouping-notice.has-changes {
-  border-color: #f0d9a8;
-  background: var(--mv-warning-bg);
-}
-
-.regrouping-notice.has-changes p {
-  color: #7a5412;
-  font-weight: 650;
-}
-
-.regrouping-modal {
-  width: clamp(22rem, 60vw, 52rem);
-}
-
-.regrouping-warning {
-  margin: 0;
-  padding: 0.55rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid #f0c7c7;
-  background: #fdf1f1;
-  color: #8a3d3d;
-  font-size: 0.86rem;
-}
-
-.regrouping-list {
-  display: grid;
-  gap: 0.55rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.regrouping-row {
-  display: flex;
-  gap: 0.7rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid #e3e8ef;
-  border-radius: 10px;
-  background: #fff;
-}
-
-.regrouping-row.is-chosen {
-  border-color: #9fc3ea;
-  background: #f4f9ff;
-}
-
-.regrouping-row.is-stay {
-  opacity: 0.8;
-}
-
-.regrouping-choice {
-  flex: none;
-  padding-top: 0.15rem;
-}
-
-.regrouping-body {
-  display: grid;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.regrouping-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.regrouping-source {
-  color: var(--mv-muted);
-}
-
-.regrouping-pill {
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 800;
-  background: #eef2f7;
-  color: #4b5563;
-}
-
-.regrouping-pill.is-move {
-  background: #e3effc;
-  color: var(--mv-brand-600);
-}
-
-.regrouping-pill.is-separate {
-  background: #fff1dc;
-  color: #8a5a12;
-}
-
-.regrouping-pill.is-stay {
-  background: #e6f6ef;
-  color: #0b6b4f;
-}
-
-.regrouping-pill.is-unscored {
-  background: #fdecec;
-  color: #8a3d3d;
-}
-
-.regrouping-reason,
-.regrouping-route {
-  margin: 0;
-  font-size: 0.88rem;
-  color: #1f2937;
-}
-
-.regrouping-route {
-  font-weight: 650;
-}
-
-.regrouping-impact {
-  margin: 0.1rem 0 0;
-  padding-left: 1.1rem;
-  font-size: 0.82rem;
-  color: #5f6f7f;
-}
-
-.regrouping-impact .is-teacher {
-  color: #7a5412;
-}
-
-@media (max-width: 640px) {
-  .regrouping-notice {
-    flex-direction: column;
-    align-items: stretch;
-  }
 }
 
 /* A version written before its Standard text changed. Publishing waits on it,
@@ -7051,18 +6840,6 @@ button {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.concept-bundle .concept-bundle-actions {
-  grid-column: 1 / -1;
-  justify-content: flex-start;
-  margin-top: 0.15rem;
-  padding-top: 0.5rem;
-  border-top: 1px dashed var(--mv-border);
-}
-
-.concept-bundle .concept-bundle-move-to select {
-  max-width: 100%;
-}
-
 /* ==========================================================================
    TEACHER REVIEW — layout and density rework
    Appended last on purpose: this screen's rules are spread over thousands of
@@ -7242,20 +7019,6 @@ button {
 .connection-object-copy p {
   line-height: 1.7;
 }
-/* The move/reorder controls are a footer to the object, set off by one
-   hairline and real space rather than by being in a box of their own. */
-.concept-bundle-actions {
-  margin-top: 1.1rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--mv-border);
-  gap: 1.5rem;
-}
-.concept-bundle-action-group.is-order {
-  border: none;
-  padding-left: 1.5rem;
-  border-left: 1px solid var(--mv-border);
-}
-
 /* The section heading now sits on the page above the scrolling panel. */
 .connection-review-heading.is-outside {
   padding: 0 0.25rem 0.25rem;

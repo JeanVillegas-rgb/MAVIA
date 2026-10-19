@@ -16,14 +16,14 @@ from lessons.models import (
     Question,
     QuestionLearningObjectLink,
 )
-from lessons.services import semantic_grouping
-from lessons.services.learning_resource_linker import (
+from lessons.services.embedding_service import SemanticUnavailable
+from lessons.services.question_linker import (
     is_empty_prompt,
     refresh_question_learning_object_links,
 )
 
 Status = QuestionLearningObjectLink.ReviewStatus
-ENCODER = "lessons.services.learning_resource_linker._question_encoder"
+ENCODER = "lessons.services.question_linker._question_encoder"
 
 
 class WordVectorEncoder:
@@ -130,7 +130,7 @@ class QuestionPairingTests(TestCase):
             review_status=Status.PENDING_REVIEW,
         )
 
-        with patch(ENCODER, side_effect=semantic_grouping.SemanticUnavailable("no model")):
+        with patch(ENCODER, side_effect=SemanticUnavailable("no model")):
             refresh_question_learning_object_links(self.material)
 
         self.assertEqual(self._link(question).review_status, Status.PENDING_REVIEW)

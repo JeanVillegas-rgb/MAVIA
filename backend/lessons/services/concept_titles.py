@@ -24,7 +24,7 @@ _NUMBERED_FIGURE_LABEL = re.compile(
 
 def _caption_name(members):
     """The first member figure's own caption, for a concept named "Figure 1"."""
-    from .semantic_grouping import figure_caption, recorded_caption
+    from .visual_describer import figure_caption, recorded_caption
 
     for item in members:
         caption = figure_caption(recorded_caption(item))

@@ -1,11 +1,4 @@
-"""The teacher's corrections to an automatic bundle.
-
-Bundles are placed without asking, so every correction is a plain button: move
-an object out, move it to another concept, or change its place in the bundle.
-"""
-
-import os
-from unittest.mock import patch
+"""Bundle payload and ordering tests."""
 
 from django.test import TestCase
 
@@ -19,10 +12,7 @@ from .models import (
     LearningObjectGroup,
     OutlineNode,
 )
-from .services.unit_matching import refresh_heading_unit_suggestions
-from .test_semantic_grouping import FakeRuntime
-from .test_unit_matching import SEMANTIC_ENV
-from .tests import authenticated_api_client
+from .test_utils import authenticated_api_client
 
 
 class BundleControlFixture(TestCase):
@@ -47,45 +37,6 @@ class BundleControlFixture(TestCase):
 
     def _url(self, suffix):
         return f"/api/courses/{self.course.id}/outline-nodes/{self.topic.id}/{suffix}"
-
-
-class MoveOutTests(BundleControlFixture):
-    def test_move_out_gives_the_object_its_own_concept(self):
-        client = authenticated_api_client()
-
-        response = client.post(self._url(f"learning-objects/{self.diagram.id}/move-out/"), format="json")
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.diagram.refresh_from_db()
-        self.assertNotEqual(self.diagram.group_id, self.solid.group_id)
-        self.assertEqual(self.diagram.group.learning_objects.count(), 1)
-
-
-class MoveToTests(BundleControlFixture):
-    def test_move_to_puts_the_object_in_the_named_concept(self):
-        other = LearningObjectGroup.objects.create(outline_node=self.topic, label="Liquid")
-        client = authenticated_api_client()
-
-        response = client.post(
-            self._url(f"learning-objects/{self.diagram.id}/move-to/"),
-            {"group_id": other.id}, format="json",
-        )
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.diagram.refresh_from_db()
-        self.assertEqual(self.diagram.group_id, other.id)
-
-    def test_move_to_rejects_a_concept_from_another_topic(self):
-        elsewhere = OutlineNode.objects.create(course=self.course, title="Other", order=1)
-        foreign = LearningObjectGroup.objects.create(outline_node=elsewhere, label="Nope")
-        client = authenticated_api_client()
-
-        response = client.post(
-            self._url(f"learning-objects/{self.diagram.id}/move-to/"),
-            {"group_id": foreign.id}, format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
 
 
 class ReorderTests(BundleControlFixture):
@@ -168,84 +119,6 @@ class PayloadTests(BundleControlFixture):
         self.assertTrue(versions["complete"])
 
 
-class LeavingAGroupTests(BundleControlFixture):
-    """What a move does to the members it leaves behind."""
-
-    def setUp(self):
-        super().setUp()
-        # The concept is taught through A's object: B's two are suppressed
-        # duplicates until the Standard leaves.
-        LearningObject.objects.filter(
-            pk__in=[self.solids.id, self.diagram.id]
-        ).update(represented_by=self.solid)
-
-    def _published_object_ids(self):
-        """What the published lesson and its audio actually read."""
-        return set(
-            LearningObject.objects.filter(
-                material__outline_node=self.topic,
-                represented_by__isnull=True,
-            ).values_list("id", flat=True)
-        )
-
-    def test_moving_the_standard_out_releases_the_objects_left_behind(self):
-        client = authenticated_api_client()
-
-        response = client.post(self._url(f"learning-objects/{self.solid.id}/move-out/"), format="json")
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.solids.refresh_from_db()
-        self.diagram.refresh_from_db()
-        self.assertIsNone(self.solids.represented_by_id)
-        self.assertIsNone(self.diagram.represented_by_id)
-        self.assertTrue({self.solids.id, self.diagram.id}.issubset(self._published_object_ids()))
-
-    def test_moving_the_standard_to_another_concept_releases_them_too(self):
-        other = LearningObjectGroup.objects.create(outline_node=self.topic, label="Liquid")
-        client = authenticated_api_client()
-
-        response = client.post(
-            self._url(f"learning-objects/{self.solid.id}/move-to/"),
-            {"group_id": other.id}, format="json",
-        )
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.solids.refresh_from_db()
-        self.diagram.refresh_from_db()
-        self.assertIsNone(self.solids.represented_by_id)
-        self.assertIsNone(self.diagram.represented_by_id)
-        self.assertTrue({self.solids.id, self.diagram.id}.issubset(self._published_object_ids()))
-
-
-class MoveOutIsRememberedTests(BundleControlFixture):
-    def setUp(self):
-        super().setUp()
-        # Named after the bundle that stays, so the concept's label still
-        # looks automatic after the move. A locked label would block automatic
-        # placement on its own and hide what this test is about.
-        self.group.label = "Solids"
-        self.group.save(update_fields=["label"])
-
-    def test_the_automatic_pass_does_not_put_the_object_straight_back(self):
-        """A teacher breaking a bundle up is a decision the next pass must obey."""
-        client = authenticated_api_client()
-        response = client.post(self._url(f"learning-objects/{self.solid.id}/move-out/"), format="json")
-        self.assertEqual(response.status_code, 200, response.data)
-        self.solid.refresh_from_db()
-        moved_to = self.solid.group_id
-
-        runtime = FakeRuntime()
-        runtime.pair_scores = lambda pairs: [0.95 for _ in pairs]
-        with patch.dict(os.environ, SEMANTIC_ENV):
-            counts = refresh_heading_unit_suggestions(self.topic, runtime_instance=runtime)
-
-        self.solid.refresh_from_db()
-        self.solids.refresh_from_db()
-        self.assertEqual(self.solid.group_id, moved_to)
-        self.assertNotEqual(self.solid.group_id, self.solids.group_id)
-        self.assertEqual(counts["placed"], 0)
-
-
 class TiedOrderTests(BundleControlFixture):
     def setUp(self):
         super().setUp()
@@ -320,17 +193,12 @@ class UnconfirmedMaterialTests(BundleControlFixture):
         self.second.generated_json = {"learning_objects_confirmed": False}
         self.second.save(update_fields=["generated_json"])
 
-    def test_every_bundle_control_refuses_an_unconfirmed_file(self):
-        other = LearningObjectGroup.objects.create(outline_node=self.topic, label="Liquid")
+    def test_reorder_refuses_an_unconfirmed_file(self):
         client = authenticated_api_client()
 
-        for suffix, body in (
-            (f"learning-objects/{self.diagram.id}/move-out/", {}),
-            (f"learning-objects/{self.diagram.id}/move-to/", {"group_id": other.id}),
-            (f"learning-objects/{self.diagram.id}/reorder/", {"direction": "up"}),
-        ):
-            with self.subTest(suffix=suffix):
-                response = client.post(self._url(suffix), body, format="json")
-                self.assertEqual(response.status_code, 400, suffix)
+        suffix = f"learning-objects/{self.diagram.id}/reorder/"
+        response = client.post(self._url(suffix), {"direction": "up"}, format="json")
+
+        self.assertEqual(response.status_code, 400, suffix)
         self.diagram.refresh_from_db()
         self.assertEqual(self.diagram.group_id, self.group.id)

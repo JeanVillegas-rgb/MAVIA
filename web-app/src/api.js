@@ -194,9 +194,6 @@ export function deleteLearningObject(courseId, materialId, objectId) {
   );
 }
 
-// `keep` answers a reconfirm review: the ids of approved learning objects to
-// leave where they are. Without it, a reconfirm that would move objects of
-// the approved PDFs comes back as { approved_changes } and confirms nothing.
 // Labels (Bloom level, LOTS/HOTS, category) the printed questions in a topic
 // that upload stored without them. Run when the Questions step opens.
 export function labelTopicQuestions(courseId, nodeId) {
@@ -212,13 +209,13 @@ export function keepQuestionBank(courseId, nodeId, groupId) {
   );
 }
 
-export function confirmLearningObjects(courseId, materialId, keep = null) {
+export function confirmLearningObjects(courseId, materialId) {
   return request(
     `/courses/${courseId}/materials/${materialId}/confirm-learning-objects/`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(keep === null ? {} : { keep }),
+      body: JSON.stringify({}),
     }
   );
 }
@@ -240,37 +237,10 @@ export function fetchLearningResources(courseId, nodeId) {
   );
 }
 
-// Corrections to an automatic bundle: the object leaves, moves, or changes place.
-export function moveObjectOut(courseId, nodeId, learningObjectId) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/move-out/`,
-    { method: "POST" },
-  );
-}
-
-export function moveObjectToConcept(courseId, nodeId, learningObjectId, groupId) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/learning-objects/${learningObjectId}/move-to/`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ group_id: groupId }),
-    },
-  );
-}
-
-export function acceptLearningObjectMatchSuggestion(courseId, nodeId, suggestionId) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/match-suggestions/${suggestionId}/accept/`,
-    { method: "POST" }
-  );
-}
-
-export function rejectLearningObjectMatchSuggestion(courseId, nodeId, suggestionId) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/match-suggestions/${suggestionId}/reject/`,
-    { method: "POST" }
-  );
+export function finalizeTopicSources(courseId, nodeId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/finalize-sources/`, {
+    method: "POST",
+  });
 }
 
 export function reviewQuestionPairing(
@@ -376,18 +346,6 @@ export function addPathLink(nodeId, prerequisiteConceptId, dependentConceptId) {
   });
 }
 
-// Carries out the ticked proposals. Every reviewed object is settled, ticked or not.
-export function applyRegrouping(courseId, nodeId, learningObjectIds) {
-  return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/regrouping/apply/`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ learning_object_ids: learningObjectIds }),
-    }
-  );
-}
-
 export function assignVersionSlot(courseId, nodeId, learningObjectId, slot) {
   return request(`/courses/${courseId}/outline-nodes/${nodeId}/version-assignment/`, {
     method: "POST",
@@ -462,11 +420,6 @@ export function fetchGenerationRunEvents(runId, after = 0) {
 
 export function fetchQuestionGenerationTrace(runId) {
   return request(`/generation/runs/${runId}/events/`);
-}
-
-// Where each edited learning object now belongs. Proposes only; changes nothing.
-export function fetchRegroupingPreview(courseId, nodeId) {
-  return request(`/courses/${courseId}/outline-nodes/${nodeId}/regrouping/`);
 }
 
 // Every learning path under one topic, one per uploaded PDF. Derives the edges
