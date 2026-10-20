@@ -64,17 +64,9 @@ def build_topic_path(node_id):
             return []
         return [item for item in standard_bundle_for(concept.representative) if (item.content or "").strip()]
 
-    def standard_text(concept):
-        return bundle_text(standard_objects(concept)) or concept.content
-
-    def standard_parts(concept):
-        return [
-            {"id": item.id, "title": item.title or "", "text": item.content.strip()}
-            for item in standard_objects(concept)
-        ]
-
     steps = []
     for position, concept in enumerate(ordered, start=1):
+        standard = standard_objects(concept)
         steps.append({
             "branch": branch(concept),
             "prerequisites": shown[concept.id],
@@ -85,8 +77,11 @@ def build_topic_path(node_id):
             "title": concept.title,
             "section_title": concept.section_title,
             "kind": concept.kind,
-            "content": standard_text(concept),
-            "parts": standard_parts(concept),
+            "content": bundle_text(standard) or concept.content,
+            "parts": [
+                {"id": item.id, "title": item.title or "", "text": item.content.strip()}
+                for item in standard
+            ],
             "source_material_ids": concept.source_material_ids,
             "source_materials": sources(concept),
             "source_count": len(concept.members),

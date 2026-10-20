@@ -3,8 +3,8 @@
 from . import embeddings
 from .calibration import load_calibration
 from .clues import (
-    MIN_SHARED_TERMS, clue_records, find_term_owners, heading_vote, meaning_vote, name_vote, order_vote,
-    presented_in_parallel, reference_uses, shared_pdf_order, term_vote,
+    MIN_SHARED_TERMS, find_term_owners, heading_vote, order_vote,
+    presented_in_parallel, read_clues, reference_uses, shared_pdf_order,
 )
 from .concept_text import material_positions, prepare
 from .fusion import (
@@ -55,17 +55,6 @@ def _facts(first, second, owners, positions):
     return facts, earlier, later
 
 
-def _votes(prerequisite, dependent, owners, positions, meaning_cutoff, semantic):
-    """Each clue's vote, +1 when it supports prerequisite first."""
-    return {
-        "name": name_vote(prerequisite, dependent)[0],
-        "terms": term_vote(prerequisite, dependent, owners, MIN_SHARED_TERMS)[0],
-        "meaning": meaning_vote(prerequisite, dependent, meaning_cutoff)[0] if semantic else 0,
-        "heading": heading_vote(prerequisite, dependent)[0],
-        "order": order_vote(prerequisite, dependent, positions)[0],
-    }
-
-
 def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
     """Every pair the text links: accepted, or pending when something contradicts it."""
     concepts = list(concepts)
@@ -91,7 +80,9 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
             if decision.verdict not in (ACCEPTED, PENDING):
                 continue
             prerequisite, dependent = (earlier, later) if decision.direction > 0 else (later, earlier)
-            votes = _votes(prerequisite, dependent, owners, positions, meaning_cutoff, semantic)
+            votes, records = read_clues(
+                prerequisite, dependent, owners, positions, meaning_cutoff, semantic, min_terms=MIN_SHARED_TERMS,
+            )
             decisions.append({
                 "prerequisite": prerequisite.concept,
                 "dependent": dependent.concept,
@@ -101,8 +92,7 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
                     "direction_from": decision.direction_from,
                     "contradictions": list(decision.contradictions),
                     "votes": votes,
-                    "records": clue_records(prerequisite, dependent, owners, positions, meaning_cutoff, semantic,
-                                            min_terms=MIN_SHARED_TERMS),
+                    "records": records,
                     "relatedness": round(relatedness(first, second), 3) if semantic else None,
                     "confidence": round(confidence(votes, 1, DECIDING_CLUES), 3),
                     "semantic": semantic,

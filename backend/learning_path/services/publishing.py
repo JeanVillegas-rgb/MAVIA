@@ -55,10 +55,20 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
                 )
                 if created:
                     continue
+            same_evidence = (
+                row.evidence == decision["evidence"] and row.cross_section == decision["cross_section"]
+            )
             if row.status in ConceptPrerequisite.TEACHER_DECIDED:
-                row.evidence = decision["evidence"]
-                row.cross_section = decision["cross_section"]
-                row.save(update_fields=["evidence", "cross_section", "updated_at"])
+                if not same_evidence:
+                    row.evidence = decision["evidence"]
+                    row.cross_section = decision["cross_section"]
+                    row.save(update_fields=["evidence", "cross_section", "updated_at"])
+                continue
+            if (
+                same_evidence
+                and row.status == decision["verdict"]
+                and row.source == ConceptPrerequisite.Source.DERIVED
+            ):
                 continue
             ConceptPrerequisite.objects.filter(pk=row.pk).exclude(
                 status__in=ConceptPrerequisite.TEACHER_DECIDED,

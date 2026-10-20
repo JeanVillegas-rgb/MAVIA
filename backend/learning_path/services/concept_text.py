@@ -73,6 +73,7 @@ class ConceptText:
     vectors: object = None
     part_names: tuple = ()
     materials: frozenset = frozenset()
+    headings: frozenset = frozenset()
 
     @property
     def id(self):
@@ -122,6 +123,10 @@ def prepare(concepts, embed=None):
                 member.material_id for member in _members(concept)
                 if getattr(member, "material_id", None) is not None
             ),
+            headings=frozenset(
+                frozenset(terms(getattr(member, "section_title", "") or ""))
+                for member in getattr(concept, "members", None) or ()
+            ) - {frozenset()},
         ))
     if embed is not None:
         vectors = np.asarray(embed([sentence for text in texts for sentence in text.sentences]))

@@ -5,8 +5,6 @@ from collections import Counter
 
 import numpy as np
 
-from .concept_text import terms
-
 SIGNIFICANT_G2 = 3.84
 MEANING_MATCHES = 1
 MIN_SHARED_TERMS = 2
@@ -182,8 +180,7 @@ def reference_uses(earlier, later, term_owners, min_terms=1):
 
 def heading_stems(text):
     """The stems of every heading the concept's members sit under."""
-    members = getattr(text.concept, "members", None) or ()
-    return {frozenset(terms(getattr(member, "section_title", "") or "")) for member in members} - {frozenset()}
+    return text.headings
 
 
 def _named_by(text, heading):
@@ -205,14 +202,26 @@ def presented_in_parallel(first, second):
     )
 
 
+def read_clues(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic=True, min_terms=1):
+    """(votes, records): each clue's vote and the numbers behind it, each clue read once."""
+    name = name_vote(prerequisite, dependent)
+    shared_terms = term_vote(prerequisite, dependent, term_owners, min_terms)
+    meaning = meaning_vote(prerequisite, dependent, meaning_cutoff) if semantic else (0, None)
+    heading = heading_vote(prerequisite, dependent)
+    order = order_vote(prerequisite, dependent, positions)
+    votes = {
+        "name": name[0],
+        "terms": shared_terms[0],
+        "meaning": meaning[0],
+        "heading": heading[0],
+        "order": order[0],
+    }
+    records = {"name": name[1], "terms": shared_terms[1], "heading": heading[1], "order": order[1]}
+    if semantic:
+        records["meaning"] = meaning[1]
+    return votes, records
+
+
 def clue_records(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic=True, min_terms=1):
     """The numbers behind each clue, for the stored evidence."""
-    records = {
-        "name": name_vote(prerequisite, dependent)[1],
-        "terms": term_vote(prerequisite, dependent, term_owners, min_terms)[1],
-        "heading": heading_vote(prerequisite, dependent)[1],
-        "order": order_vote(prerequisite, dependent, positions)[1],
-    }
-    if semantic:
-        records["meaning"] = meaning_vote(prerequisite, dependent, meaning_cutoff)[1]
-    return records
+    return read_clues(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic, min_terms)[1]

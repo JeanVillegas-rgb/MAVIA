@@ -134,7 +134,9 @@ QUESTIONS_PER_ORDER = {"LOT": 2, "HOT": 1}
 def _questions(parts, include_answers):
     """Up to QUESTIONS_PER_ORDER questions per thinking order, earliest first, LOT before HOT."""
     by_order = {}
-    for question in GeneratedQuestion.objects.filter(node__in=parts, status="final").select_related("node__material").order_by("id"):
+    nodes = {part.id: part for part in parts}
+    for question in GeneratedQuestion.objects.filter(node__in=parts, status="final").order_by("id"):
+        question.node = nodes[question.node_id]
         order = question.thinking_order or "LOT"
         bucket = by_order.setdefault(order, [])
         if len(bucket) < QUESTIONS_PER_ORDER.get(order, 1):
@@ -204,7 +206,7 @@ def get_published_path(node, *, include_answers=True):
             sources.setdefault(member.material_id, member.material.title)
 
         parts = _telling(representative, members, standard_bundle_for(representative))
-        bundles = bundles_for_group(group)
+        bundles = bundles_for_group(concept.group if concept is not None else group)
         seen = {part.id for part in parts}
         alternates = []
         for member in members:
