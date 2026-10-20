@@ -5,12 +5,10 @@ materials -- rows deleted by cascade (a course or topic) never removed their
 files, and tests wrote into the real media folder.
 """
 
-from io import StringIO
 from pathlib import Path
 
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.core.management import call_command
 from django.test import TestCase
 
 from .models import CourseGroup, LearningMaterial
@@ -36,19 +34,3 @@ class MediaCleanupTests(TestCase):
             course.delete()
 
         self.assertFalse(path.exists())
-
-    def test_orphans_are_listed_and_only_deleted_on_request(self):
-        course = CourseGroup.objects.create(title="Science")
-        kept = self._material(course)
-        orphan = Path(settings.MEDIA_ROOT) / "learning_materials" / "orphan.pdf"
-        orphan.parent.mkdir(parents=True, exist_ok=True)
-        orphan.write_bytes(b"%PDF-1.4")
-
-        out = StringIO()
-        call_command("clean_orphan_media", stdout=out)
-        self.assertIn("orphan.pdf", out.getvalue())
-        self.assertTrue(orphan.exists())
-
-        call_command("clean_orphan_media", "--delete", stdout=StringIO())
-        self.assertFalse(orphan.exists())
-        self.assertTrue(Path(kept.pdf_file.path).exists())

@@ -12,7 +12,6 @@ from collections import Counter
 import numpy as np
 
 from .concept_text import terms
-from .relatedness import UNRELATED_PERCENTILE, relatedness
 
 # Chi-squared with one degree of freedom at p < 0.05 (Dunning 1993).
 SIGNIFICANT_G2 = 3.84
@@ -160,18 +159,6 @@ def meaning_vote(prerequisite, dependent, meaning_cutoff):
     return _sign(use - use_back), {"use": round(use, 3), "use_back": round(use_back, 3)}
 
 
-def meaning_cutoff(unrelated_pairs):
-    """The 95th percentile of a sentence's closest match in an unrelated concept."""
-    matches = []
-    for first, second in unrelated_pairs:
-        if first.vectors is None or second.vectors is None or not len(first.vectors) or not len(second.vectors):
-            continue
-        similarity = first.vectors @ second.vectors.T
-        matches.extend(similarity.max(axis=1).tolist())
-        matches.extend(similarity.max(axis=0).tolist())
-    return float(np.percentile(matches, UNRELATED_PERCENTILE)) if matches else None
-
-
 def order_vote(prerequisite, dependent, positions):
     """PDF order, only when two or more PDFs teach both and all agree."""
     shared = [spots for spots in positions.values() if prerequisite.id in spots and dependent.id in spots]
@@ -245,28 +232,6 @@ def presented_in_parallel(first, second):
         not _named_by(first, heading) and not _named_by(second, heading)
         for heading in heading_stems(first) & heading_stems(second)
     )
-
-
-def pair_votes(texts, term_owners, positions, related_cutoff, meaning_cutoff, semantic=True):
-    """Relatedness and the four votes for every pair, each read as "first before second"."""
-    for index, first in enumerate(texts):
-        for second in texts[index + 1:]:
-            score = relatedness(first, second) if semantic else None
-            yield {
-                "first": first,
-                "second": second,
-                "relatedness": score,
-                # A concept with no full sentence has nothing to compare, with or without the encoder.
-                "related": bool(first.sentences and second.sentences) and ((not semantic) or score >= related_cutoff),
-                "votes": {
-                    "name": name_vote(first, second)[0],
-                    "terms": term_vote(first, second, term_owners)[0],
-                    "meaning": meaning_vote(first, second, meaning_cutoff)[0] if semantic else 0,
-                    "heading": heading_vote(first, second)[0],
-                    "order": order_vote(first, second, positions)[0],
-                    "parallel": presented_in_parallel(first, second),
-                },
-            }
 
 
 def clue_records(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic=True, min_terms=1):

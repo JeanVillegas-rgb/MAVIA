@@ -30,7 +30,7 @@ mavia/
   RN style values in `mobile-app/src/theme.ts`.
 - **Student = mobile**: the student role lives in `mobile-app` (Expo / React
   Native, phone-first with a responsive breakpoint for larger screens — see
-  `mobile-app/README.md`). Teacher and admin stay on `web-app`; a non-student
+  `mobile-app/RUNNING.md`). Teacher and admin stay on `web-app`; a non-student
   account that logs into the mobile app is redirected to a "this app is for
   students" screen, and a student logging into `web-app` lands on
   `GetMobileAppPage` instead of a dashboard. Web registration is teacher-only.
@@ -90,7 +90,7 @@ npm install
 npm run android     # Android emulator, or Expo Go on a physical device
 ```
 
-See `mobile-app/README.md` for connecting a physical device / emulator to the
+See `mobile-app/RUNNING.md` for connecting a physical device / emulator to the
 backend (it can't use `web-app`'s dev proxy, so it needs a real host address).
 
 ## API

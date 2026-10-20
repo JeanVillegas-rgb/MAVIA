@@ -5,10 +5,6 @@ first. Best-match averaging, as BERTScore does over tokens: one shared idea
 between two broader concepts still counts.
 """
 
-import numpy as np
-
-UNRELATED_PERCENTILE = 95
-
 
 def _has_rows(vectors):
     return vectors is not None and len(vectors) > 0
@@ -26,9 +22,3 @@ def relatedness(first, second):
         best_match_average(first.vectors, second.vectors)
         + best_match_average(second.vectors, first.vectors)
     ) / 2
-
-
-def related_cutoff(unrelated_pairs):
-    """The 95th percentile of relatedness between concepts known to be unrelated."""
-    scores = [relatedness(first, second) for first, second in unrelated_pairs]
-    return float(np.percentile(scores, UNRELATED_PERCENTILE)) if scores else None

@@ -442,6 +442,16 @@ def _draft_questions_for_node(
 
 # ── Phase 1b: grounding gate (corrective RAG) ──
 
+def _log_check(result):
+    """The checker's verdict and the passages it read, under the draft's line."""
+    if result["reason"]:
+        logger.debug("      verdict: %s -- %s", result["verdict"], result["reason"])
+    else:
+        logger.debug("      verdict: %s", result["verdict"])
+    for hit in result["retrieved"]:
+        logger.debug('      %.2f  PDF %s  "%s..."', hit["score"], hit["material_id"], hit["preview"])
+
+
 def _validate_drafts_for_node(node, index, on_event=None, stats=None):
     """Check every draft against the topic's source text; delete what fails.
 
@@ -470,10 +480,12 @@ def _validate_drafts_for_node(node, index, on_event=None, stats=None):
             unverified += 1
         if result["passed"]:
             logger.debug('  ✓ grounded — "%s"', draft.question_text)
+            _log_check(result)
             continue
         failures.append((draft.question_text, result["reason"]))
         reject_ids.append(draft.id)
         logger.debug('  ⊘ ungrounded (%s) — "%s"', result["stage"], draft.question_text)
+        _log_check(result)
         _emit(
             on_event, "question_ungrounded", draft.question_text,
             reason=result["reason"], stage=result["stage"],

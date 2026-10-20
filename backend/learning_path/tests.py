@@ -52,8 +52,9 @@ class TopicFixture(TestCase):
     def _derive(self, *rows):
         """Replace the criteria with a fixed outcome, as a context manager.
 
-        Each row is ``(before, after, verdict)``; evidence is a reference rule
-        naming one passage each way, so reasons read predictably.
+        Each row is ``(before, after, verdict)``; the evidence says the later
+        concept names the earlier one, which comes first in the lesson, so
+        reasons read predictably.
         """
         from unittest.mock import patch
 
@@ -65,10 +66,8 @@ class TopicFixture(TestCase):
                 "prerequisite": concepts[before],
                 "dependent": concepts[after],
                 "verdict": verdict,
-                "evidence": {"rule": "reference", "reference": {
-                    "prw_forward": 1.0, "prw_backward": 0.0, "prd": 1.0, "theta": 0.05,
-                    "passages_forward": 1, "passages_backward": 1,
-                }},
+                "evidence": {"rule": "reference-order", "direction_from": "pdf_order", "contradictions": [],
+                             "votes": {"name": 1}, "records": {"name": {"use": 1.0, "use_back": 0.0}}},
                 "cross_section": False,
             }
             for before, after, verdict in rows
@@ -153,7 +152,7 @@ class TopicPreviewTests(TopicFixture):
         solid = next(step for step in path["steps"] if step["title"] == "Solid")
         self.assertEqual(
             solid["suggestions"][0]["reason"],
-            "Solid's text names Liquid in 1 of 1 passages; Liquid's text never names Solid.",
+            "Solid names Liquid. Liquid comes first in the lesson.",
         )
 
     def test_a_teacher_link_says_the_teacher_added_it(self):

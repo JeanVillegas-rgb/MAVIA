@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 CHUNK_WORDS = 90
 CHUNK_OVERLAP = 30
 
+# How much of each retrieved passage the trace keeps: enough to show the
+# sentence a verdict turned on, in the log and in the saved event.
+PREVIEW_CHARS = 200
+
 # -- 1. the index ---------------------------------------------------------
 
 def _chunk_text(text):
@@ -338,7 +342,7 @@ def verify(question, index):
         {
             "material_id": chunk["material_id"],
             "score": round(score, 4),
-            "preview": chunk["text"][:120],
+            "preview": chunk["text"][:PREVIEW_CHARS],
         }
         for score, chunk in hits
     ]
