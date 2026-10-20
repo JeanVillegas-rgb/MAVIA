@@ -60,7 +60,6 @@ cd backend
 "../../Milestone1-Jean/mavia/Scripts/python.exe" manage.py runserver   # :8000
 ```
 
-`manage.py test` runs the full suite (29 tests: 21 auth + 8 adaptive-config).
 Copy `.env.example` to `.env` to
 override secrets / CORS origins / email (SMTP). With no email config the
 verification link is printed to the runserver console.

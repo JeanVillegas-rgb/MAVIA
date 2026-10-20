@@ -252,7 +252,7 @@ def _course_prerequisites(node, concept_ids):
 
     Only links that shape paths (accepted, approved), only from topics earlier
     in the outline, only to concepts saved in a published topic's path --
-    nearest topic first. See docs/handoff-course-prerequisites.md.
+    nearest topic first.
     """
     topics = course_topics(node.course)
     rank = {topic.id: index for index, topic in enumerate(topics)}
