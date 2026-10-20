@@ -9,9 +9,11 @@
 // PC over the same Wi-Fi -- or the laptop joins the phone's own hotspot, which
 // also gets around school/venue Wi-Fi that blocks devices from seeing each
 // other. It finds this PC's LAN address, lets Django answer on it, points the
-// app's API at it and starts Expo in LAN mode. No adb, no .env edits: both
-// Django (python-dotenv) and Expo leave variables already set in the
-// environment alone, so the address is simply passed in.
+// app's API at it and starts Expo in LAN mode. No .env edits: both Django
+// (python-dotenv) and Expo leave variables already set in the environment
+// alone, so the address is simply passed in. The adb reverse loop runs here
+// too: a phone paired by wireless debugging still loads the installed APK's
+// bundle from localhost:8081, and the email links point at localhost:5173.
 
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -23,7 +25,7 @@ import readline from "node:readline";
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const MOBILE_APP_DIR = join(SCRIPTS_DIR, "..");
 const BACKEND_DIR = join(MOBILE_APP_DIR, "..", "backend");
-const REVERSE_PORTS = [8081, 8000];
+const REVERSE_PORTS = [8081, 8000, 5173];
 const REVERSE_INTERVAL_MS = 5000;
 const WIN = process.platform === "win32";
 const WIFI = process.argv.includes("--wifi");
@@ -45,8 +47,14 @@ function lanAddress() {
 }
 
 function resolveAdb() {
-  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
-  if (sdk) {
+  const sdks = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    // Android Studio's default install location on Windows.
+    WIN && process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Android", "Sdk"),
+  ];
+  for (const sdk of sdks) {
+    if (!sdk) continue;
     const exe = join(sdk, "platform-tools", WIN ? "adb.exe" : "adb");
     if (existsSync(exe)) return exe;
   }
@@ -94,7 +102,7 @@ function setupReverse(adb, { announce = false } = {}) {
       .slice(1)
       .filter((line) => line.trim().endsWith("device"));
     if (devices.length === 0) {
-      if (announce) log("reverse", "no USB device attached yet -- will keep checking.");
+      if (announce) log("reverse", "no phone attached over adb yet -- will keep checking.");
       return;
     }
     for (const port of REVERSE_PORTS) {
@@ -226,11 +234,11 @@ if (WIFI) {
   log("dev", `starting Django backend (${backendPython})...`);
   spawnSupervised("backend", backendPython, ["manage.py", "runserver", "0.0.0.0:8000"], { cwd: BACKEND_DIR });
 
-  const adb = resolveAdb();
-  log("dev", `keeping adb reverse alive for ports ${REVERSE_PORTS.join(", ")}...`);
-  setupReverse(adb, { announce: true });
-  reverseTimer = setInterval(() => setupReverse(adb), REVERSE_INTERVAL_MS);
-
   log("dev", "starting Expo...");
   spawnSupervised("expo", "npx", ["expo", "start"], { cwd: MOBILE_APP_DIR, shell: WIN });
 }
+
+const adb = resolveAdb();
+log("dev", `keeping adb reverse alive for ports ${REVERSE_PORTS.join(", ")}...`);
+setupReverse(adb, { announce: true });
+reverseTimer = setInterval(() => setupReverse(adb), REVERSE_INTERVAL_MS);

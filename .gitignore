@@ -54,6 +54,7 @@ MAVIA MANUSCRIPT.docx
 MAVIA CHAPTER 3.docx
 MAVIA MANUSCRIPT*
 THESIS INPUT MATERIALS
+*.docx
 
 # Editor and office lock files
 ~$*
@@ -67,6 +68,7 @@ tmp/
 # Defense slide decks and their traces
 docs/pipeline-run-through-2026-10-02/
 docs/pipeline-run-through-2026-10-05/
+docs/pipeline-run-through-2026-10-06/
 
 # Source lesson PDFs kept at the repo root for re-uploading
 /Science*.pdf
@@ -100,3 +102,6 @@ backend/db.sqlite3.*
 
 # Simulation run workbooks and their builder
 docs/simulation-*/
+
+brag-output
+docs/
