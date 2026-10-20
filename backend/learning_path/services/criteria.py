@@ -14,25 +14,14 @@ from .fusion import (
 from .relatedness import relatedness
 
 RULE = "reference-order"
-VERSION = "6.2"
+VERSION = "6.3"
 
 _PDF_ORDER = {1: SHARED, -1: SHARED, 0: DISAGREE, None: NONE_SHARED}
 
 
-def section_headings(concept):
-    """The lesson headings a concept sits under, across its files."""
-    members = getattr(concept, "members", None) or (concept,)
-    return {
-        (getattr(member, "section_title", "") or "").strip().casefold()
-        for member in members
-        if (getattr(member, "section_title", "") or "").strip()
-    }
-
-
 def crosses_sections(first, second):
     """True when both concepts sit under headings and share none."""
-    left, right = section_headings(first), section_headings(second)
-    return bool(left and right and not (left & right))
+    return bool(first.sections and second.sections and not (first.sections & second.sections))
 
 
 def _is_figure(text):
@@ -98,6 +87,6 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
                     "semantic": semantic,
                     "version": VERSION,
                 },
-                "cross_section": crosses_sections(prerequisite.concept, dependent.concept),
+                "cross_section": crosses_sections(prerequisite, dependent),
             })
     return decisions

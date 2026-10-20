@@ -1,4 +1,4 @@
-# Prerequisite link criteria (v6.2)
+# Prerequisite link criteria (v6.3)
 
 **Scope:** one path per **topic**, whose steps are **concepts** (grouping's concept bundles
 across every PDF of the topic, `services/concept_units.py`). Grouping and extraction are read,
@@ -44,6 +44,16 @@ accepted prerequisite of every concept mentioning the stomach. `records.name.par
 titles named; the reason reads "Everyday Examples names Pollination and Fertilization, parts of How
 Flowering Plants Reproduce."
 
+**Printed-in headings.** A concept sits under its members' own headings and, for a term printed
+inside a section ("1. Solid — A solid has..." in body text under the heading "Matter"), under that
+section's heading too. The extractor opens a section for every numbered term, and grouping reads
+"same heading in a row" as "same concept", so the stored heading cannot hold both meanings. The
+section a term is printed in is read from the stored PDF blocks with the extractor's own rules
+(`concept_text.enclosing_headings`): its heading test, smaller headings nesting under bigger ones,
+objectives and quizzes ending a section, starting at the first learning object's block. Grouping and
+the stored data are not changed. The heading and `parallel` clues and the cross-section flag read
+these headings; Matter -> Solid becomes a heading link and Solid, Liquid and Gas become parallel.
+
 ## The verdict
 
 | # | Situation | Verdict | Direction |
@@ -62,7 +72,7 @@ PDFs does not block a link: a figure pair is accepted in PDF order, a cross-PDF 
 order. A suggestion's direction: a figure after the text its description refers to, else the order;
 across PDFs the name clue's direction if it has one, else the merged order; otherwise the order.
 
-Each stored link's `evidence` holds `rule: "reference-order"`, `version: "6.2"`, `direction_from`
+Each stored link's `evidence` holds `rule: "reference-order"`, `version: "6.3"`, `direction_from`
 (`heading`, `pdf_order`, `figure`, `name`, `merged_order`, `pdf_agreement`), `contradictions`, the
 clue votes (oriented prerequisite-first), each clue's numbers, `relatedness`, `confidence` (share of
 the deciding clues that agree; used to break loops) and `semantic`. `reasons.link_reason` turns
@@ -91,3 +101,7 @@ stored as a suggestion for the teacher. The `CourseConceptLink` table is kept.
 v6.2 (2026-10-06): the text decides whether two concepts are linked, the lesson's order which way;
 figures and concepts from different PDFs do not block a link, two owned terms are needed, and a
 concept is also named by its parts' titles within a shared PDF.
+
+v6.3 (2026-10-21): v6.2 plus printed-in headings: a term printed inside a section also sits under
+that section's heading, so the heading and `parallel` clues see the lesson's nesting. A link the
+heading clue accepts no longer adds "names ... more than the reverse" to its reason.

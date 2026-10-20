@@ -43,7 +43,7 @@ def _reference_order_reason(evidence, a, b):
     elif source == "pdf_agreement":
         order = records.get("order") or {}
         parts.append(f"{order.get('agree')} of {order.get('pdfs')} files teach {a} first; the text says nothing either way.")
-    if names.get("use_back", 0) > names.get("use", 0):
+    if names.get("use_back", 0) > names.get("use", 0) and votes.get("heading") != 1:
         parts.append(f"But {a}'s text names {b} more than the reverse.")
     refers = names.get("use", 0) > 0 or terms.get("use", 0) > 0
     refers_back = names.get("use_back", 0) > 0 or terms.get("use_back", 0) > 0
