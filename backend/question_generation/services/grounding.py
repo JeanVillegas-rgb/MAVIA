@@ -1,40 +1,4 @@
-"""Corrective-RAG validation gate for generated questions.
-
-Generation writes a draft bank from one concept's Standard text. That text is
-already in the prompt, so this gate is not here to *supply* context -- it is
-here to check the model used the context it was given. Measured on the first
-published topic before this existed: 61 of 76 final questions used words that
-appear nowhere in the topic's PDFs, and two marked "plasma" correct where the
-source says "gas" and "solid". The source was in the prompt both times.
-
-Two stages, and a draft has to clear both:
-
-1. **Retrieval** -- the draft Q&A becomes the query for a vector search over
-   chunked raw PDF text, returning the top ``k`` passages. Scoped to the
-   *topic's* materials, not the whole library: a global index would happily
-   answer a question about particle arrangement with a passage about melting,
-   and the judge would then validate a question against text the learner was
-   never read.
-2. **LLM-as-judge** -- the draft and the retrieved passages go to a second
-   model asked one question: does this text support this answer? It reports
-   which option the source actually supports, so a wrong key is caught rather
-   than merely flagged as unsupported -- the "plasma" case among them.
-
-A lexical stage used to run first: any word of the stem or key missing from
-the PDFs rejected the draft. Measured on the 2026-10-05 reference run it made
-121 of the 195 rejections, nearly all over ordinary question wording
-("according", "involves", "occurs", "item") rather than invented science, and
-it rested on a hand-written stop-word list. The judge reads meaning, not
-spelling, so it was removed.
-
-A failure carries a reason back to generation, which retries with that reason
-appended to the prompt. Retries are bounded; a draft that cannot be grounded is
-dropped rather than served.
-
-Nothing here degrades silently. When the sentence encoder or the judge is
-unavailable the draft passes as "unverified" and says so in the verdict, so a
-teacher never reads an unverified bank as a verified one.
-"""
+"""Checks each draft question against the topic's PDFs: retrieve the top passages, then ask an LLM checker."""
 
 import json
 import logging
@@ -45,24 +9,14 @@ from config.groq_client import generate as groq_generate
 
 logger = logging.getLogger(__name__)
 
-# Chunking. Small enough that a retrieved passage is about one idea and fits
-# the encoder's window whole -- MiniLM truncates nothing here because
-# `supports()` is checked before anything is embedded.
 CHUNK_WORDS = 90
 CHUNK_OVERLAP = 30
 
-# How much of each retrieved passage the trace keeps: enough to show the
-# sentence a verdict turned on, in the log and in the saved event.
 PREVIEW_CHARS = 200
 
-# -- 1. the index ---------------------------------------------------------
 
 def _chunk_text(text):
-    """Overlapping word windows over one PDF's raw extracted text.
-
-    Overlap matters: a sentence cut across a boundary would otherwise support
-    nothing, and the one fact a question turns on is often that sentence.
-    """
+    """Overlapping word windows over one PDF's extracted text."""
     words = (text or "").split()
     if not words:
         return []
@@ -81,13 +35,7 @@ def _chunk_text(text):
 
 
 def _fit(engine, text):
-    """Trim ``text`` until the encoder accepts it, or "" if it never does.
-
-    The query is a whole draft Q&A -- stem plus four choices -- which can run
-    past the encoder's window. Dropping trailing words is lossy but honest;
-    silently truncating inside the model is what ``supports()`` exists to
-    prevent everywhere else in this codebase.
-    """
+    """Trim text until the encoder accepts it, or "" if it never does."""
     words = (text or "").split()
     while words:
         candidate = " ".join(words)
@@ -98,13 +46,7 @@ def _fit(engine, text):
 
 
 class TopicIndex:
-    """Chunked raw PDF text for one topic, with its embeddings.
-
-    Built once per run and passed down, because every draft of every concept
-    in the topic searches the same corpus. Embeddings go through the grouping
-    pipeline's own on-disk cache, so a republish of an unchanged PDF re-embeds
-    nothing.
-    """
+    """Chunked PDF text of one topic with its embeddings; built once per run."""
 
     def __init__(self, chunks, vectors=None, reason=""):
         self.chunks = chunks
@@ -116,7 +58,7 @@ class TopicIndex:
         return bool(self.vectors) and bool(self.chunks)
 
     def search(self, query, k=None):
-        """Top-k chunks by cosine, highest first. Empty when unsearchable."""
+        """Top-k chunks by cosine, highest first; empty when unsearchable."""
         k = k or int(getattr(settings, "QUESTION_VALIDATION_TOP_K", 3))
         if not self.searchable:
             return []
@@ -126,8 +68,6 @@ class TopicIndex:
         fitted = _fit(engine, query)
         if not fitted:
             return []
-        # Vectors come back normalised, so the dot product is the cosine --
-        # the same assumption learning_path's criteria already rely on.
         vector = engine.embeddings([fitted])[0]
         scored = [
             (sum(a * b for a, b in zip(vector, candidate)), chunk)
@@ -161,7 +101,7 @@ def build_index(outline_node):
         from lessons.services.embedding_service import sentence_embedding_runtime
 
         engine = sentence_embedding_runtime()
-    except Exception as exc:  # noqa: BLE001 -- drafts pass as unverified, said so
+    except Exception as exc:
         logger.warning("Grounding index has no sentence encoder: %s", exc)
         return TopicIndex(chunks, reason=f"sentence encoder unavailable: {exc}")
 
@@ -176,17 +116,15 @@ def build_index(outline_node):
 
     try:
         vectors = engine.embeddings(texts)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Grounding index could not embed chunks: %s", exc)
         return TopicIndex(chunks, reason=f"embedding failed: {exc}")
 
     return TopicIndex(usable, vectors=vectors)
 
 
-# -- 2. the draft, as text ------------------------------------------------
-
 def asserted_answer(question):
-    """What this draft claims is true, written out rather than as a letter."""
+    """What the draft claims is true, written out rather than as a letter."""
     if question.question_format == "TF":
         return str(question.correct_answer)
     choices = question.choices or {}
@@ -197,7 +135,7 @@ def asserted_answer(question):
 
 
 def question_query(question):
-    """The draft Q&A as one string -- retrieval query and judge subject alike."""
+    """The draft Q&A as one string, used as the search query and checked text."""
     parts = [question.question_text]
     choices = question.choices or {}
     if isinstance(choices, dict):
@@ -207,8 +145,6 @@ def question_query(question):
     parts.append(f"Answer: {asserted_answer(question)}")
     return "\n".join(str(part) for part in parts if part)
 
-
-# -- 3. LLM as judge ------------------------------------------------------
 
 JUDGE_PROMPT = """You are a strict fact-checker for a science lesson for young
 learners. You are given SOURCE passages taken from the lesson's own materials,
@@ -252,7 +188,7 @@ def _judge_model():
 
 
 def _judge_call(prompt):
-    """One judging call. Temperature 0 -- a verdict is not a creative task."""
+    """One checker call, at temperature 0."""
     if settings.LLM_PROVIDER == "groq":
         raw, _metrics = groq_generate(
             prompt,
@@ -285,7 +221,7 @@ def _judge_call(prompt):
 
 
 def judge(question, passages):
-    """``(verdict, supported_answer, problem)`` for one draft and its passages."""
+    """(verdict, supported_answer, problem) for one draft and its passages."""
     prompt = JUDGE_PROMPT.format(
         passages="\n\n".join(
             f"[{index + 1}] ({chunk['material_title']}) {chunk['text']}"
@@ -304,21 +240,13 @@ def judge(question, passages):
     )
 
 
-# -- 4. the gate ----------------------------------------------------------
-
 def enabled():
     return bool(getattr(settings, "QUESTION_VALIDATION_ENABLED", True))
 
 
 def verify(question, index):
-    """One draft's verdict.
-
-    ``{"passed", "stage", "reason", "verdict", "retrieved"}``.
-    A stage that could not run says so rather than being counted as a pass.
-    """
+    """One draft's verdict; a check that could not run passes as unverified."""
     if not index.searchable:
-        # The draft goes through, but the trace records that the gate never
-        # ran, so an unverified bank is never read as a verified one.
         return {
             "passed": True,
             "stage": "retrieval_unavailable",
@@ -349,7 +277,7 @@ def verify(question, index):
 
     try:
         verdict, supported_answer, problem = judge(question, passages)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Judge call failed for draft %s: %s", question.id, exc)
         return {
             "passed": True,
@@ -377,7 +305,7 @@ def verify(question, index):
 
 
 def correction_note(failures):
-    """The feedback appended to the generation prompt on a corrective retry."""
+    """The feedback added to the generation prompt on a corrective retry."""
     if not failures:
         return ""
     lines = [f'- "{text}" was rejected: {reason}' for text, reason in failures[:6]]

@@ -17,12 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class GetQuestionView(APIView):
-    """
-    GET /api/questions/?node_id=<learning_object_id>&thinking_order=LOT&learner_id=learner_123
-
-    Returns an unanswered question for this learner at the requested
-    thinking order (LOT or HOT).
-    """
+    """GET /api/questions/: an unanswered question for a learner at one thinking order."""
     def get(self, request):
         node_id = request.query_params.get("node_id")
         thinking_order = request.query_params.get("thinking_order", "LOT")
@@ -57,10 +52,7 @@ class GetQuestionView(APIView):
 
 
 class SubmitAnswerView(APIView):
-    """
-    POST /api/questions/submit/
-    Body: {"question_id": 1, "selected_answer": "B", "learner_id": "learner_123"}
-    """
+    """POST /api/questions/submit/: record a learner's answer."""
     def post(self, request):
         question_id = request.data.get("question_id")
         selected = request.data.get("selected_answer")
@@ -97,11 +89,7 @@ class SubmitAnswerView(APIView):
 
 
 class QuestionStatsView(APIView):
-    """
-    GET /api/questions/stats/?node_id=<learning_object_id>&learner_id=learner_123
-
-    Per-node progress stats for a learner, broken down by thinking order.
-    """
+    """GET /api/questions/stats/: a learner's progress on one node."""
     def get(self, request):
         node_id = request.query_params.get("node_id")
         learner_id = request.query_params.get("learner_id")
@@ -136,15 +124,11 @@ class QuestionStatsView(APIView):
         })
 
 
-# ── Generation pipeline (teacher-facing) ──
-
-# If a "running" run has emitted nothing for this long, assume the server
-# restarted mid-run and the thread is gone.
 STALE_RUN_SECONDS = 300
 
 
 def _standard_question_source(node):
-    """Return the sole question source for a concept, or an actionable error."""
+    """The concept's one question source, or an error response."""
     if node.group_id is None:
         return node, ""
     state = assign_group_versions(node.group)
@@ -159,7 +143,7 @@ def _standard_question_source(node):
 
 
 def _event_recorder(run_id):
-    """A trace callback that stores each event under ``run_id``, in order."""
+    """A trace callback that stores each event under run_id."""
     seq_counter = [0]
 
     def on_event(event_type, message, data):
@@ -175,7 +159,7 @@ def _event_recorder(run_id):
 
 
 def _run_pipeline(run_id, material_id, node_ids=None, skip_complete=False, append=False):
-    """Thread target: run the pipeline, streaming trace events to the DB."""
+    """Thread target: material generation, traced to the DB."""
     from .services.pipeline import generate_questions_for_material
 
     on_event = _event_recorder(run_id)
@@ -183,7 +167,6 @@ def _run_pipeline(run_id, material_id, node_ids=None, skip_complete=False, appen
     try:
         run = GenerationRun.objects.select_related("material").get(id=run_id)
         material = run.material
-        # questions are saved to the DB per node as the pipeline progresses
         questions = generate_questions_for_material(
             material,
             on_event=on_event,
@@ -195,7 +178,7 @@ def _run_pipeline(run_id, material_id, node_ids=None, skip_complete=False, appen
                  {"count": len(questions)})
         GenerationRun.objects.filter(id=run_id).update(
             status="finished", finished_at=timezone.now())
-    except Exception as e:  # noqa: BLE001 — surface anything to the trace
+    except Exception as e:
         logger.exception("[Questions] run %s failed: %s: %s", run_id, type(e).__name__, e)
         on_event("error", f"{type(e).__name__}: {e}", None)
         GenerationRun.objects.filter(id=run_id).update(
@@ -203,13 +186,7 @@ def _run_pipeline(run_id, material_id, node_ids=None, skip_complete=False, appen
 
 
 def _question_run_in_progress():
-    """A 409 response while another question run is live, else None.
-
-    One question run at a time; runs orphaned by a server restart are closed
-    here. Scoped to this kind deliberately: an extraction or publish run is
-    unrelated work, and refusing to generate questions because a PDF is still
-    being read would be a conflict the teacher cannot act on.
-    """
+    """A 409 response while another question run is live, else None."""
     for run in GenerationRun.objects.filter(
         status="running",
         kind=GenerationRun.Kind.QUESTIONS,
@@ -229,7 +206,7 @@ def _question_run_in_progress():
 
 
 def _run_topic_pipeline(run_id, node_ids):
-    """Thread target: fill a topic's concepts in rounds, tracing to the DB."""
+    """Thread target: topic generation in rounds, traced to the DB."""
     from lessons.models import LearningObject
     from .services.pipeline import generate_questions_for_topic
 
@@ -243,7 +220,7 @@ def _run_topic_pipeline(run_id, node_ids):
         on_event("saved", f"Saved {result['added']} questions to database", result)
         GenerationRun.objects.filter(id=run_id).update(
             status="finished", finished_at=timezone.now())
-    except Exception as e:  # noqa: BLE001 -- surface anything to the trace
+    except Exception as e:
         logger.exception("[Questions] run %s failed: %s: %s", run_id, type(e).__name__, e)
         on_event("error", f"{type(e).__name__}: {e}", None)
         GenerationRun.objects.filter(id=run_id).update(
@@ -251,14 +228,7 @@ def _run_topic_pipeline(run_id, node_ids):
 
 
 class StartTopicGenerationView(APIView):
-    """
-    POST /api/generation/topics/<outline_node_id>/start/
-
-    The Questions step's one Generate button: every concept of the topic
-    still short of its minimum LOTS and HOTS is topped up, in rounds, from
-    its Standard version. Concepts already at the minimum are left alone.
-    Runs in the background; poll the trace endpoint.
-    """
+    """POST /api/generation/topics/<id>/start/: top up every short concept in the background."""
     def post(self, request, outline_node_id):
         from lessons.models import LearningObjectGroup, OutlineNode
 
@@ -301,15 +271,7 @@ class StartTopicGenerationView(APIView):
 
 
 class StartGenerationView(APIView):
-    """
-    POST /api/generation/materials/<material_id>/start/
-    Body (optional): {"node_id": <learning_object_id>}
-
-    Teacher-triggered: generate questions for every narrated learning object
-    of a completed material, or for a single learning object when node_id is
-    given. Image objects are valid when their narration has been written.
-    Runs in the background; poll the trace endpoint.
-    """
+    """POST /api/generation/materials/<id>/start/: generate for a material, or one object."""
     def post(self, request, material_id, node_id=None):
         try:
             material = LearningMaterial.objects.get(id=material_id)
@@ -333,8 +295,6 @@ class StartGenerationView(APIView):
         node = None
         requested_node_id = node_id if node_id is not None else request.data.get("node_id")
         skip_complete = request.data.get("skip_complete", requested_node_id is None) is True
-        # "Generate more": a new batch is added to the concept's questions
-        # instead of replacing the untouched ones.
         append = request.data.get("append") is True
         if requested_node_id is not None:
             node = content_nodes.filter(id=requested_node_id).first()
@@ -397,12 +357,7 @@ class StartGenerationView(APIView):
 
 
 class MaterialQuestionsView(APIView):
-    """
-    GET /api/generation/materials/<material_id>/questions/
-
-    Teacher-facing review of the stored question bank, grouped per learning
-    object. Includes correct answers — never expose this to learners.
-    """
+    """GET /api/generation/materials/<id>/questions/: the teacher's review list, with answers."""
     THINKING_ORDER_RANK = {"LOT": 0, "HOT": 1}
 
     def get(self, request, material_id):
@@ -441,13 +396,7 @@ class MaterialQuestionsView(APIView):
 
 
 class QuestionDetailView(APIView):
-    """
-    PATCH /api/generation/questions/<question_id>/
-    Body: any of {"question_text", "choices", "correct_answer", "explanation"}
-
-    Teacher review edits to a stored question. DELETE removes the question.
-    NOTE: editing or deleting cascades no learner responses except on delete.
-    """
+    """PATCH or DELETE /api/generation/questions/<id>/: teacher edits."""
     def patch(self, request, question_id):
         try:
             question = GeneratedQuestion.objects.get(id=question_id)
@@ -523,7 +472,7 @@ class QuestionDetailView(APIView):
 
 
 class GenerationRunsView(APIView):
-    """GET /api/generation/runs/?material_id=<id> — recent runs, newest first."""
+    """GET /api/generation/runs/: recent runs, newest first."""
     def get(self, request):
         runs = GenerationRun.objects.select_related("material", "node").order_by("-started_at")
         material_id = request.query_params.get("material_id")
@@ -545,12 +494,7 @@ class GenerationRunsView(APIView):
 
 
 class GenerationTraceView(APIView):
-    """
-    GET /api/generation/runs/<run_id>/events/?after=<seq>
-
-    Returns run status plus events with seq > after (default: all).
-    Poll this with the last seq already received.
-    """
+    """GET /api/generation/runs/<id>/events/?after=<seq>: run status and newer events."""
     def get(self, request, run_id):
         try:
             run = GenerationRun.objects.select_related(
@@ -568,11 +512,9 @@ class GenerationTraceView(APIView):
         return Response({
             "run": {
                 "id": run.id,
-                # Lets one progress dialog label itself for every pipeline.
                 "kind": run.kind,
                 "kind_label": run.get_kind_display(),
                 "material_id": run.material_id,
-                # A publish run covers a topic and has no material.
                 "material_title": run.material.title if run.material_id else None,
                 "node_id": run.node_id,
                 "node_title": run.node.title if run.node else None,

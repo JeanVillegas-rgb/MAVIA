@@ -1,13 +1,4 @@
-"""Whether a concept's question bank still matches the concept's text.
-
-A concept's bank is written by the model from the whole concept -- every
-PDF's telling of it -- and filed under one object, the lead of its Standard
-version. When the concept's text changes (an object edited, deleted, or
-another PDF's version joining or leaving), the bank may ask about text that
-is no longer there. It is then out of date: the teacher keeps it or
-regenerates it, and publishing waits until they do -- the same rule as an
-out-of-date Simplified or Elaborated version.
-"""
+"""Whether a concept's question bank still matches the concept's text."""
 
 import hashlib
 
@@ -42,12 +33,7 @@ def _all_confirmed(group):
 
 
 def bank_out_of_date(group):
-    """True when the concept's text no longer matches its bank's.
-
-    Not judged while any PDF in the concept is a draft: edits are worked out
-    when it is confirmed again. A bank written before the text was recorded
-    is not known to be stale and is not reported.
-    """
+    """True when the concept's text no longer matches its bank; not judged while a PDF is a draft."""
     owner = bank_owner(group)
     if owner is None or not _all_confirmed(group):
         return False
@@ -65,7 +51,7 @@ def out_of_date_groups(outline_node):
 
 
 def keep_bank(group):
-    """The teacher's "Keep as is": the bank is current for today's text."""
+    """The teacher's "Keep as is": mark the bank current for today's text."""
     owner = bank_owner(group)
     if owner is None:
         return
@@ -75,15 +61,7 @@ def keep_bank(group):
 
 
 def refile_bank_before_delete(learning_object):
-    """Keep the concept's bank when the object it is filed under is deleted.
-
-    The bank belongs to the concept, not to this object; it was only filed
-    here. It moves to another member now, so the deletion does not take it
-    along, and ``settle_bank_owner`` files it under the concept's new lead
-    once the object is gone. The concept's text has changed, so the bank
-    reads as out of date. With no other member, the concept is gone and so
-    is its bank: nothing is moved.
-    """
+    """Move the concept's bank off an object that is about to be deleted."""
     from lessons.models import LearningObject
 
     if learning_object.group_id is None or not learning_object.generated_questions.exists():
@@ -91,7 +69,6 @@ def refile_bank_before_delete(learning_object):
     target = (
         LearningObject.objects.filter(group_id=learning_object.group_id)
         .exclude(pk=learning_object.pk)
-        # The same PDF's next object first: it is the likeliest new lead.
         .annotate(other_pdf=Case(
             When(material_id=learning_object.material_id, then=Value(0)),
             default=Value(1), output_field=IntegerField(),

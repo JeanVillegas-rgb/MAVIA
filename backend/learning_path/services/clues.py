@@ -1,10 +1,4 @@
-"""The direction clues (spec section 6 and amendment 1).
-
-Each looks at one pair and votes +1 (prerequisite first), -1 (dependent first)
-or 0, with the numbers behind the vote. A clue votes whenever its evidence
-differs at all; how far to trust it is fusion's job, so no clue has a threshold
-that could be fitted to a lesson.
-"""
+"""The clues: each looks at one pair and votes +1, -1 or 0."""
 
 import math
 from collections import Counter
@@ -13,12 +7,8 @@ import numpy as np
 
 from .concept_text import terms
 
-# Chi-squared with one degree of freedom at p < 0.05 (Dunning 1993).
 SIGNIFICANT_G2 = 3.84
-# How many best matches the meaning clue averages; 2 is the size fallback the
-# spec defines, switched on only if the development set shows a size bias.
 MEANING_MATCHES = 1
-# v6.1: a chunk uses another concept's terms only when it has two of them (spec 2026-10-02, C4).
 MIN_SHARED_TERMS = 2
 
 
@@ -27,19 +17,14 @@ def _sign(difference):
 
 
 def _usable_part_names(holder, target):
-    """The target's part names, when the holder shares a file with it.
-
-    Across files the direction is only the merged order's guess, and there a part's
-    name made "The Digestive System" a prerequisite of every concept mentioning the
-    stomach, the module's introduction among them.
-    """
+    """The target's part names, only when the holder shares a file with it."""
     if holder.materials & target.materials:
         return target.part_names
     return ()
 
 
 def name_use(holder, target):
-    """Share of the holder's sentences naming the target: its title, or one of its parts' titles."""
+    """Share of the holder's sentences naming the target or one of its parts."""
     names = [set(stems) for _, stems in _usable_part_names(holder, target)]
     if target.name:
         names.insert(0, set(target.name))
@@ -51,7 +36,7 @@ def name_use(holder, target):
 
 
 def named_parts(holder, target):
-    """Titles of the target's parts that the holder's sentences name, for the stored evidence."""
+    """Titles of the target's parts that the holder names."""
     return [
         title for title, stems in _usable_part_names(holder, target)
         if any(set(stems) <= set(sentence) for sentence in holder.sentence_terms)
@@ -60,7 +45,6 @@ def named_parts(holder, target):
 
 def name_vote(prerequisite, dependent):
     if prerequisite.name and set(prerequisite.name) == set(dependent.name):
-        # One title on two concepts (a split the grouping made) names neither over the other.
         return 0, {"use": 0.0, "use_back": 0.0}
     use, use_back = name_use(dependent, prerequisite), name_use(prerequisite, dependent)
     record = {"use": round(use, 3), "use_back": round(use_back, 3)}
@@ -83,10 +67,7 @@ def log_likelihood(count_inside, total_inside, count_outside, total_outside):
 
 
 def find_term_owners(texts):
-    """``{stem: concept id}`` for terms significantly over-represented in one concept.
-
-    Only terms at least two concepts use can link anything, so only those are owned.
-    """
+    """{stem: concept id} for terms significantly over-represented in one concept."""
     counts = {text.id: Counter(term for passage in text.passages for term in passage) for text in texts}
     sizes = {concept_id: sum(counter.values()) for concept_id, counter in counts.items()}
     grand_total = sum(sizes.values())
@@ -111,7 +92,7 @@ def find_term_owners(texts):
 
 
 def term_use(holder, target, term_owners, min_terms=1):
-    """Share of the holder's passages using at least ``min_terms`` distinct terms the target owns."""
+    """Share of the holder's passages using at least min_terms of the target's owned terms."""
     passages = [passage for passage in holder.passages if passage]
     if not passages:
         return 0.0
@@ -173,15 +154,8 @@ def order_vote(prerequisite, dependent, positions):
     return 0, record
 
 
-
 def shared_pdf_order(first, second, positions):
-    """``(direction, pdfs)`` from every PDF teaching both concepts.
-
-    +1 when all of them put ``first`` earlier, -1 when all put ``second``
-    earlier, 0 when they disagree, ``None`` when no PDF teaches both.
-    Unlike ``order_vote``, one PDF is enough: v6 takes direction from the
-    lesson's own order (spec section 3).
-    """
+    """(direction, pdfs) from every PDF that teaches both concepts."""
     shared = [spots for spots in positions.values() if first.id in spots and second.id in spots]
     if not shared:
         return None, 0
@@ -194,13 +168,9 @@ def shared_pdf_order(first, second, positions):
 
 
 def reference_uses(earlier, later, term_owners, min_terms=1):
-    """How much each concept refers to the other, by name and by owned terms.
-
-    ``*_word`` are the single-word shares v6.1 keeps to tell a weak link from none.
-    """
+    """How much each concept refers to the other, by name and by owned terms."""
     same_name = bool(earlier.name) and set(earlier.name) == set(later.name)
     return {
-        # One title on two concepts (a split the grouping made) names neither.
         "later_names_earlier": 0.0 if same_name else name_use(later, earlier),
         "earlier_names_later": 0.0 if same_name else name_use(earlier, later),
         "later_uses_earlier_terms": term_use(later, earlier, term_owners, min_terms),
@@ -208,6 +178,7 @@ def reference_uses(earlier, later, term_owners, min_terms=1):
         "later_uses_earlier_word": term_use(later, earlier, term_owners),
         "earlier_uses_later_word": term_use(earlier, later, term_owners),
     }
+
 
 def heading_stems(text):
     """The stems of every heading the concept's members sit under."""
@@ -220,14 +191,14 @@ def _named_by(text, heading):
 
 
 def heading_vote(prerequisite, dependent):
-    """Author structure: the dependent sits under a heading naming the prerequisite (Wang et al. 2016)."""
+    """+1 when the dependent sits under a heading naming the prerequisite."""
     under = any(_named_by(prerequisite, heading) for heading in heading_stems(dependent))
     under_back = any(_named_by(dependent, heading) for heading in heading_stems(prerequisite))
     return _sign(under - under_back), {"under": under, "under_back": under_back}
 
 
 def presented_in_parallel(first, second):
-    """Both sit under one heading that names neither: the author presents them side by side."""
+    """Both sit under one heading that names neither."""
     return any(
         not _named_by(first, heading) and not _named_by(second, heading)
         for heading in heading_stems(first) & heading_stems(second)
@@ -235,7 +206,7 @@ def presented_in_parallel(first, second):
 
 
 def clue_records(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic=True, min_terms=1):
-    """The numbers behind each clue for "prerequisite before dependent", for the stored evidence."""
+    """The numbers behind each clue, for the stored evidence."""
     records = {
         "name": name_vote(prerequisite, dependent)[1],
         "terms": term_vote(prerequisite, dependent, term_owners, min_terms)[1],

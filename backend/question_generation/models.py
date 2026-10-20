@@ -4,22 +4,12 @@ from lessons.models import LearningMaterial, LearningObject
 
 
 class GeneratedQuestion(models.Model):
-    # Derived from the classifier's Bloom level. Records whether a question
-    # demands lower- or higher-order thinking, and is what the generation
-    # pipeline targets/distributes on. A separate easy/medium/hard
-    # `difficulty` field derived straight from bloom_level used to sit
-    # alongside this one; it was removed because nothing read it (the
-    # adaptive engine's sequencing never used it) and difficulty is not
-    # soundly derivable from Bloom's level in the first place.
+    """A generated question; only status="final" rows are served or shown."""
     THINKING_ORDER_CHOICES = [
         ("LOT", "Lower Order Thinking"),
         ("HOT", "Higher Order Thinking"),
     ]
 
-    # Questions are written straight to the DB as drafts the moment the LLM
-    # returns them, then classified, deduplicated and trimmed by a separate
-    # deterministic pass. Only "final" rows are ever served to learners or
-    # shown to teachers — every read path must filter on this.
     STATUS_CHOICES = [
         ("draft", "Draft"),
         ("final", "Final"),
@@ -34,16 +24,6 @@ class GeneratedQuestion(models.Model):
         ("create", "Create"),
     ]
 
-    # The adaptive quiz walks a chunk through exactly these three tiers, in
-    # order — one correct answer per tier advances to the next. "apply" and
-    # "analyze" are treated as interchangeable for the third tier since a
-    # chunk's generated pool won't reliably contain both.
-    TIER_BUCKETS = [
-        ("remember",),
-        ("understand",),
-        ("apply", "analyze"),
-    ]
-
     FORMAT_CHOICES = [
         ("MCQ", "Multiple Choice"),
         ("TF", "True/False"),
@@ -56,22 +36,18 @@ class GeneratedQuestion(models.Model):
         ("Outcome", "Outcome"),
     ]
 
-    # the content node this question assesses
     node = models.ForeignKey(
         LearningObject,
         related_name="generated_questions",
         on_delete=models.CASCADE,
     )
 
-    # question content
     question_text = models.TextField()
     question_format = models.CharField(max_length=3, choices=FORMAT_CHOICES)
     choices = models.JSONField(null=True, blank=True)
     correct_answer = models.CharField(max_length=255)
     explanation = models.TextField(blank=True, default="")
 
-    # Classification (from Bloom's classifier — the authoritative labels).
-    # Blank on a draft row; populated by the post-generation finalize pass.
     bloom_level = models.CharField(
         max_length=20, choices=BLOOM_CHOICES, blank=True, default="", db_index=True)
     thinking_order = models.CharField(
@@ -80,17 +56,9 @@ class GeneratedQuestion(models.Model):
 
     status = models.CharField(
         max_length=5, choices=STATUS_CHOICES, default="draft", db_index=True)
-    # Hash of the source content and complete generation configuration. A full
-    # "Generate all" run may reuse a complete bank only when every row carries
-    # the current fingerprint. Explicit single-concept generation still
-    # regenerates on demand.
     generation_fingerprint = models.CharField(
         max_length=64, blank=True, default="", db_index=True,
     )
-    # The concept text alone, without the model or prompt settings above. A
-    # bank whose concept text no longer matches is out of date and waits for
-    # the teacher; a new model or prompt is not a reason to hold publishing.
-    # Blank on banks written before this was recorded: not known, not stale.
     source_text_fingerprint = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -118,10 +86,7 @@ class LearnerResponse(models.Model):
 
 
 class GenerationRun(models.Model):
-    """One teacher-triggered execution of question generation for a material.
-
-    When `node` is set, the run covered only that learning object; otherwise
-    it covered every narrated learning object of the material."""
+    """One run of a pipeline (questions, extraction, publish or versions) and its trace."""
     STATUS_CHOICES = [
         ("running", "Running"),
         ("finished", "Finished"),
@@ -142,9 +107,6 @@ class GenerationRun(models.Model):
         related_name="question_generation_runs",
         on_delete=models.SET_NULL,
     )
-    # A publish run covers a whole topic rather than one material, so it sets
-    # outline_node instead. One run model serves both so the teacher-facing
-    # trace endpoint and its polling client stay shared.
     outline_node = models.ForeignKey(
         "lessons.OutlineNode",
         null=True,
@@ -158,10 +120,6 @@ class GenerationRun(models.Model):
         PUBLISH = "publish", "Topic publish"
         VERSIONS = "versions", "Content version classification"
 
-    # Which pipeline this run belongs to. Not decoration: question generation
-    # refuses to start while another run is live, and that check had nothing to
-    # scope itself by. Without a kind, an extraction or publish run would make
-    # question generation report a conflict against unrelated work.
     kind = models.CharField(
         max_length=12,
         choices=Kind.choices,
@@ -181,12 +139,9 @@ class GenerationRun(models.Model):
 
 
 class GenerationEvent(models.Model):
-    """A single trace event emitted by the pipeline during a run."""
+    """One trace event of a run."""
     run = models.ForeignKey(GenerationRun, on_delete=models.CASCADE, related_name="events")
     seq = models.PositiveIntegerField()
-    # 30 was too narrow for the names course/bulk_version_generation.py emits
-    # ("version_classification_finished" is 31). SQLite stored them anyway;
-    # PostgreSQL rejects an over-length value outright.
     event_type = models.CharField(max_length=64)
     message = models.TextField(blank=True, default="")
     data = models.JSONField(null=True, blank=True)

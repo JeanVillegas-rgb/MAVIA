@@ -1,10 +1,4 @@
-"""Prerequisite links for the learning path (criteria v6.2).
-
-For each pair of concepts in a topic the text decides whether a link exists (a
-name, terms one concept explains, or a heading) and the lesson's order decides
-which way. Relatedness and meaning are recorded, not counted. Nothing here
-writes to the database. See backend/learning_path/CRITERIA.md.
-"""
+"""Prerequisite links inside one topic (criteria v6.2). Writes nothing."""
 
 from . import embeddings
 from .calibration import load_calibration
@@ -19,9 +13,6 @@ from .fusion import (
 )
 from .relatedness import relatedness
 
-__all__ = ["ACCEPTED", "PENDING", "crosses_sections", "decide_pairs"]
-
-# The rule's name in each link's evidence; the review screen's reason text reads it.
 RULE = "reference-order"
 VERSION = "6.2"
 
@@ -29,7 +20,7 @@ _PDF_ORDER = {1: SHARED, -1: SHARED, 0: DISAGREE, None: NONE_SHARED}
 
 
 def section_headings(concept):
-    """The lesson headings a concept sits under, across every file teaching it."""
+    """The lesson headings a concept sits under, across its files."""
     members = getattr(concept, "members", None) or (concept,)
     return {
         (getattr(member, "section_title", "") or "").strip().casefold()
@@ -39,7 +30,7 @@ def section_headings(concept):
 
 
 def crosses_sections(first, second):
-    """True when both concepts sit under headings and share none; shown to the teacher, never decisive."""
+    """True when both concepts sit under headings and share none."""
     left, right = section_headings(first), section_headings(second)
     return bool(left and right and not (left & right))
 
@@ -49,7 +40,7 @@ def _is_figure(text):
 
 
 def _facts(first, second, owners, positions):
-    """``(facts, earlier, later)``; ``first`` precedes ``second`` in the topic's merged order."""
+    """(facts, earlier, later) for a pair, in the topic's merged order."""
     order, _ = shared_pdf_order(first, second, positions)
     earlier, later = (second, first) if order == -1 else (first, second)
     facts = PairFacts(
@@ -65,7 +56,7 @@ def _facts(first, second, owners, positions):
 
 
 def _votes(prerequisite, dependent, owners, positions, meaning_cutoff, semantic):
-    """Each clue's vote, +1 when it supports ``prerequisite`` first."""
+    """Each clue's vote, +1 when it supports prerequisite first."""
     return {
         "name": name_vote(prerequisite, dependent)[0],
         "terms": term_vote(prerequisite, dependent, owners, MIN_SHARED_TERMS)[0],
@@ -76,12 +67,7 @@ def _votes(prerequisite, dependent, owners, positions, meaning_cutoff, semantic)
 
 
 def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
-    """Every pair the text links: accepted when nothing contradicts it, pending otherwise.
-
-    ``concepts`` arrive in the topic's merged order (``concepts_for_topic``).
-    ``runtime_instance`` is kept for callers and ignored. Without the encoder
-    the verdicts are the same; only relatedness and meaning are not recorded.
-    """
+    """Every pair the text links: accepted, or pending when something contradicts it."""
     concepts = list(concepts)
     if len(concepts) < 2:
         return []
@@ -98,7 +84,6 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
     decisions = []
     for index, first in enumerate(texts):
         for second in texts[index + 1:]:
-            # A concept with no full sentence has nothing to compare.
             if not (first.sentences and second.sentences):
                 continue
             facts, earlier, later = _facts(first, second, owners, positions)
@@ -121,7 +106,6 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
                     "relatedness": round(relatedness(first, second), 3) if semantic else None,
                     "confidence": round(confidence(votes, 1, DECIDING_CLUES), 3),
                     "semantic": semantic,
-                    # 6.2: a concept is also named by its parts' titles, within a shared file.
                     "version": VERSION,
                 },
                 "cross_section": crosses_sections(prerequisite.concept, dependent.concept),

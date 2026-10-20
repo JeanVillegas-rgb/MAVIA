@@ -1,32 +1,4 @@
-"""One plain sentence explaining a prerequisite link, for the review screen.
-
-Built from the evidence ``criteria.decide_pairs`` (rule ``reference-order``) and
-``course_criteria.decide_course_pairs`` (rule ``course``) store on each derived
-row. A row with no evidence was made by the teacher.
-"""
-
-
-def _course_reason(evidence, a, b):
-    votes = evidence.get("votes") or {}
-    records = evidence.get("records") or {}
-    parts = []
-    if votes.get("terms") == 1:
-        owned = (records.get("terms") or {}).get("owned") or []
-        listed = f" ({', '.join(owned[:3])})" if owned else ""
-        parts.append(f"{b} uses terms {a} explains{listed}.")
-    if votes.get("meaning") == 1:
-        parts.append(f"{b}'s sentences refer to {a}'s ideas.")
-    if votes.get("name") == 1:
-        parts.append(f"{b} names {a}.")
-    if evidence.get("contradicts_outline"):
-        parts.append(f"This contradicts your outline: {a}'s topic comes later.")
-    else:
-        parts.append("This follows your outline.")
-    if evidence.get("semantic") is False:
-        parts.append("The meaning check was unavailable.")
-    if evidence.get("confidence") is not None:
-        parts.append(f"Confidence {evidence['confidence']:.2f}.")
-    return " ".join(parts)
+"""One plain sentence explaining a prerequisite link, for the review screen."""
 
 
 _CONTRADICTION_SENTENCES = {
@@ -35,7 +7,7 @@ _CONTRADICTION_SENTENCES = {
 
 
 def _naming(names, a, b):
-    """"B names A", or which of A's parts B names when that is how it refers to A (6.2)."""
+    """"B names A", or which of A's parts B names."""
     parts = names.get("parts") or []
     if not parts:
         return f"{b} names {a}."
@@ -44,12 +16,7 @@ def _naming(names, a, b):
 
 
 def _reference_order_reason(evidence, a, b):
-    """``records`` are oriented prerequisite-first, so every sentence reads from them.
-
-    The stored ``contradictions`` name the PDF's earlier and later concept, which
-    is the dependent when a figure or the names reversed the order; only the
-    orientation-free ones (weak terms, disagreeing files) are read from that list.
-    """
+    """The reason sentence for a reference-order link."""
     votes = evidence.get("votes") or {}
     records = evidence.get("records") or {}
     names = records.get("name") or {}
@@ -85,7 +52,6 @@ def _reference_order_reason(evidence, a, b):
     if "weak_terms" in contradictions:
         words = (terms.get("owned") or []) + (terms.get("owned_back") or [])
         listed = f" ({', '.join(words[:3])})" if words else ""
-        # No passage holds two of them, but different passages can each hold a different one.
         wording = "single shared words link them" if len(words) > 1 else "one shared word links them"
         parts.append(f"Only {wording}{listed}; please confirm.")
     parts.extend(_CONTRADICTION_SENTENCES[key] for key in _CONTRADICTION_SENTENCES if key in contradictions)
@@ -96,8 +62,6 @@ def link_reason(evidence, prerequisite_title, dependent_title):
     a, b = prerequisite_title, dependent_title
     evidence = evidence or {}
     rule = evidence.get("rule")
-    if rule == "course":
-        return _course_reason(evidence, a, b)
     if rule == "reference-order":
         return _reference_order_reason(evidence, a, b)
     return "Added by you."

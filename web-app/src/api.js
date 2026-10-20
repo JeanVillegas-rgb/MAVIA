@@ -485,25 +485,3 @@ export function updateTopicQuestion(courseId, nodeId, questionId, data) {
   );
 }
 
-
-// The Course path page: outline topics and the cross-topic links between them.
-export function fetchCourseLearningPath(courseId) {
-  return request(`/learning-path/courses/${courseId}/`);
-}
-
-// "approved" accepts a suggestion; "rejected" removes a course link for good.
-export function decideCoursePathLink(courseId, linkId, status) {
-  return request(`/learning-path/courses/${courseId}/links/${linkId}/decision/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
-  });
-}
-
-export function restoreCoursePathLinks(courseId, undo) {
-  return request(`/learning-path/courses/${courseId}/links/restore/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ undo }),
-  });
-}

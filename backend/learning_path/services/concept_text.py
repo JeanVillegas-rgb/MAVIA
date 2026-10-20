@@ -1,8 +1,4 @@
-"""What the learning-path clues read from a concept: sentences, terms, vectors, PDFs.
-
-Nothing here decides anything; it turns grouped learning objects into the
-material the relatedness gate and the four clues compare (spec section 4).
-"""
+"""What the clues read from a concept: sentences, terms, vectors and PDF positions."""
 
 import re
 from dataclasses import dataclass, field
@@ -16,9 +12,6 @@ MIN_SENTENCE_WORDS = 4
 MIN_TERM_LETTERS = 3
 MAX_NAME_TERMS = 6
 
-# General English only. Words shaped by our lessons ("example", "part", "one")
-# are left out on purpose: a list fitted to the lessons we test on is the kind
-# of rule v5 removes.
 STOP_WORDS = frozenset("""
 a about above after again against all also am an and any are as at be because been
 before being below between both but by can cannot could did do does doing down
@@ -37,7 +30,7 @@ _stemmer = PorterStemmer()
 
 
 def split_sentences(text):
-    """Sentences of at least four words; shorter fragments are leftover headings."""
+    """Sentences of at least four words."""
     return [
         sentence.strip()
         for sentence in _SENTENCE_BREAK.split(text or "")
@@ -53,7 +46,7 @@ def _kept_words(text):
 
 
 def terms(text):
-    """Porter stems of the content words, repeats kept: "fertilized" -> "fertil"."""
+    """Porter stems of the content words, repeats kept."""
     return [_stemmer.stem(word) for word in _kept_words(text)]
 
 
@@ -63,7 +56,7 @@ def strip_numbering(title):
 
 
 def name_terms(title):
-    """The stems a concept can be named by, or ``()`` when its title is a sentence."""
+    """The stems a concept can be named by, or () when its title is a sentence."""
     stems = tuple(terms(strip_numbering(strip_part_suffix(title or ""))))
     return stems if 0 < len(stems) <= MAX_NAME_TERMS else ()
 
@@ -78,8 +71,6 @@ class ConceptText:
     name: tuple
     spelling: dict = field(default_factory=dict)
     vectors: object = None
-    # ``(title, stems)`` for each learning object inside the concept whose title is
-    # a name of its own: "Pollination" inside "How Flowering Plants Reproduce".
     part_names: tuple = ()
     materials: frozenset = frozenset()
 
@@ -93,11 +84,7 @@ def _members(concept):
 
 
 def part_names(concept, name):
-    """The members' titles a concept can also be named by, other than ``name`` itself.
-
-    The extractor keeps a term in its learning object's title and the explanation
-    in its content, so "Pollination" is never written in Pollination's own text.
-    """
+    """Titles of the concept's members it can also be named by."""
     found, seen = [], {frozenset(name)}
     for member in _members(concept):
         title = getattr(member, "title", "") or ""
@@ -109,7 +96,7 @@ def part_names(concept, name):
 
 
 def prepare(concepts, embed=None):
-    """One ``ConceptText`` per concept; ``embed`` is called once for every sentence."""
+    """One ConceptText per concept; embed is called once for every sentence."""
     texts = []
     for concept in concepts:
         sentences, pdfs, passages, spelling = [], [], [], {}
@@ -147,7 +134,7 @@ def prepare(concepts, embed=None):
 
 
 def material_positions(concepts):
-    """``{material id: {concept id: position}}`` -- each PDF's own order of the concepts it teaches."""
+    """{material id: {concept id: position}}: each PDF's own order."""
     first_seen = {}
     for concept in concepts:
         for member in getattr(concept, "members", None) or ():

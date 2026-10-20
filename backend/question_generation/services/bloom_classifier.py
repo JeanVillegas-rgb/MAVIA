@@ -1,5 +1,3 @@
-# question_generation/services/bloom_classifier.py
-
 import logging
 import os
 import re
@@ -7,21 +5,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Bloom's taxonomy describes the KIND of thinking a question demands, not how
-# hard it is. A `difficulty` (easy/medium/hard) axis derived from bloom_level
-# used to be stored alongside this one, but the adaptive engine never reads
-# it and difficulty is not soundly derivable from Bloom's level in the first
-# place, so it was removed rather than kept as unused, misleading metadata.
-#
-#   remember / understand / apply  -> LOT (lower order thinking)
-#   analyze / evaluate             -> HOT (higher order thinking)
-#   create                         -> excluded (None)
-#
-# `create` maps to None rather than being omitted: the trained model really can
-# predict it (it is one of its six classes), so it has to stay a recognised
-# level for _normalize_level. None marks it as having no assessable thinking
-# order, and the pipeline drops those questions — MAVIA only supports MCQ/TF,
-# which cannot assess a "produce something new" task.
 BLOOM_TO_THINKING_ORDER = {
     "remember":    "LOT",
     "understand":  "LOT",
@@ -57,11 +40,7 @@ MODEL_DIR = os.getenv("BLOOM_MODEL_DIR", DEFAULT_MODEL_DIR)
 
 
 class BloomClassifier:
-    """
-    Classifies question text into Bloom's taxonomy levels.
-    Primary: fine-tuned RoBERTa. Fallback: SVM pipeline (if transformers
-    or torch are unavailable, or the model folder is missing).
-    """
+    """Labels a question's Bloom level: fine-tuned RoBERTa, SVM fallback."""
 
     def __init__(self, backend: str = "auto"):
         self.backend = None
@@ -84,14 +63,11 @@ class BloomClassifier:
             self.backend,
         )
 
-    # ── RoBERTa ──
     def _load_roberta(self):
         import torch
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
         from transformers.utils import logging as transformers_logging
 
-        # The library draws its own "Loading weights" bar, which breaks up the
-        # terminal's one-line-per-step format. The line below says it instead.
         transformers_logging.disable_progress_bar()
 
         roberta_path = os.path.join(MODEL_DIR, "roberta_blooms_final")
@@ -113,7 +89,6 @@ class BloomClassifier:
         pred_id = int(logits.argmax())
         return self.model.config.id2label[pred_id]
 
-    # ── SVM fallback ──
     def _load_svm(self):
         import joblib
         from nltk.stem import WordNetLemmatizer
@@ -123,7 +98,7 @@ class BloomClassifier:
         self.lemmatizer = WordNetLemmatizer()
 
     def _preprocess_for_svm(self, text: str) -> str:
-        # must match the preprocessing used during training
+        """Must match the preprocessing used when the SVM was trained."""
         from nltk.tokenize import word_tokenize
         text = text.lower().strip()
         text = re.sub(r"[^a-zA-Z0-9\s?]", "", text)
@@ -142,8 +117,8 @@ class BloomClassifier:
             return "understand"
         return level
 
-    # ── Public API ──
     def classify(self, question_text: str) -> dict:
+        """Bloom level, thinking order and category; thinking_order is None for "create"."""
         if self.backend == "roberta":
             bloom_level = self._classify_roberta(question_text)
         else:
@@ -151,13 +126,8 @@ class BloomClassifier:
 
         bloom_level = self._normalize_level(bloom_level)
 
-        # thinking_order is None for "create" — callers must treat that as
-        # "exclude this question", not as a missing value to backfill.
         return {
             "bloom_level": bloom_level,
             "thinking_order": BLOOM_TO_THINKING_ORDER[bloom_level],
             "category": BLOOM_TO_CATEGORY[bloom_level],
         }
-
-    def classify_batch(self, questions: list[str]) -> list[dict]:
-        return [self.classify(q) for q in questions]

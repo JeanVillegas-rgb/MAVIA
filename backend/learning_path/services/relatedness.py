@@ -1,9 +1,4 @@
-"""Relatedness between two concepts (spec section 5).
-
-Symmetric, so it says whether two concepts can be connected, never which comes
-first. Best-match averaging, as BERTScore does over tokens: one shared idea
-between two broader concepts still counts.
-"""
+"""Relatedness between two concepts; symmetric, so it never gives a direction."""
 
 
 def _has_rows(vectors):

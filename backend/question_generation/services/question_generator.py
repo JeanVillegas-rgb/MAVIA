@@ -13,13 +13,7 @@ logger = logging.getLogger(__name__)
 
 QUESTION_GENERATOR_VERSION = 2
 QUESTION_TEMPERATURE = 0.7
-# Room for five questions with explanations per call, plus the reasoning
-# gpt-oss spends from the same budget: a reply cut off mid-question is
-# broken JSON.
 QUESTION_NUM_PREDICT = 3072
-# How many parseable-but-unusable replies to accept before giving up on a
-# call. See the comment in generate_questions: the third attempt almost never
-# rescues one, and each is a full LLM round trip.
 MAX_UNUSABLE_REPLIES = 2
 _warm_lock = threading.Lock()
 _warm_model = ""
@@ -30,30 +24,9 @@ def _mark_question_model_warm():
     global _warm_model, _warm_until
     with _warm_lock:
         _warm_model = settings.QUESTION_LLM_MODEL
-        # Slightly shorter than the default Ollama keep-alive so the local
-        # state never intentionally outlives the server-side residency window.
         _warm_until = time.monotonic() + 25 * 60
 
-# ── Prompt templates ──
-# Intentionally SHORT to minimize token usage.
-# Keyed by thinking order, and deliberately phrased in terms of the cognitive
-# work each question demands rather than how "hard" it is. The LLM is never
-# told about Bloom's taxonomy — the classifier assigns the actual level after
-# generation, and these prompts only steer the model toward the right region.
-#
-#   LOT covers remember / understand / apply
-#   HOT covers analyze / evaluate
-#
-# There are no "strict" retry variants any more. LOT and HOT are wide enough
-# that ordinary prompt drift stays inside the intended bucket, so the pipeline
-# no longer regenerates to correct it.
 
-# The grounding rule, shared by both thinking orders. Worded after
-# course/generate_variation.py, which has carried the same prohibition since
-# the version generator was written and does not drift off-source the way
-# this one did. Stated as a prohibition, not an invitation: "answerable from
-# the content" told the model what a good question looks like and left it
-# free to use anything it knew.
 _GROUNDING_RULE = (
     "Use ONLY the facts stated in the content below. Do not add facts, "
     "terms, examples, numbers, causes or categories the content does not "
@@ -67,10 +40,6 @@ _GROUNDING_RULE = (
     "when, where). Do not frame the question with phrases the content does not "
     "use, such as 'according to', 'mentioned' or 'which statement best describes'; "
     "ask about the content directly.\n"
-    # Learners hear a figure's description; they never see its layout. A
-    # question about which row or column holds what tests the picture, not the
-    # lesson -- and the extracted text has lost the layout, so it cannot be
-    # verified either.
     "Do not ask about the visual layout of a figure or table, such as rows, "
     "columns, positions or labels. Ask about what it teaches.\n"
 )
@@ -112,14 +81,6 @@ PROMPT_TEMPLATES = {
     ),
 }
 
-# ── Few-shot style examples — small local models drift far less when shown
-# the target cognitive level instead of only being told about it ──
-# Patterns, not questions on a subject: bracketed parts stand for the
-# content's own words, so the examples fit any lesson and pull no topic in.
-# Outside the brackets they use only words the grounding gate never asks the
-# lesson to contain (what, which, why, how, when, more, than ...); an example
-# framed with "explanation best justifies" taught exactly the wording the gate
-# rejects.
 FEW_SHOT_EXAMPLES = {
     "LOT": (
         "Examples of the style (patterns only -- fill the brackets with the content's own words):\n"
@@ -165,14 +126,11 @@ QUESTION_SCHEMA = {
     ),
 }
 
-# Formats the pipeline can actually assess. An item claiming anything else is
-# dropped rather than coerced -- guessing at what the model meant would put an
-# ungradeable question into the bank.
 SUPPORTED_FORMATS = ("MCQ", "TF")
 
 
 def question_bank_fingerprint(content, distribution):
-    """Identify the exact source and generation contract for a question bank."""
+    """Hash of a bank's source text and generation settings."""
     payload = {
         "version": QUESTION_GENERATOR_VERSION,
         "content": content,
@@ -190,7 +148,7 @@ def question_bank_fingerprint(content, distribution):
 
 
 def _ollama_metrics(data):
-    """Convert Ollama nanosecond timings into trace-friendly values."""
+    """Ollama's nanosecond timings in trace-friendly units."""
     def milliseconds(name):
         value = data.get(name)
         return round(value / 1_000_000, 1) if isinstance(value, (int, float)) else None
@@ -214,7 +172,7 @@ def _ollama_metrics(data):
 
 
 def _multiple_choice_shape():
-    """One whole multiple-choice item: a stem, four named options, a letter."""
+    """Schema for one multiple-choice item."""
     text = {"type": "string"}
     return {
         "type": "object",
@@ -226,26 +184,15 @@ def _multiple_choice_shape():
                 "properties": {k: text for k in ("A", "B", "C", "D")},
                 "required": ["A", "B", "C", "D"],
             },
-            # Constrained at decode time so an out-of-range answer cannot be
-            # emitted. It does not stop a *wrong* letter -- "D" is legal even
-            # when D says "plasma" -- which is what _validate_question and the
-            # CRAG gate are for.
             "correct_answer": {"type": "string", "enum": ["A", "B", "C", "D"]},
             "explanation": text,
         },
-        # The explanation is required so the model has to state why its answer
-        # follows from the content. A model that cannot write one usually could
-        # not ground the question either.
         "required": ["question", "format", "choices", "correct_answer", "explanation"],
     }
 
 
 def _true_false_shape():
-    """One whole true/false item. It has no ``choices`` field at all.
-
-    Deliberately absent rather than optional: a field the model is never
-    offered is one it cannot fill with null.
-    """
+    """Schema for one true/false item; it has no choices field."""
     text = {"type": "string"}
     return {
         "type": "object",
@@ -260,31 +207,7 @@ def _true_false_shape():
 
 
 def build_response_schema(format_split):
-    """JSON schema handed to Ollama so the response cannot be malformed.
-
-    Ollama compiles this into a grammar that constrains decoding token by
-    token, so the shape is not checked after the fact -- it cannot be written
-    wrong in the first place. That is what lets one call return a mix of
-    multiple-choice and true/false questions.
-
-    Every item must match one *whole* shape, via ``anyOf``. A single merged
-    shape had to leave ``choices`` optional, because a true/false item has
-    none -- and optional told the model it could skip the options. It skipped
-    them every time: measured on concept 532, an MCQ-only call returned three
-    questions and none survived validation, each with ``choices: null``. HOT
-    was the worst hit, being multiple-choice only, so every HOT call produced
-    nothing usable and its questions arrived only as LOT-call output the Bloom
-    classifier happened to relabel.
-
-    Only the requested formats are offered. The model reaches for true/false
-    when left free -- asked for two multiple-choice and one true/false, it
-    returned three true/false -- and a true/false question a learner can guess
-    right half the time is weak evidence of mastery. Pinning the shapes keeps
-    the mix the distribution asked for.
-
-    ``anyOf`` support depends on the model's grammar conversion. Verified on
-    llama3.2:3b; re-test before trusting it on another model.
-    """
+    """Ollama's JSON schema: every item must match one whole requested format."""
     shapes = {"MCQ": _multiple_choice_shape, "TF": _true_false_shape}
     offered = [
         shapes[fmt]() for fmt in SUPPORTED_FORMATS if format_split.get(fmt)
@@ -302,12 +225,7 @@ def build_response_schema(format_split):
 
 
 def _groq_response_schema(format_split):
-    """One strict shape for mixed MCQ/TF batches on Groq.
-
-    Groq rejects the overlapping ``anyOf`` branches in the Ollama schema.
-    A nullable choices object covers both formats; the existing per-format
-    validator still requires four usable choices for each MCQ.
-    """
+    """Groq's strict schema for mixed MCQ/TF batches."""
     offered = [fmt for fmt in SUPPORTED_FORMATS if format_split.get(fmt)] or list(SUPPORTED_FORMATS)
     answers = ["A", "B", "C", "D"] if offered == ["MCQ"] else (
         ["True", "False"] if offered == ["TF"] else ["A", "B", "C", "D", "True", "False"]
@@ -341,7 +259,7 @@ def _groq_response_schema(format_split):
 
 
 def _format_request(format_split):
-    """The human-readable half of the same instruction the schema encodes."""
+    """The prompt line saying how many of each format to write."""
     parts = [
         f"{count} {fmt}" for fmt, count in format_split.items() if count
     ]
@@ -351,13 +269,7 @@ def _format_request(format_split):
 
 
 def _build_prompt(content, thinking_order, format_split, correction=""):
-    """The generation prompt, optionally carrying a corrective retry's feedback.
-
-    ``correction`` is written by the grounding gate (services/grounding.py)
-    when a previous attempt produced questions the source does not support. It
-    goes *after* the content and before the output contract, so the model reads
-    the material first and the specific mistakes to avoid last.
-    """
+    """The generation prompt, with a retry's correction when given."""
     formats = [fmt for fmt in SUPPORTED_FORMATS if format_split.get(fmt)]
     prompt = PROMPT_TEMPLATES[thinking_order].format(
         count=sum(format_split.values()),
@@ -374,30 +286,13 @@ def _build_prompt(content, thinking_order, format_split, correction=""):
     return prompt
 
 
-# A true/false item is a statement the learner judges, so an open question is
-# not one: "True" answers nothing about "what is the shape of the particles?".
-#
-# Two markers, because neither alone is enough. A trailing question mark is the
-# reliable one -- measured on topic 276, Q108 read "In the arrangement that
-# shows particles close together but able to move, what is the shape of the
-# particles?", whose interrogative sits mid-sentence behind a subordinate
-# clause, so nothing about its first word gives it away. The opener list then
-# catches a stem the model wrote without punctuation.
-#
-# Containing a wh-word is deliberately not a marker: "Water takes the shape of
-# whatever container holds it" is a perfectly good statement.
 _OPEN_QUESTION_OPENERS = (
     "what", "which", "how", "why", "who", "whom", "where", "when",
 )
 
 
 def _validate_question(q, format_type):
-    """Reject a question that is structurally unusable, whatever it says.
-
-    Correctness is not decidable here -- that needs the source text, and is
-    what services/grounding.py does. This checks only what the question
-    itself settles, and normalises ``correct_answer`` in place when it can.
-    """
+    """Reject a structurally unusable question; normalises correct_answer in place."""
     question_text = str(q.get("question") or "").strip()
     if not question_text or "correct_answer" not in q:
         return False
@@ -412,8 +307,6 @@ def _validate_question(q, format_type):
             return False
 
         texts = [str(text).strip() for text in choices.values()]
-        # A blank option is unreadable aloud, and a repeated one means the
-        # learner either cannot be wrong or cannot be right.
         if any(not text for text in texts):
             return False
         if len({text.casefold() for text in texts}) != len(texts):
@@ -424,14 +317,12 @@ def _validate_question(q, format_type):
         if answer in choices:
             q["correct_answer"] = answer
             return True
-        # The model often answers with the choice text instead of the letter.
         for letter, text in choices.items():
             if str(text).strip().casefold() == answer.casefold():
                 q["correct_answer"] = letter
                 return True
         return False
 
-    # TF
     if answer.lower() not in ("true", "false"):
         return False
     if question_text.rstrip().endswith("?"):
@@ -444,14 +335,7 @@ def _validate_question(q, format_type):
 
 
 def _extract_question_objects(text):
-    """Recover individual question objects from text that isn't valid JSON
-    as a whole — e.g. the response got truncated by the token limit mid
-    object, or the model dropped a comma between two objects. Questions sit
-    nested inside {"questions": [...]}, so this records every balanced
-    {...} span at any depth (via a stack, honoring quoted strings) and
-    parses each independently — a truncated or comma-less object simply
-    fails to close or fails to parse, and is skipped without sinking the
-    objects around it."""
+    """Recover the parseable question objects from a broken JSON reply."""
     spans = []
     stack = []
     in_string = False
@@ -486,18 +370,12 @@ def _extract_question_objects(text):
 
 
 def _parse_llm_response(response_text):
-    """
-    Extract JSON from LLM response.
-    Local models are messy — they sometimes wrap JSON in markdown
-    code blocks or add preamble text.
-    """
+    """Parse the model's reply, tolerating code fences and preamble."""
     text = response_text.strip()
 
-    # strip markdown code fences if present
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
 
-    # find the outermost JSON object
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError(f"No JSON found in LLM response: {text[:200]}")
@@ -520,12 +398,7 @@ def _parse_llm_response(response_text):
 
 
 def _ollama_generate(prompt, schema=None, on_metrics=None, format_split=None, on_rate_limit_wait=None):
-    """Generate questions through the selected LLM provider.
-
-    ``schema`` constrains the reply at decode time. Temperature stays where it
-    was: the schema governs shape, not wording, so lowering it would cost
-    question variety without preventing a single malformed response.
-    """
+    """Call the configured LLM provider and return its reply text."""
     if settings.LLM_PROVIDER == "groq":
         offered = format_split or {"MCQ": 1, "TF": 1}
         raw, metrics = groq_generate(
@@ -540,8 +413,6 @@ def _ollama_generate(prompt, schema=None, on_metrics=None, format_split=None, on
             max_tokens=QUESTION_NUM_PREDICT,
             timeout=settings.OLLAMA_TIMEOUT,
             on_rate_limit_wait=on_rate_limit_wait,
-            # Every item is validated per format after this, so a batch Groq
-            # rejected over one item's shape is checked here, not discarded.
             use_failed_generation=True,
         )
         if on_metrics:
@@ -551,16 +422,12 @@ def _ollama_generate(prompt, schema=None, on_metrics=None, format_split=None, on
     payload = {
         "model": settings.QUESTION_LLM_MODEL,
         "prompt": prompt,
-        # Chunks keep slow CPU generation from looking like an idle HTTP
-        # connection. They are joined before parsing, preserving the API.
         "stream": True,
         "keep_alive": getattr(
             settings, "QUESTION_LLM_KEEP_ALIVE", settings.OLLAMA_KEEP_ALIVE
         ),
         "options": {
             "temperature": QUESTION_TEMPERATURE,
-            # generous ceiling — a batch of MCQs (4 choices + explanation
-            # each) can run past 1000 tokens and get cut off mid-JSON
             "num_predict": QUESTION_NUM_PREDICT,
         },
     }
@@ -593,7 +460,7 @@ def _ollama_generate(prompt, schema=None, on_metrics=None, format_split=None, on
 
 
 def warm_question_model(on_metrics=None):
-    """Load the configured question model without generating lesson content."""
+    """Load the question model before the first real call."""
     if settings.LLM_PROVIDER == "groq":
         metrics = {
             "load_ms": 0.0,
@@ -652,8 +519,6 @@ def warm_question_model(on_metrics=None):
             on_metrics(metrics)
         return metrics
     except (requests.RequestException, ValueError, KeyError) as exc:
-        # Warming is an optimization, never a prerequisite. The real request
-        # remains authoritative and will surface its own failure normally.
         logger.warning("Question model warm-up failed: %s", exc)
         return None
 
@@ -668,34 +533,10 @@ def generate_questions(
     on_rate_limit_wait=None,
     correction="",
 ):
-    """
-    Generate one thinking order's questions in a single LLM call.
-
-    The returned questions carry no classification — the prompt only steers
-    toward a thinking order, it does not decide one. The Bloom classifier
-    assigns the authoritative label later, in the post-generation pass.
-
-    Args:
-        content:        text content to generate questions from
-        thinking_order: "LOT" or "HOT" — which prompt to steer with
-        format_split:   {"MCQ": 2, "TF": 1} — how many of each kind to ask for
-        max_retries:    retry on JSON parse failures
-        correction:     grounding feedback from a rejected previous attempt,
-                        appended to the prompt (see services/grounding.py)
-
-    Returns:
-        list of question dicts, each labelled with the format it actually is
-    """
+    """One LLM call for one thinking order; returns validated question dicts."""
     prompt = _build_prompt(content, thinking_order, format_split, correction)
     schema = build_response_schema(format_split)
 
-    # A reply that parses but yields nothing usable gets one more try, not the
-    # full budget. Measured on topic 276: 74 calls exhausted all three
-    # attempts with zero JSON parse failures -- the model had written
-    # something structurally unusable every time, and a third round of the
-    # same prompt at the same temperature almost never rescues that. Malformed
-    # JSON keeps the full budget below: that is a transport failure, not the
-    # model being unable to write the question.
     unusable_replies = 0
     for attempt in range(max_retries):
         try:
@@ -707,9 +548,6 @@ def generate_questions(
 
             validated = []
             for q in questions:
-                # The item's own format decides how it is validated. Asking for
-                # two MCQs and being handed a usable true/false question is not
-                # a failure -- the split is a request, not a contract.
                 fmt = str(q.get("format") or "").upper()
                 if fmt not in SUPPORTED_FORMATS:
                     continue

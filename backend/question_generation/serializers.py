@@ -13,5 +13,3 @@ class QuestionSerializer(serializers.ModelSerializer):
             "question_format", "choices", "bloom_level",
             "thinking_order", "category",
         ]
-        # NOTE: correct_answer intentionally excluded
-        # frontend should NOT receive it until after submission

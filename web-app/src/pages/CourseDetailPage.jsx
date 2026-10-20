@@ -207,9 +207,6 @@ export default function CourseDetailPage() {
               <p style={{ color: "var(--muted)", marginTop: "0.5rem" }}>{course.description}</p>
             )}
           </div>
-          <Link to={`/courses/${id}/path`} className="btn btn-secondary">
-            Course path
-          </Link>
         </div>
         {error && <div className="error-banner">{error}</div>}
       </section>

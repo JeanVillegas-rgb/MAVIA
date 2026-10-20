@@ -4,22 +4,10 @@ from lessons.models import CourseGroup, LearningObjectGroup, OutlineNode
 
 
 class ConceptPrerequisite(models.Model):
-    """"Learn ``prerequisite`` before ``dependent``", between two concepts of a topic.
-
-    A concept is a ``LearningObjectGroup``: the same idea taught across a
-    topic's PDFs. Rows are proposed by the v3 criteria or decided by a teacher,
-    and ``status`` says which -- only ``accepted`` and ``approved`` rows shape
-    the learning path.
-
-    Teacher decisions outlive re-derivation: publishing again recomputes the
-    derived rows but never touches an ``approved`` or ``rejected`` one, so a
-    pair a teacher turned down is not proposed again.
-    """
+    """"Learn prerequisite before dependent" between two concepts of one topic."""
 
     class Status(models.TextChoices):
         ACCEPTED = "accepted", "Accepted by the criteria"
-        # Stored but hidden from teachers by default: measured on a blind
-        # hand-check, most pending proposals were wrong.
         PENDING = "pending", "Proposed, awaiting a teacher"
         APPROVED = "approved", "Approved by a teacher"
         REJECTED = "rejected", "Rejected by a teacher"
@@ -48,11 +36,7 @@ class ConceptPrerequisite(models.Model):
     )
     status = models.CharField(max_length=10, choices=Status.choices, db_index=True)
     source = models.CharField(max_length=10, choices=Source.choices, default=Source.DERIVED)
-    # Both concepts sit under lesson headings that share nothing. Such an edge
-    # is never accepted automatically; see learning_path/CRITERIA.md.
     cross_section = models.BooleanField(default=False)
-    # The votes and scores behind a derived row, kept so a decision can be
-    # explained and a later scoring change needs no re-derivation to compare.
     evidence = models.JSONField(default=dict, blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -76,14 +60,7 @@ class ConceptPrerequisite(models.Model):
 
 
 class LearningPathStep(models.Model):
-    """One step of a topic's published learning path.
-
-    Saved when a topic publishes successfully and replaced wholesale on the
-    next successful publish, so students always follow the path that matches
-    the content they can see. Everything a step teaches hangs off its concept:
-    the Standard, Simplified and Elaborated versions and the generated questions
-    all belong to the concept's representative learning object.
-    """
+    """One step of a topic's published learning path."""
 
     outline_node = models.ForeignKey(
         OutlineNode,
@@ -96,8 +73,6 @@ class LearningPathStep(models.Model):
         on_delete=models.CASCADE,
     )
     position = models.PositiveIntegerField()
-    # How many prerequisite links lead to this step at most. Steps sharing a
-    # depth do not depend on one another.
     depth = models.PositiveSmallIntegerField(default=0)
     published_at = models.DateTimeField()
 
@@ -119,13 +94,7 @@ class LearningPathStep(models.Model):
 
 
 class CourseConceptLink(models.Model):
-    """"Learn ``prerequisite`` before ``dependent``", across two topics of one course.
-
-    The course-level counterpart of ``ConceptPrerequisite``, kept apart so a
-    topic's path and screen never see a concept from another topic. Same
-    statuses and the same rule: re-deriving never overwrites a teacher's
-    ``approved`` or ``rejected``.
-    """
+    """"Learn prerequisite before dependent" between concepts of two topics in a course."""
 
     Status = ConceptPrerequisite.Status
     Source = ConceptPrerequisite.Source
@@ -143,7 +112,6 @@ class CourseConceptLink(models.Model):
     source = models.CharField(
         max_length=10, choices=ConceptPrerequisite.Source.choices, default=ConceptPrerequisite.Source.DERIVED,
     )
-    # Votes and scores behind a derived row, plus ``contradicts_outline``.
     evidence = models.JSONField(default=dict, blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

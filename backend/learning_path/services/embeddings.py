@@ -1,9 +1,4 @@
-"""The sentence encoder the learning path reads meaning with.
-
-The same pinned model lesson processing uses (lessons/services/embedding_service.py),
-loaded here so the two pipelines can change independently. CPU only, offline
-once downloaded. Vectors are normalised, so a dot product is the cosine.
-"""
+"""The sentence encoder the learning path reads meaning with."""
 
 import hashlib
 import json
@@ -26,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class EncoderUnavailable(RuntimeError):
-    """The encoder could not be loaded; the learning path falls back to pending links."""
+    """The encoder could not be loaded."""
 
 
 @lru_cache(maxsize=1)
@@ -34,7 +29,7 @@ def load_encoder():
     """Load the pinned model from disk, downloading it only when allowed."""
     try:
         from sentence_transformers import SentenceTransformer
-    except Exception as exc:  # noqa: BLE001 -- a broken torch install raises OSError, not ImportError
+    except Exception as exc:
         raise EncoderUnavailable("sentence-transformers is not installed") from exc
     allow_download = os.getenv("LEARNING_PATH_ALLOW_MODEL_DOWNLOAD", "True").lower() in {"1", "true", "yes"}
     failure = None
@@ -43,7 +38,7 @@ def load_encoder():
             break
         try:
             return SentenceTransformer(MODEL, revision=REVISION, device="cpu", local_files_only=local_only)
-        except Exception as exc:  # noqa: BLE001 -- any load failure means "unavailable"
+        except Exception as exc:
             failure = exc
     raise EncoderUnavailable(f"Could not load {MODEL}") from failure
 
@@ -80,11 +75,7 @@ def _write_cache(path, vectors):
 
 
 def embed(sentences, encoder=None, cache_path=None):
-    """One normalised vector per sentence, read from the cache where possible.
-
-    A cache that cannot be opened (locked, read-only disk) only costs speed: the
-    sentences are encoded again rather than failing a publish.
-    """
+    """One normalised vector per sentence, read from the cache where possible."""
     sentences = list(sentences)
     if not sentences:
         return np.zeros((0, DIMENSIONS), dtype="float32")

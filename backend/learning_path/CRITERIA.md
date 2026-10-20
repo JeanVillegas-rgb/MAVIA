@@ -19,8 +19,8 @@ order. A text link nothing contradicts is accepted; a contradicted one goes to t
 | 4 Order | `publishing.order_with_links` | Kahn's topological sort; ties go to the topic's merged PDF order. |
 
 Relatedness (`relatedness.py`) and the meaning clue are **recorded, not counted**. Without the
-encoder the verdicts are the same; only those two numbers are missing. Their cutoffs are stored in
-`calibration/weights.json` (measured 2026-09-30).
+encoder the verdicts are the same; only those two numbers are missing. The meaning clue's cutoff is
+stored in `calibration/weights.json` (measured 2026-09-30).
 
 The adaptive engine then walks the saved path and detours through the nearest prerequisite
 (`adaptive/services.py`).
@@ -79,18 +79,12 @@ every derivation; `approved` and `rejected` come from a teacher and are never ov
 `accepted` and `approved` shape the order. Loops made of teacher links are refused
 (`services/teacher_links.py`).
 
-## Course level (across topics)
+## Course level (across topics): deferred
 
-`services/course_criteria.py` pairs concepts of **different** topics of one course. Relatedness
-gates a pair (`related_cutoff`); the structure is the teacher's **outline order** (headings and PDF
-order cannot compare topics). Only name and terms vote, and they must agree: with the outline →
-accepted; against it → pending, `contradicts_outline`; anything else → no link. The meaning clue is
-recorded, not counted. Stored as `CourseConceptLink` (`services/course_links.py`), shown on the
-Course path page, refreshed when a topic is published.
-
-**Every derived course link is stored as a suggestion** (`course_links.DERIVED_STATUS`): the rule's
-verdict shows in its evidence and reason text, but only a teacher's approval lets a course link reach
-learners (`published.course_prerequisites` reads accepted and approved).
+Links between topics of one course are deferred to the 100% version. The design that existed
+(removed 2026-10-20, restorable from commit `5e45893`): relatedness gated a pair, the teacher's
+outline order was the structure, name and terms had to agree, and every derived course link was
+stored as a suggestion for the teacher. The `CourseConceptLink` table is kept.
 
 ## Version
 

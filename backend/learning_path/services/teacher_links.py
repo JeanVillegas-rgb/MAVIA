@@ -1,15 +1,4 @@
-"""A teacher adding, approving or removing prerequisite links on the review screen.
-
-Three rules, agreed for this screen:
-
-* **Changes reach students only at the next publish.** They are stored at once
-  and the review preview follows them immediately, but the saved path is
-  replaced only by a successful publish.
-* **Removing a link rejects it.** A rejected pair is never proposed again by the
-  criteria; a teacher can still add it back by hand.
-* **A change that would create a loop is refused**, naming the concepts caught
-  in it, so the path can always be produced.
-"""
+"""A teacher adding, approving, rejecting, moving or undoing links on the review screen."""
 
 from django.db import transaction
 from django.utils import timezone
@@ -32,7 +21,7 @@ def _group(node, concept_id):
 
 
 def _loop_through(node, prerequisite, dependent, ignore_ids=()):
-    """Concept ids forming a loop if ``prerequisite -> dependent`` were added, else None."""
+    """Concept ids forming a loop if prerequisite -> dependent were added, else None."""
     successors = {}
     rows = ConceptPrerequisite.objects.filter(
         outline_node=node, status__in=ConceptPrerequisite.SHAPES_PATH,
@@ -40,7 +29,6 @@ def _loop_through(node, prerequisite, dependent, ignore_ids=()):
     for row in rows:
         successors.setdefault(row.prerequisite_id, []).append(row.dependent_id)
 
-    # A loop exists if the dependent already leads back to the prerequisite.
     trail = {dependent.id: None}
     stack = [dependent.id]
     while stack:
@@ -66,8 +54,6 @@ def _refuse_loop(node, prerequisite, dependent, ignore_ids=()):
             or group.label
             for group in LearningObjectGroup.objects.filter(pk__in=chain)
         }
-        # The new link runs prerequisite -> dependent; the chain already runs
-        # dependent -> ... -> prerequisite, which closes the loop.
         route = " → ".join(labels[cid] for cid in [prerequisite.id, *chain])
         raise LinkError(
             f"That would make a loop: {route}. Remove one of those links first."
@@ -75,10 +61,7 @@ def _refuse_loop(node, prerequisite, dependent, ignore_ids=()):
 
 
 def _snapshot(node, pairs):
-    """The state of each pair before a change: what Undo puts back.
-
-    ``prior`` is None when the pair had no row.
-    """
+    """The state of each pair before a change: what Undo puts back."""
     rows = {
         (row.prerequisite_id, row.dependent_id): row
         for row in ConceptPrerequisite.objects.filter(outline_node=node)
@@ -99,7 +82,7 @@ def _snapshot(node, pairs):
 
 
 def _has_loop(node):
-    """True when the topic's path-shaping links contain a cycle (Kahn)."""
+    """True when the topic's path-shaping links contain a cycle."""
     successors, indegree = {}, {}
     for row in ConceptPrerequisite.objects.filter(outline_node=node, status__in=ConceptPrerequisite.SHAPES_PATH):
         successors.setdefault(row.prerequisite_id, []).append(row.dependent_id)
@@ -118,7 +101,7 @@ def _has_loop(node):
 
 
 def add_link(node, prerequisite_id, dependent_id):
-    """``dependent`` needs ``prerequisite`` first, by a teacher's decision. Returns the undo record."""
+    """Add a teacher's link; returns the undo record."""
     prerequisite = _group(node, prerequisite_id)
     dependent = _group(node, dependent_id)
     if prerequisite.id == dependent.id:
@@ -142,7 +125,7 @@ def add_link(node, prerequisite_id, dependent_id):
 
 
 def decide_link(node, link_id, status):
-    """Approve a suggestion, or reject (remove) any link. Returns the undo record."""
+    """Approve or reject a link; returns the undo record."""
     if status not in ConceptPrerequisite.TEACHER_DECIDED:
         raise LinkError("Choose approve or reject.")
     row = ConceptPrerequisite.objects.filter(pk=link_id, outline_node=node).select_related(
@@ -163,12 +146,7 @@ def decide_link(node, link_id, status):
 
 @transaction.atomic
 def move_link(node, prerequisite_id, dependent_id):
-    """``dependent`` needs ``prerequisite`` first, and nothing it needed before.
-
-    Every other link shaping the path into ``dependent`` is rejected, and
-    ``prerequisite -> dependent`` is approved, in one step. Returns the undo
-    record covering both halves.
-    """
+    """Make prerequisite the dependent's only prerequisite; returns the undo record."""
     prerequisite = _group(node, prerequisite_id)
     dependent = _group(node, dependent_id)
     if prerequisite.id == dependent.id:
@@ -207,7 +185,7 @@ def move_link(node, prerequisite_id, dependent_id):
 
 
 def changed_since_publish(node):
-    """True when a teacher decided a link after the path was last saved."""
+    """True when a teacher changed a link after the path was last saved."""
     step = LearningPathStep.objects.filter(outline_node=node).order_by("-published_at").first()
     if step is None:
         return False
@@ -221,12 +199,7 @@ _INVALID_UNDO = "That undo is not valid. Refresh the page."
 
 @transaction.atomic
 def restore_links(node, records):
-    """Put each pair back exactly as an undo record says it was.
-
-    A pair with ``prior: None`` had no row, so its row is deleted; any other
-    pair gets its status, source and decision time back, re-created if the row
-    was deleted meanwhile. Refused, with nothing changed, if the result loops.
-    """
+    """Put each pair back as an undo record says; refused if the result loops."""
     if not isinstance(records, list) or not records:
         raise LinkError("Nothing to undo.")
     for record in records:

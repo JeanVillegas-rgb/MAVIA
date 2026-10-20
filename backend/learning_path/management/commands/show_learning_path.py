@@ -1,10 +1,4 @@
-"""Print a topic's learning path, for inspection and defence.
-
-    python manage.py show_learning_path              # list topics with content
-    python manage.py show_learning_path 2            # the saved (published) path
-    python manage.py show_learning_path 2 --preview  # what publishing would save
-    python manage.py show_learning_path 2 --links    # also list prerequisite links
-"""
+"""Print a topic's learning path: show_learning_path [topic] [--preview] [--links]."""
 
 from collections import Counter
 
@@ -51,8 +45,6 @@ class Command(BaseCommand):
                     self.stdout.write(f"  {step['position']:>2}. {step['title']}  [after: {needs}]")
 
         if links:
-            # Current concept titles, as the review screen shows them. A group's
-            # label is set when the group forms and does not follow renames.
             titles = {step["concept_id"]: step["title"] for step in build_topic_path(node.id)["steps"]}
             rows = ConceptPrerequisite.objects.filter(outline_node=node).select_related("prerequisite", "dependent")
             self.stdout.write(f"Links: {dict(Counter(row.status for row in rows))}")

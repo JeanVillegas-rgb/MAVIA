@@ -1,11 +1,4 @@
-"""The topic's learning path as the review screen previews it.
-
-The preview uses the same ordering the publish step saves
-(``publishing.order_with_links``) over the links stored for the topic --
-``accepted`` and ``approved``. The review endpoint re-derives those links
-(``publishing.refresh_prerequisites``) just before building this preview, so
-what a teacher reviews is what publishing would save.
-"""
+"""The topic's learning path as the review screen previews it."""
 
 from course.models import standard_bundle_for
 from lessons.models import OutlineNode
@@ -19,13 +12,12 @@ from .teacher_links import changed_since_publish
 
 
 def build_topic_path(node_id):
+    """The preview, ordered by the stored accepted and approved links."""
     node = OutlineNode.objects.get(pk=node_id)
     concepts = concepts_for_topic(node)
     concept_ids = {concept.id for concept in concepts}
     links = path_links(node, concept_ids)
     ordered, depth, ignored = order_with_links(concepts, links, path_link_confidence(node, concept_ids))
-    # Only among links the order keeps: a loop Kahn breaks would otherwise make a
-    # real link look implied through it.
     redundant = redundant_links(set(links) - set(ignored))
 
     document_index = {concept.id: index for index, concept in enumerate(concepts)}
@@ -35,9 +27,6 @@ def build_topic_path(node_id):
     for before, after in links:
         prerequisites[after].append(before)
 
-    # Every stored link between live concepts, split by what the teacher sees:
-    # links shaping the order are shown on the step; pending ones are offered as
-    # suggestions, collapsed; rejected ones are not shown at all.
     link_rows = list(ConceptPrerequisite.objects.filter(
         outline_node=node, prerequisite_id__in=concept_ids, dependent_id__in=concept_ids,
     ))
@@ -60,9 +49,6 @@ def build_topic_path(node_id):
             suggested[row.dependent_id].append(entry)
 
     def branch(concept):
-        # The lesson heading this concept sits under, as the document wrote it.
-        # The concept map draws one branch per heading; the representative's own
-        # heading wins, since another file may file the same concept elsewhere.
         members = [concept.representative, *concept.members]
         return next(
             ((member.section_title or "").strip() for member in members if (member.section_title or "").strip()),
@@ -70,7 +56,6 @@ def build_topic_path(node_id):
         )
 
     def sources(concept):
-        # The files a step was assembled from, named for the details card.
         named = {member.material_id: member.material.title for member in concept.members}
         return [{"id": material_id, "title": named[material_id]} for material_id in sorted(named)]
 
@@ -83,8 +68,6 @@ def build_topic_path(node_id):
         return bundle_text(standard_objects(concept)) or concept.content
 
     def standard_parts(concept):
-        # Each object of the Standard version with its own title, as every other
-        # place that shows a bundle lists it.
         return [
             {"id": item.id, "title": item.title or "", "text": item.content.strip()}
             for item in standard_objects(concept)
@@ -98,16 +81,10 @@ def build_topic_path(node_id):
             "suggestions": suggested[concept.id],
             "position": position,
             "concept_id": concept.id,
-            # The representative's id: the review screen keys steps and
-            # prerequisite references by learning object.
             "learning_object_id": object_id[concept.id],
             "title": concept.title,
             "section_title": concept.section_title,
             "kind": concept.kind,
-            # Shown on the concept's card. Every object of its Standard version,
-            # not the representative alone -- a concept taught as Shape,
-            # Volume, Particle arrangement and Flow read as only "Shape".
-            # Display only: the path criteria keep reading concept.content.
             "content": standard_text(concept),
             "parts": standard_parts(concept),
             "source_material_ids": concept.source_material_ids,
@@ -149,8 +126,6 @@ def build_topic_path(node_id):
         "steps": steps,
         "edges": edges,
         "diagnostics": {
-            # "document_order" until a link exists: then the order is the
-            # documents' own, adjusted only where a link requires it.
             "ordering": "prerequisite_links" if links else "document_order",
             "concept_count": len(concepts),
             "material_count": len(material_ids),
@@ -167,8 +142,6 @@ def build_topic_path(node_id):
                 LearningPathStep.objects.filter(outline_node=node)
                 .order_by("-published_at").values_list("published_at", flat=True).first()
             ),
-            # A teacher changed links after the path was last saved: students
-            # still follow the old one until the topic is published again.
             "changed_since_publish": changed_since_publish(node),
         },
     }

@@ -1,19 +1,11 @@
-"""Deciding a link: the text says whether, the lesson's order says which way (v6.2).
-
-Inside one topic almost every pair looks related, and PDF order agreed
-with the key's direction on 145 of 156 linked pairs, so the two questions are
-answered by different evidence. A link the text makes and nothing contradicts is
-accepted; anything contradicted goes to the teacher.
-"""
+"""Deciding a link: the text says whether, the lesson's order says which way."""
 
 from dataclasses import dataclass
 
-# The clues a link is decided with; meaning is recorded, not counted.
 DECIDING_CLUES = ("name", "terms", "heading", "order")
 
 ACCEPTED = "accepted"
 PENDING = "pending"
-# No link. The course level imports it too.
 PARALLEL = "parallel"
 
 SHARED = "shared"
@@ -23,7 +15,7 @@ DISAGREE = "disagree"
 
 @dataclass(frozen=True)
 class PairFacts:
-    """One pair of concepts, read as ``earlier`` then ``later`` in the lesson's order."""
+    """One pair of concepts, earlier then later in the lesson's order."""
 
     later_names_earlier: float = 0.0
     earlier_names_later: float = 0.0
@@ -55,7 +47,7 @@ def _sign(difference):
 
 
 def _suggested_direction(facts):
-    """``(direction, source)`` for a contradicted link (spec section 3)."""
+    """(direction, source) for a contradicted link."""
     if facts.earlier_is_figure != facts.later_is_figure:
         if facts.later_is_figure:
             figure_refers = facts.later_names_earlier > 0 or facts.later_uses_earlier_terms > 0
@@ -73,11 +65,7 @@ def _suggested_direction(facts):
 
 
 def reference_verdict(facts):
-    """The decision for one pair; direction +1 means earlier before later.
-
-    Being a figure or coming from different PDFs does not block a link (v6.1);
-    a pair linked only by single shared words is a suggestion (``weak_terms``).
-    """
+    """The decision for one pair; direction +1 means earlier before later."""
     if facts.parallel:
         return NO_LINK
     later_refers = facts.later_names_earlier > 0 or facts.later_uses_earlier_terms > 0
@@ -103,7 +91,7 @@ def reference_verdict(facts):
 
 
 def confidence(votes, direction, clues=DECIDING_CLUES):
-    """Share of the given clues that voted and agree with ``direction``."""
+    """Share of the clues that voted and agree with direction."""
     voting = [clue for clue in clues if votes.get(clue)]
     if not voting or not direction:
         return 0.0
