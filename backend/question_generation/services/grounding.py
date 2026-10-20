@@ -9,8 +9,8 @@ from config.groq_client import generate as groq_generate
 
 logger = logging.getLogger(__name__)
 
-CHUNK_WORDS = 90
-CHUNK_OVERLAP = 30
+CHUNK_WORDS = settings.QUESTION_VALIDATION_CHUNK_WORDS
+CHUNK_OVERLAP = settings.QUESTION_VALIDATION_CHUNK_OVERLAP
 
 PREVIEW_CHARS = 200
 

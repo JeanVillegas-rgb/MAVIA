@@ -4,10 +4,11 @@ import math
 from collections import Counter
 
 import numpy as np
+from django.conf import settings
 
 SIGNIFICANT_G2 = 3.84
-MEANING_MATCHES = 1
-MIN_SHARED_TERMS = 2
+MEANING_MATCHES = settings.LEARNING_PATH_MEANING_MATCHES
+MIN_SHARED_TERMS = settings.LEARNING_PATH_MIN_SHARED_TERMS
 
 
 def _sign(difference):

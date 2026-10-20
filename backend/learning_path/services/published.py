@@ -2,6 +2,8 @@
 
 from collections import defaultdict
 
+from django.conf import settings
+
 from course.models import bundle_segments, standard_bundle_for
 from course.services import _generated_versions, _version_from_segments
 from course.version_assignment import assign_group_versions, served_version_bundles
@@ -128,7 +130,7 @@ def _versions(parts, group=None):
     return versions
 
 
-QUESTIONS_PER_ORDER = {"LOT": 2, "HOT": 1}
+QUESTIONS_PER_ORDER = {"LOT": settings.LEARNING_PATH_QUESTIONS_LOT, "HOT": settings.LEARNING_PATH_QUESTIONS_HOT}
 
 
 def _questions(parts, include_answers):

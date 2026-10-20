@@ -12,9 +12,9 @@ from config.groq_client import GroqRateLimitError, generate as groq_generate
 logger = logging.getLogger(__name__)
 
 QUESTION_GENERATOR_VERSION = 2
-QUESTION_TEMPERATURE = 0.7
-QUESTION_NUM_PREDICT = 3072
-MAX_UNUSABLE_REPLIES = 2
+QUESTION_TEMPERATURE = settings.QUESTION_TEMPERATURE
+QUESTION_NUM_PREDICT = settings.QUESTION_NUM_PREDICT
+MAX_UNUSABLE_REPLIES = settings.QUESTION_MAX_UNUSABLE_REPLIES
 _warm_lock = threading.Lock()
 _warm_model = ""
 _warm_until = 0.0

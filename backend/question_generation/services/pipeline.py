@@ -51,14 +51,15 @@ def _split(count, weights):
 
 
 _COUNTS = thinking_order_counts()
+_FORMAT_WEIGHTS = {"MCQ": settings.QUESTION_FORMAT_WEIGHT_MCQ, "TF": settings.QUESTION_FORMAT_WEIGHT_TF}
 QUESTION_DISTRIBUTION = {
     "LOT": {
         "count": _COUNTS["LOT"],
-        "format_split": _split(_COUNTS["LOT"], {"MCQ": 2, "TF": 1}),
+        "format_split": _split(_COUNTS["LOT"], _FORMAT_WEIGHTS),
     },
     "HOT": {
         "count": _COUNTS["HOT"],
-        "format_split": _split(_COUNTS["HOT"], {"MCQ": 2, "TF": 1}),
+        "format_split": _split(_COUNTS["HOT"], _FORMAT_WEIGHTS),
     },
 }
 

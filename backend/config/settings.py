@@ -296,6 +296,28 @@ QUESTION_MIN_LOT = int(os.getenv("QUESTION_MIN_LOT", "4"))
 QUESTION_MIN_HOT = int(os.getenv("QUESTION_MIN_HOT", "2"))
 # Rounds one "Generate" click runs, each one only for concepts still short.
 QUESTION_GENERATION_ROUNDS = int(os.getenv("QUESTION_GENERATION_ROUNDS", "3"))
+# How each tier's drafts are split between multiple choice and true/false.
+QUESTION_FORMAT_WEIGHT_MCQ = int(os.getenv("QUESTION_FORMAT_WEIGHT_MCQ", "2"))
+QUESTION_FORMAT_WEIGHT_TF = int(os.getenv("QUESTION_FORMAT_WEIGHT_TF", "1"))
+# Sampling temperature and output budget of one question-writing call, and how
+# many unusable replies in a row end the attempt.
+QUESTION_TEMPERATURE = float(os.getenv("QUESTION_TEMPERATURE", "0.7"))
+QUESTION_NUM_PREDICT = int(os.getenv("QUESTION_NUM_PREDICT", "3072"))
+QUESTION_MAX_UNUSABLE_REPLIES = int(os.getenv("QUESTION_MAX_UNUSABLE_REPLIES", "2"))
+
+# Learning path criteria (learning_path/CRITERIA.md). A sentence needs this many
+# words and a term this many letters; a title longer than MAX_NAME_TERMS stems
+# is a sentence, not a name; a passage refers to another concept when it uses
+# MIN_SHARED_TERMS of its owned terms; the meaning clue averages a sentence's
+# MEANING_MATCHES closest matches.
+LEARNING_PATH_MIN_SENTENCE_WORDS = int(os.getenv("LEARNING_PATH_MIN_SENTENCE_WORDS", "4"))
+LEARNING_PATH_MIN_TERM_LETTERS = int(os.getenv("LEARNING_PATH_MIN_TERM_LETTERS", "3"))
+LEARNING_PATH_MAX_NAME_TERMS = int(os.getenv("LEARNING_PATH_MAX_NAME_TERMS", "6"))
+LEARNING_PATH_MIN_SHARED_TERMS = int(os.getenv("LEARNING_PATH_MIN_SHARED_TERMS", "2"))
+LEARNING_PATH_MEANING_MATCHES = int(os.getenv("LEARNING_PATH_MEANING_MATCHES", "1"))
+# Questions each published step carries per thinking order.
+LEARNING_PATH_QUESTIONS_LOT = int(os.getenv("LEARNING_PATH_QUESTIONS_LOT", "2"))
+LEARNING_PATH_QUESTIONS_HOT = int(os.getenv("LEARNING_PATH_QUESTIONS_HOT", "1"))
 
 ADAPTIVE_VARIANT_GENERATION_ENABLED = os.getenv(
     "ADAPTIVE_VARIANT_GENERATION_ENABLED", "True"
@@ -348,6 +370,10 @@ QUESTION_VALIDATION_ENABLED = os.getenv(
 # Passages retrieved per draft. Three is enough to carry the one sentence a
 # question turns on plus its neighbours; more mostly dilutes the judge prompt.
 QUESTION_VALIDATION_TOP_K = int(os.getenv("QUESTION_VALIDATION_TOP_K", "3"))
+# Size of the PDF passages the grounding check retrieves, in words, and how
+# many words neighbouring passages share.
+QUESTION_VALIDATION_CHUNK_WORDS = int(os.getenv("QUESTION_VALIDATION_CHUNK_WORDS", "90"))
+QUESTION_VALIDATION_CHUNK_OVERLAP = int(os.getenv("QUESTION_VALIDATION_CHUNK_OVERLAP", "30"))
 # Corrective passes after the first. Each one is a full set of LLM calls, so
 # this trades run time for bank completeness; the loop stops early once the
 # quota is met.

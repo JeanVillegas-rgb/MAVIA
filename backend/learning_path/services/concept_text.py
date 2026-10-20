@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 
 import numpy as np
+from django.conf import settings
 from nltk.stem import PorterStemmer
 
 from lessons.services.learning_object_builder import find_body_font_size, is_heading, parse_numbered_concept
@@ -11,9 +12,9 @@ from lessons.services.lesson_pipeline import _teaching_blocks
 
 from .text_signals import strip_part_suffix
 
-MIN_SENTENCE_WORDS = 4
-MIN_TERM_LETTERS = 3
-MAX_NAME_TERMS = 6
+MIN_SENTENCE_WORDS = settings.LEARNING_PATH_MIN_SENTENCE_WORDS
+MIN_TERM_LETTERS = settings.LEARNING_PATH_MIN_TERM_LETTERS
+MAX_NAME_TERMS = settings.LEARNING_PATH_MAX_NAME_TERMS
 HEADING_SIZE_TOLERANCE = 0.5
 
 STOP_WORDS = frozenset("""
