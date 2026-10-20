@@ -698,47 +698,6 @@ body {
   border-bottom-color: var(--mv-brand-600);
 }
 
-/* Reconfirm review: one plain row per approved part that would move. */
-.reconfirm-review-modal {
-  width: min(640px, calc(100vw - 2rem));
-}
-
-.reconfirm-change-list {
-  display: grid;
-  gap: 0.6rem;
-  max-height: 50vh;
-  margin: 0.75rem 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.reconfirm-change-list > li {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.75rem 0.85rem;
-  border: 1px solid var(--mv-border);
-  border-radius: 10px;
-}
-
-.reconfirm-change-list small {
-  display: block;
-  color: var(--mv-muted);
-}
-
-.reconfirm-change-list p {
-  margin: 0.3rem 0 0;
-  font-size: 0.9rem;
-}
-
-.reconfirm-change-choice {
-  display: grid;
-  gap: 0.3rem;
-  font-size: 0.9rem;
-}
-
 /* A labelled question the learner quiz has no tier for. Plain text with a
    dotted underline, so it reads as something to hover for the reason. */
 .question-not-served {

@@ -120,9 +120,9 @@ class TopicIndex:
         k = k or int(getattr(settings, "QUESTION_VALIDATION_TOP_K", 3))
         if not self.searchable:
             return []
-        from lessons.services import semantic_grouping
+        from lessons.services.embedding_service import sentence_embedding_runtime
 
-        engine = semantic_grouping.runtime()
+        engine = sentence_embedding_runtime()
         fitted = _fit(engine, query)
         if not fitted:
             return []
@@ -158,9 +158,9 @@ def build_index(outline_node):
         return TopicIndex([], reason="no extracted PDF text to index")
 
     try:
-        from lessons.services import semantic_grouping
+        from lessons.services.embedding_service import sentence_embedding_runtime
 
-        engine = semantic_grouping.runtime()
+        engine = sentence_embedding_runtime()
     except Exception as exc:  # noqa: BLE001 -- drafts pass as unverified, said so
         logger.warning("Grounding index has no sentence encoder: %s", exc)
         return TopicIndex(chunks, reason=f"sentence encoder unavailable: {exc}")

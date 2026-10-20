@@ -5,19 +5,27 @@ from .models import (
     CourseGroup,
     LearningMaterial,
     LearningObject,
-    LearningObjectMatchSuggestion,
     OutlineNode,
     Question,
     QuestionLearningObjectLink,
 )
 from .services.audio_generator import remove_missing_audio_urls
-from .services.content_generator import is_structural_metadata_label
+from .services.block_classifier import is_structural_metadata_label
+from .services.source_review import source_review_state
 
 
 class OutlineNodeSerializer(serializers.ModelSerializer):
+    source_review = serializers.SerializerMethodField()
+
     class Meta:
         model = OutlineNode
-        fields = ["id", "title", "depth", "order", "parent", "related_info", "published", "published_at"]
+        fields = [
+            "id", "title", "depth", "order", "parent", "related_info",
+            "source_review", "published", "published_at",
+        ]
+
+    def get_source_review(self, obj):
+        return source_review_state(obj)
 
 
 class OutlineNodeMutationSerializer(serializers.Serializer):
@@ -46,6 +54,7 @@ class OutlineHierarchyNodeSerializer(serializers.ModelSerializer):
     children = serializers.SerializerMethodField()
     lesson_pdf_count = serializers.SerializerMethodField()
     has_lesson_pdf = serializers.SerializerMethodField()
+    source_review = serializers.SerializerMethodField()
 
     class Meta:
         model = OutlineNode
@@ -56,6 +65,7 @@ class OutlineHierarchyNodeSerializer(serializers.ModelSerializer):
             "depth",
             "parent",
             "related_info",
+            "source_review",
             "lesson_pdf_count",
             "has_lesson_pdf",
             "published",
@@ -72,6 +82,9 @@ class OutlineHierarchyNodeSerializer(serializers.ModelSerializer):
 
     def get_has_lesson_pdf(self, obj):
         return self.get_lesson_pdf_count(obj) > 0
+
+    def get_source_review(self, obj):
+        return source_review_state(obj)
 
 
 class CourseListSerializer(serializers.ModelSerializer):
@@ -141,45 +154,9 @@ class LearningObjectSerializer(serializers.ModelSerializer):
         ]
 
     def get_narration_pending(self, obj):
-        from .services.image_describer import narration_pending
+        from .services.visual_describer import narration_pending
 
         return narration_pending(obj)
-
-
-class LearningObjectMatchSuggestionSerializer(serializers.ModelSerializer):
-    source_learning_object = LearningObjectSerializer(read_only=True)
-    candidate_learning_object = LearningObjectSerializer(read_only=True)
-    source_members = serializers.SerializerMethodField()
-    candidate_members = serializers.SerializerMethodField()
-
-    def _members(self, primary, extra_ids):
-        extras = LearningObject.objects.filter(pk__in=extra_ids).order_by("order", "id")
-        return LearningObjectSerializer([primary, *extras], many=True, context=self.context).data
-
-    def get_source_members(self, obj):
-        return self._members(obj.source_learning_object, obj.source_extra_ids)
-
-    def get_candidate_members(self, obj):
-        return self._members(obj.candidate_learning_object, obj.candidate_extra_ids)
-
-    class Meta:
-        model = LearningObjectMatchSuggestion
-        fields = [
-            "id",
-            "outline_node",
-            "source_learning_object",
-            "candidate_learning_object",
-            "source_members",
-            "candidate_members",
-            "source_extra_ids",
-            "candidate_extra_ids",
-            "similarity_score",
-            "confidence",
-            "evidence",
-            "status",
-            "created_at",
-            "updated_at",
-        ]
 
 
 class QuestionLearningObjectLinkSerializer(serializers.ModelSerializer):
@@ -322,8 +299,10 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
 
     def get_figure_narration(self, obj):
         """How many figures still wait for a narration, for the upload notice."""
-        from .services.content_generator import figures_narrated_at_upload
-        from .services.image_describer import figure_narration_status
+        from .services.visual_describer import (
+            figure_narration_status,
+            figures_narrated_at_upload,
+        )
 
         return {**figure_narration_status(obj), "narrated_at_upload": figures_narrated_at_upload()}
 

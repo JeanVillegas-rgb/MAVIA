@@ -3,6 +3,35 @@ from django.db import models
 from lessons.models import LearningObject
 
 
+BUNDLE_GENERATOR_PREFIX = "jean-bundle:"
+
+
+def complete_generated_rows(objects, rows):
+    """Return complete generated slots, including Jean's single-row bundles.
+
+    Older rows without the bundle marker cover only their own objects.
+    """
+    objects = list(objects)
+    if not objects:
+        return {}
+    by_slot = {}
+    for row in rows:
+        if row.variant in ("SIMPLIFIED", "ELABORATED") and (row.narration or "").strip():
+            by_slot.setdefault(row.variant, []).append(row)
+    complete = {}
+    object_ids = {item.id for item in objects}
+    lead_id = objects[0].id
+    for slot, slot_rows in by_slot.items():
+        bundle_row = next((row for row in slot_rows if row.learning_object_id == lead_id
+                           and row.generator_model.startswith(BUNDLE_GENERATOR_PREFIX)), None)
+        if bundle_row is not None:
+            complete[slot] = [bundle_row]
+        elif {row.learning_object_id for row in slot_rows} == object_ids:
+            positions = {item.id: index for index, item in enumerate(objects)}
+            complete[slot] = sorted(slot_rows, key=lambda row: positions[row.learning_object_id])
+    return complete
+
+
 class LessonVariant(models.Model):
     VARIANTS = [
         ("ELABORATED", "Elaborated"),

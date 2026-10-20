@@ -11,19 +11,20 @@ exercised synchronously without a background thread or an HTTP round trip.
 
 from django.utils import timezone
 
-from course.models import LessonVariant
+from course.models import LessonVariant, complete_generated_rows
 from course.version_assignment import settle_group
 
 from ..models import LearningMaterial, LearningObject
 from .audio_generator import (
     AudioGenerationError,
+    build_lesson_playlist,
+    build_narration_script_from_learning_objects,
     generate_bundle_version_audio,
     generate_material_audio_playlist,
     generate_question_audio,
     generate_version_audio,
 )
-from .image_describer import populate_missing_image_descriptions
-from .content_generator import build_narration_script_from_learning_objects, build_lesson_playlist
+from .visual_describer import populate_missing_image_descriptions
 
 
 def _noop(event_type, message, **data):
@@ -50,8 +51,8 @@ def concepts_missing_a_version(node, materials):
     * a role another PDF supplies is satisfied by that PDF's own objects --
       there is no ``LessonVariant`` row to look for, and demanding one would
       make every two-PDF topic unpublishable;
-    * a role no bundle supplies must have been written, one row per object of
-      the Standard bundle, so the version a student hears covers all of it;
+    * a role no bundle supplies must have a complete generated version, either
+      one marked whole-bundle row or every object's older individual rows;
     * only the Standard bundle's lead speaks for the concept. Every other object
       either repeats it or belongs to a bundle that is already a version --
       including a bundle still awaiting the teacher's confirmation, which is
@@ -65,13 +66,9 @@ def concepts_missing_a_version(node, materials):
     from course.version_assignment import PRIMARY_SLOTS, served_version_bundles
 
     confirmed_ids = {material.id for material in materials}
-    filled = {
-        (learning_object_id, variant)
-        for learning_object_id, variant, narration in LessonVariant.objects.filter(
-            learning_object__material__in=materials,
-        ).values_list("learning_object_id", "variant", "narration")
-        if (narration or "").strip()
-    }
+    rows_by_object = {}
+    for row in LessonVariant.objects.filter(learning_object__material__in=materials):
+        rows_by_object.setdefault(row.learning_object_id, []).append(row)
     bundles_by_group = {}
     missing = []
     for candidate in (
@@ -108,10 +105,13 @@ def concepts_missing_a_version(node, materials):
         if not any((item.content or "").strip() for item in standard):
             missing.append(candidate.id)
             continue
+        generated = complete_generated_rows(
+            standard,
+            [row for item in standard for row in rows_by_object.get(item.id, [])],
+        )
         if any(
-            (item.id, slot) not in filled
+            slot not in generated
             for slot in set(PRIMARY_SLOTS) - supplied
-            for item in standard
         ):
             missing.append(candidate.id)
     return missing

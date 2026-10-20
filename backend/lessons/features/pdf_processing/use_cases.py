@@ -7,15 +7,17 @@ from django.db import transaction
 from django.utils import timezone
 
 from lessons.models import CourseGroup, CourseOutline, LearningMaterial, OutlineNode
-from lessons.services.content_generator import (
-    LearningMaterialValidationError,
+from lessons.services.lesson_pipeline import (
+    LessonPipelineError,
+    LessonPipelineUnavailableError,
     generate_material_outputs,
 )
-from lessons.services.outline_parser import (
-    build_dag_from_outline,
+from lessons.services.course_outline_parser import (
     is_course_outline_pdf,
-    validate_course_outline_pdf,
+    parse_outline_file,
+    save_outline_hierarchy,
 )
+from lessons.services.embedding_service import cache_subtopic_embeddings
 
 
 class PdfProcessingUseCaseError(Exception):
@@ -24,6 +26,19 @@ class PdfProcessingUseCaseError(Exception):
 
 class DuplicatePdfUploadError(PdfProcessingUseCaseError):
     """The exact PDF bytes are already stored for the same course."""
+
+
+class PdfProcessingUnavailableError(PdfProcessingUseCaseError):
+    """A retryable dependency failure interrupted PDF processing."""
+
+    def __init__(self, reason: str, *, material_id: int | None = None):
+        self.reason = reason
+        self.material_id = material_id
+        super().__init__(
+            "The PDF was saved, but processing could not finish because an "
+            "external service was temporarily unavailable. Retry processing "
+            f"when the service is available. Reason: {reason}"
+        )
 
 
 class RejectedLearningMaterialError(PdfProcessingUseCaseError):
@@ -114,10 +129,6 @@ def upload_course_outline(
 ) -> tuple[CourseGroup, bool]:
     """Store an outline source and merge its hierarchy into the course."""
     fingerprint = _file_sha256(outline_file)
-    print(
-        f"Fingerprint: {fingerprint}"
-    )
-
     existing_outline = _find_existing_outline(course, fingerprint)
     existing_material = _find_existing_material(course, outline_file, fingerprint)
     if existing_outline is not None or existing_material is not None:
@@ -127,7 +138,9 @@ def upload_course_outline(
 
     try:
         with _temporary_pdf_copy(outline_file) as temporary_path:
-            parsed_nodes = validate_course_outline_pdf(str(temporary_path))
+            parsed_nodes = parse_outline_file(
+                str(temporary_path), Path(outline_file.name).suffix,
+            )
     except Exception as exc:
         raise PdfProcessingUseCaseError(str(exc)) from exc
 
@@ -137,13 +150,8 @@ def upload_course_outline(
         file_sha256=fingerprint,
     )
     try:
-        build_dag_from_outline(
-            course,
-            outline.outline_file.path,
-            Path(outline_file.name).suffix,
-            replace=False,
-            parsed_nodes=parsed_nodes,
-        )
+        save_outline_hierarchy(course, parsed_nodes, replace=False)
+        cache_subtopic_embeddings(course)
     except Exception as exc:
         outline.outline_file.delete(save=False)
         outline.delete()
@@ -320,6 +328,15 @@ def upload_learning_material(
     outline_node = _selected_outline_node(course, outline_node_id)
     module_node = _selected_module_node(course, module_node_id, outline_node)
 
+    if outline_node is not None:
+        from lessons.services.source_review import source_review_is_finalized
+
+        if source_review_is_finalized(outline_node):
+            raise PdfProcessingUseCaseError(
+                "Lesson sources for this subtopic have been finalized. "
+                "Additional PDFs cannot be uploaded."
+            )
+
     fingerprint = _file_sha256(pdf_file)
     _ensure_pdf_is_new(course, pdf_file, fingerprint)
 
@@ -333,9 +350,13 @@ def upload_learning_material(
     )
     try:
         generate_material_outputs(material, propagate_validation_error=True)
-    except LearningMaterialValidationError as exc:
+    except LessonPipelineError as exc:
         _discard_rejected_material(material)
         raise RejectedLearningMaterialError(str(exc)) from exc
+    except LessonPipelineUnavailableError as exc:
+        raise PdfProcessingUnavailableError(
+            str(exc), material_id=material.id,
+        ) from exc
     return material, False
 
 

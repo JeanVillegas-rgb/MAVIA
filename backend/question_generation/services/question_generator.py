@@ -49,7 +49,7 @@ def _mark_question_model_warm():
 # no longer regenerates to correct it.
 
 # The grounding rule, shared by both thinking orders. Worded after
-# course/variant_generator.py, which has carried the same prohibition since
+# course/generate_variation.py, which has carried the same prohibition since
 # the version generator was written and does not drift off-source the way
 # this one did. Stated as a prohibition, not an invitation: "answerable from
 # the content" told the model what a good question looks like and left it

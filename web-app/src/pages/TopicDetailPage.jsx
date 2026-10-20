@@ -3,8 +3,6 @@ import { createPortal } from "react-dom";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { uploadedMaterialFromResponse } from "../uploadNavigation";
 import {
-  acceptLearningObjectMatchSuggestion,
-  applyRegrouping,
   confirmLearningObjects,
   createLearningObject,
   createTopicQuestion,
@@ -15,21 +13,18 @@ import {
   deleteTopicQuestion,
   fetchCourse,
   fetchLearningResources,
+  finalizeTopicSources,
   fetchQuestionGenerationTrace,
-  fetchRegroupingPreview,
   fetchTopicLearningPath,
   generateAudioPlaylist,
   generateAllObjectVersions,
   fetchGenerationRunEvents,
   publishTopic,
-  rejectLearningObjectMatchSuggestion,
   assignVersionSlot,
   editVersionText,
   removeVersion,
   generateObjectVersions,
   keepVersionText,
-  moveObjectOut,
-  moveObjectToConcept,
   reviewQuestionPairing,
   startQuestionGeneration,
   startTopicQuestionGeneration,
@@ -90,36 +85,66 @@ function renderInlineFormatting(text) {
   ));
 }
 
+function restoreInlineListBreaks(content) {
+  const text = String(content || "");
+  const numbered = [...text.matchAll(/(?:^|\s)(?:([0-9]+)[.)]|\(([0-9]+)\))\s+/g)];
+  const numbers = numbered.map((match) => Number(match[1] || match[2]));
+  const sequentialNumbers = numbers.length >= 2
+    && numbers.slice(1).every((number, index) => number === numbers[index] + 1);
+  if (sequentialNumbers) {
+    return text.replace(/\s+(?=(?:[0-9]+[.)]|\([0-9]+\))\s+)/g, "\n");
+  }
+
+  const lettered = [...text.matchAll(/(?:^|\s)(?:([A-Za-z])[.)]|\(([A-Za-z])\))\s+/g)];
+  const letters = lettered.map((match) => (match[1] || match[2]).toLowerCase().charCodeAt(0));
+  const sequentialLetters = letters.length >= 2
+    && letters.slice(1).every((letter, index) => letter === letters[index] + 1);
+  return sequentialLetters
+    ? text.replace(/\s+(?=(?:[A-Za-z][.)]|\([A-Za-z]\))\s+)/g, "\n")
+    : text;
+}
+
 function FormattedLearningObjectContent({ content, className = "" }) {
-  const lines = String(content || "No narration content.")
+  const lines = restoreInlineListBreaks(content || "No narration content.")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   const blocks = [];
   let list = [];
   let listType = "ul";
+  let orderedListStyle;
   let implicitListMode = false;
 
   function flushList() {
     if (!list.length) return;
     const ListTag = listType;
     blocks.push(
-      <ListTag className="formatted-content-list" key={`list-${blocks.length}`}>
+      <ListTag
+        className="formatted-content-list"
+        key={`list-${blocks.length}`}
+        {...(ListTag === "ol" && orderedListStyle ? { type: orderedListStyle } : {})}
+      >
         {list.map((item, index) => <li key={`${item}-${index}`}>{renderInlineFormatting(item)}</li>)}
       </ListTag>,
     );
     list = [];
+    orderedListStyle = undefined;
   }
 
   lines.forEach((line) => {
-    const bullet = line.match(/^(?:[-*\u2022])\s+(.+)$/);
-    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    const bullet = line.match(/^(?:[-*\u2022\u2023\u25E6\u2043\u2219\u25AA\u25CF])\s+(.+)$/);
+    const numbered = line.match(/^(?:(\d+)[.)]|\((\d+)\))\s+(.+)$/);
+    const lettered = line.match(/^(?:([A-Za-z])[.)]|\(([A-Za-z])\))\s+(.+)$/);
     const isHeading = line.endsWith(":") && line.length <= 90;
-    if (bullet || numbered) {
-      const nextType = numbered ? "ol" : "ul";
-      if (list.length && listType !== nextType) flushList();
+    if (bullet || numbered || lettered) {
+      const nextType = numbered || lettered ? "ol" : "ul";
+      const nextStyle = lettered
+        ? (((lettered[1] || lettered[2]) === (lettered[1] || lettered[2]).toUpperCase()) ? "A" : "a")
+        : undefined;
+      if (list.length && (listType !== nextType || orderedListStyle !== nextStyle)) flushList();
       listType = nextType;
-      list.push((bullet || numbered)[1]);
+      orderedListStyle = nextStyle;
+      list.push(bullet?.[1] || numbered?.[3] || lettered?.[3]);
       return;
     }
     if (isHeading) {
@@ -149,136 +174,10 @@ function FormattedLearningObjectContent({ content, className = "" }) {
   return <div className={`formatted-learning-object-content ${className}`.trim()}>{blocks}</div>;
 }
 
-function logLearningObjectMatchDebug(payload) {
-  const suggestions = payload?.match_suggestions || [];
-  const configuration = payload?.matching_debug || {};
-  const weights = configuration.weights || {};
-  const thresholds = configuration.thresholds || {};
-
-  console.groupCollapsed(
-    `[MAVIA matcher] ${suggestions.length} recommended pair${suggestions.length === 1 ? "" : "s"}`,
-  );
-  console.info("Matcher configuration", configuration);
-  console.table(
-    Object.entries(weights).map(([signal, weight]) => ({ signal, weight, percentage: `${Math.round(weight * 100)}%` })),
-  );
-  console.table(
-    Object.entries(thresholds).map(([rule, threshold]) => ({ rule, threshold, percentage: `${Math.round(threshold * 100)}%` })),
-  );
-
-  suggestions.forEach((suggestion) => {
-    const evidence = suggestion.evidence || {};
-    const score = Number(suggestion.similarity_score ?? evidence.score ?? 0);
-    const margin = Number(evidence.winner_margin ?? 0);
-    const groupMemberScore = Number(evidence.minimum_group_member_score ?? score);
-    console.groupCollapsed(
-      `[Pair ${suggestion.id}] ${suggestion.source_learning_object?.title || "Untitled"} ↔ ${suggestion.candidate_learning_object?.title || "Untitled"}`,
-    );
-    console.table({
-      method: evidence.method || configuration.method || "unknown",
-      overall_score: score,
-      sbert_cosine: Number(evidence.sbert_cosine || 0),
-      cross_encoder_score: Number(evidence.score || 0),
-      members_checked: Number(evidence.members_checked || 0),
-      all_members_checked: Boolean(evidence.all_members_checked),
-      title_tfidf: Number(evidence.title_tfidf || 0),
-      content_tfidf: Number(evidence.content_tfidf || 0),
-      character_ngram: Number(evidence.character_ngram || 0),
-      keyword_overlap: Number(evidence.keyword_overlap || 0),
-      structure: Number(evidence.structure || 0),
-      content_support: Number(evidence.content_support || 0),
-      runner_up_score: Number(evidence.runner_up_score || 0),
-      winner_margin: margin,
-      minimum_group_member_score: groupMemberScore,
-      minimum_group_content_support: Number(evidence.minimum_group_content_support || 0),
-      exact_normalized_title: Boolean(evidence.exact_normalized_title),
-    });
-    const ruleResult = (actual, required) => ({
-      actual,
-      required: required ?? "not enabled",
-      passed: required == null ? false : actual >= Number(required),
-    });
-    console.table([
-      {
-        rule: "Teacher review score",
-        ...ruleResult(score, thresholds.teacher_review),
-      },
-      {
-        rule: "Automatic connection score",
-        ...ruleResult(score, thresholds.auto_connect),
-      },
-      {
-        rule: "SBERT group-member similarity",
-        ...ruleResult(
-          Number(evidence.minimum_group_sbert_cosine || 0),
-          thresholds.minimum_sbert_cosine,
-        ),
-      },
-      {
-        rule: "Winner margin",
-        ...ruleResult(margin, thresholds.minimum_winner_margin),
-      },
-      {
-        rule: "Every group member",
-        ...ruleResult(groupMemberScore, thresholds.minimum_group_member),
-      },
-      {
-        rule: "Content evidence",
-        ...ruleResult(Number(evidence.content_support || 0), thresholds.minimum_content_support),
-      },
-      {
-        rule: "Every member content",
-        ...ruleResult(Number(evidence.minimum_group_content_support || 0), thresholds.minimum_content_support),
-      },
-    ]);
-    console.debug("Raw match suggestion", suggestion);
-    console.groupEnd();
-  });
-  console.groupEnd();
-
-  const questionPairings = payload?.question_pairings || [];
-  const questionConfiguration = payload?.question_pairing_debug || {};
-  const questionWeights = questionConfiguration.weights || {};
-  const questionThresholds = questionConfiguration.thresholds || {};
-  console.groupCollapsed(
-    `[MAVIA question matcher] ${questionPairings.length} detected question${questionPairings.length === 1 ? "" : "s"}`,
-  );
-  console.info("Question pairing configuration", questionConfiguration);
-  console.table(
-    Object.entries(questionWeights).map(([signal, weight]) => ({
-      signal,
-      weight,
-      percentage: `${Math.round(weight * 100)}%`,
-    })),
-  );
-  console.table(
-    Object.entries(questionThresholds).map(([rule, threshold]) => ({
-      rule,
-      threshold,
-      percentage: `${Math.round(threshold * 100)}%`,
-    })),
-  );
-  console.table(
-    questionPairings.map((question) => {
-      const link = question.learning_object_links?.[0];
-      return {
-        question_id: question.id,
-        prompt: question.prompt,
-        learning_object_id: link?.learning_object ?? null,
-        group_id: link?.learning_object_group_id ?? null,
-        score: link ? Number(link.relevance_score || 0) : null,
-        status: link?.review_status || "unmatched",
-        method: link?.method || questionConfiguration.method || "unknown",
-      };
-    }),
-  );
-  console.groupEnd();
-}
-
 // The five review steps in order. One tracker is drawn above every step and
 // sticks to the top of the panel, so the teacher always sees where they are.
 const REVIEW_STEPS = [
-  { key: "objects", label: "Object pairs" },
+  { key: "objects", label: "Concept review" },
   { key: "versions", label: "Content versions" },
   { key: "questions", label: "Question pairs" },
   { key: "publish", label: "Content & questions" },
@@ -334,119 +233,6 @@ function ReviewQueueNavigator({ index, count, onChange, disabled, itemLabel }) {
     </div>
   );
 }
-
-function ObjectPairsPanel({
-  suggestions,
-  materialById,
-  busyAction,
-  pendingQuestionCount,
-  onReviewStepChange,
-  onReview,
-}) {
-  const [objectIndex, setObjectIndex] = useState(0);
-
-  useEffect(() => {
-    setObjectIndex((current) => Math.max(0, Math.min(current, suggestions.length - 1)));
-  }, [suggestions.length]);
-
-  return (
-    <aside className="match-suggestion-panel panel-aside" aria-labelledby="object-pairs-panel-title">
-      <div className="match-suggestion-heading">
-        <div>
-          <span className="connection-eyebrow">Review queue</span>
-          <h4 id="object-pairs-panel-title">Review object pairs</h4>
-        </div>
-        <span>{suggestions.length} to review</span>
-      </div>
-
-      {!suggestions.length ? (
-        <div className="review-queue-empty">No learning-object pairs need review.</div>
-      ) : (
-        <>
-          <ReviewQueueNavigator
-            index={objectIndex}
-            count={suggestions.length}
-            onChange={setObjectIndex}
-            disabled={Boolean(busyAction)}
-            itemLabel="Object pair"
-          />
-          <div className="match-suggestion-list">
-            {suggestions.map((suggestion, index) => {
-              const source = suggestion.source_learning_object;
-              const candidate = suggestion.candidate_learning_object;
-              const sourceMaterial = materialById.get(Number(source.material));
-              const candidateMaterial = materialById.get(Number(candidate.material));
-              return (
-                <article
-                  className={`match-suggestion-card ${
-                    index === objectIndex ? "" : "is-hidden"
-                  }`.trim()}
-                  key={suggestion.id}
-                >
-                  <div className="match-suggestion-score">
-                    <span>Similarity</span>
-                    <strong>{Math.round(suggestion.similarity_score * 100)}%</strong>
-                    <em>{suggestion.confidence} confidence</em>
-                  </div>
-                  <div className="match-suggestion-pair">
-                    <div className="match-source-card">
-                      <div className="match-source-label">
-                        <span aria-hidden="true">A</span>
-                        <small>{sourceMaterial?.filename || `PDF ${source.material}`}</small>
-                      </div>
-                      {(suggestion.source_members?.length ? suggestion.source_members : [source]).map((member) => (
-                        <div key={member.id} className="match-unit-member">
-                          <strong>{member.title}</strong>
-                          {member.image_url && (
-                            <img className="review-source-image" src={member.image_url} alt={member.title || "Source A"} />
-                          )}
-                          <p className="match-source-content">{member.content || "No narration content."}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="match-pair-connector" aria-hidden="true">
-                      <span>+</span>
-                      <small>possible match</small>
-                    </div>
-                    <div className="match-source-card">
-                      <div className="match-source-label">
-                        <span aria-hidden="true">B</span>
-                        <small>{candidateMaterial?.filename || `PDF ${candidate.material}`}</small>
-                      </div>
-                      {(suggestion.candidate_members?.length ? suggestion.candidate_members : [candidate]).map((member) => (
-                        <div key={member.id} className="match-unit-member">
-                          <strong>{member.title}</strong>
-                          {member.image_url && (
-                            <img className="review-source-image" src={member.image_url} alt={member.title || "Source B"} />
-                          )}
-                          <p className="match-source-content">{member.content || "No narration content."}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="match-suggestion-actions">
-                    <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busyAction)} onClick={() => onReview(suggestion, "reject")}>
-                      {busyAction === `suggestion-reject-${suggestion.id}` ? "Declining..." : "Decline"}
-                    </button>
-                    <button type="button" className="btn btn-primary btn-small" disabled={Boolean(busyAction)} onClick={() => onReview(suggestion, "accept")}>
-                      {busyAction === `suggestion-accept-${suggestion.id}` ? "Accepting..." : "Accept"}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </>
-      )}
-      <StepDock>
-        <button type="button" className="btn btn-primary" disabled={Boolean(busyAction)} onClick={() => onReviewStepChange("versions")}>
-          Next step: Content versions
-        </button>
-      </StepDock>
-    </aside>
-  );
-}
-
 
 // The three versions a learner is offered, in the order they are shown.
 export const VERSION_ROLES = [
@@ -1100,74 +886,7 @@ function VersionReviewPanel({
                 Simplified or Elaborated role will have its own Generate button.
               </p>
             </div>
-          ) : (versions?.needs_confirmation || []).map((pending) => {
-            const candidate = chunk.learning_objects.find(
-              (item) => Number(item.id) === Number(pending.learning_object_id),
-            );
-            if (!candidate) return null;
-            const candidateBundle = chunk.bundles?.find(
-              (bundle) => Number(bundle.material) === Number(pending.material_id),
-            );
-            const candidateParts = (candidateBundle?.learning_objects || [candidate])
-              .map((item) => ({
-                id: item.id,
-                title: item.title,
-                text: item.content?.trim(),
-              }))
-              .filter((item) => item.text);
-            const candidateText = candidateParts
-              .map((item) => item.text)
-              .filter(Boolean)
-              .join("\n") || candidate.content;
-            return (
-              <div className="version-pending-decision" key={pending.learning_object_id}>
-                <p>
-                  This source version needs your decision. Choose how to use it below.
-                </p>
-                {pending.llm_slot && (
-                  <small className="muted-text">
-                    AI suggested {pending.llm_slot.toLowerCase()}
-                    {pending.llm_confidence != null ? ` (${Math.round(pending.llm_confidence * 100)}% confidence)` : ""};
-                    readability checks suggested {pending.readability_slot?.toLowerCase() || "no clear role"}
-                    {pending.readability_confident ? "." : " but did not clear the automatic threshold."}
-                  </small>
-                )}
-                {(pending.review_issues || []).length > 0 && (
-                  <p className="muted-text">
-                    {pending.review_measures?.weakly_covered_sentences > 0
-                      ? `${pending.review_measures.weakly_covered_sentences} Standard sentence(s) may be missing or phrased very differently. `
-                      : "The automatic checks disagree with the AI label. "}
-                    Compare this PDF text with Standard before choosing a role.
-                  </p>
-                )}
-                <div className="version-pending-source">
-                  <BundleParts
-                    parts={candidateParts}
-                    fallback={candidateText}
-                    className="version-pending-parts"
-                    showSingleTitle
-                  />
-                </div>
-                <div className="version-slot-actions">
-                  {["STANDARD", "SIMPLIFIED", "ELABORATED"].map((slot) => (
-                    <button
-                      type="button"
-                      key={slot}
-                      className="btn btn-primary btn-small"
-                      disabled={Boolean(busyAction)}
-                      onClick={() => onAssignSlot(pending.learning_object_id, slot)}
-                    >
-                      {slot === "STANDARD" ? "Make Standard"
-                        : slot === "SIMPLIFIED" ? "Use as Simplified" : "Use as Elaborated"}
-                    </button>
-                  ))}
-                </div>
-                <p className="muted-text">
-                  If neither role fits, leave this source unassigned or return to object pairs to separate it from this concept.
-                </p>
-              </div>
-            );
-          })}
+          ) : null}
 
           {versions?.classification_complete !== false && <div className="version-slot-grid">
             <VersionSlotCard
@@ -1260,7 +979,7 @@ function VersionReviewPanel({
           disabled={Boolean(busyAction)}
           onClick={() => onReviewStepChange("objects")}
         >
-          Back to object pairs
+          Back to concept review
         </button>
         {incompleteCount > 0 && (
           <small className="review-step-dock-note">
@@ -2236,154 +1955,6 @@ function PublishPanel({ groups, materialById, busyAction, onReviewStepChange }) 
   );
 }
 
-const REGROUPING_ACTION_LABELS = {
-  stay: "Stays",
-  move: "Move",
-  separate: "Stand alone",
-  unscored: "Check manually",
-};
-
-// Teacher-facing names for the stored version slots.
-const VERSION_SLOT_LABELS = { simplified: "Simplified", elaborated: "Elaborated" };
-
-// A blocking wait for work with no steps to report: scoring a handful of edited
-// objects, or applying the chosen changes. Same look as the pipeline progress.
-function RegroupingBusy({ title, detail }) {
-  return (
-    <div className="run-progress-backdrop" role="presentation">
-      <div className="run-progress-modal" role="dialog" aria-modal="true" aria-live="polite" aria-label={title}>
-        <div className="run-progress-head">
-          <h3>{title}</h3>
-        </div>
-        <div className="publish-trace-bar is-indeterminate" aria-hidden="true"><span /></div>
-        <p className="run-progress-current">{detail}</p>
-      </div>
-    </div>
-  );
-}
-
-function RegroupingReview({ preview, selectedIds, busy, onToggle, onCancel, onApply }) {
-  const proposals = preview.proposals || [];
-  const selectable = proposals.filter((proposal) => proposal.selectable);
-  const chosenCount = selectable.filter((proposal) => selectedIds.includes(proposal.learning_object_id)).length;
-
-  return (
-    <div className="run-progress-backdrop" role="presentation">
-      <div
-        className="run-progress-modal regrouping-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="regrouping-review-title"
-      >
-        <div className="run-progress-head">
-          <div>
-            <span className="connection-eyebrow">Edited learning objects</span>
-            <h3 id="regrouping-review-title">Review grouping changes</h3>
-          </div>
-          <span className="run-progress-count">
-            {proposals.length} edited · {selectable.length} with a proposed change
-          </span>
-        </div>
-
-        {preview.published && (
-          <p className="regrouping-warning" role="alert">
-            This topic is published. Applying any change unpublishes it until you publish again,
-            so students never see a half-updated lesson.
-          </p>
-        )}
-
-        {proposals.length === 0 ? (
-          <p className="run-progress-current">Nothing has been edited since it was grouped.</p>
-        ) : (
-          <ul className="regrouping-list">
-            {proposals.map((proposal) => {
-              const checked = selectedIds.includes(proposal.learning_object_id);
-              const impact = proposal.impact || {};
-              const removedSlots = (impact.removed_version_slots || [])
-                .map((slot) => VERSION_SLOT_LABELS[slot] || slot);
-              return (
-                <li
-                  key={proposal.learning_object_id}
-                  className={`regrouping-row is-${proposal.action} ${checked ? "is-chosen" : ""}`.trim()}
-                >
-                  <label className="regrouping-choice">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!proposal.selectable || busy}
-                      onChange={() => onToggle(proposal.learning_object_id)}
-                    />
-                    <span className="sr-only">Apply the change for {proposal.title}</span>
-                  </label>
-                  <div className="regrouping-body">
-                    <div className="regrouping-title-row">
-                      <strong>{proposal.title}</strong>
-                      <span className={`regrouping-pill is-${proposal.action}`}>
-                        {REGROUPING_ACTION_LABELS[proposal.action] || proposal.action}
-                      </span>
-                    </div>
-                    <small className="regrouping-source">{proposal.material_title}</small>
-                    <p className="regrouping-reason">{proposal.reason}</p>
-                    {proposal.selectable && (
-                      <p className="regrouping-route">
-                        <span>{proposal.current_group?.label || "Current concept"}</span>
-                        <span aria-hidden="true"> → </span>
-                        <span>
-                          {proposal.action === "move"
-                            ? proposal.destination_group?.label || "Matched concept"
-                            : "its own concept"}
-                        </span>
-                      </p>
-                    )}
-                    {proposal.selectable && (
-                      <ul className="regrouping-impact">
-                        {proposal.teacher_made && (
-                          <li className="is-teacher">
-                            You grouped this yourself, so the change is not ticked. Tick it to overrule
-                            your earlier decision.
-                          </li>
-                        )}
-                        {impact.was_original && (
-                          <li>
-                            This is the Standard version of “{proposal.current_group?.label}”. That concept
-                            will need a new original, and its versions reviewed again.
-                          </li>
-                        )}
-                        {removedSlots.length > 0 && (
-                          <li>
-                            Removes the {removedSlots.join(" and ")} text it supplied to that concept.
-                          </li>
-                        )}
-                        {impact.question_count > 0 && (
-                          <li>
-                            {impact.question_count} linked question{impact.question_count === 1 ? "" : "s"} move
-                            with it.
-                          </li>
-                        )}
-                      </ul>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        <div className="modal-actions">
-          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={onApply}>
-            {chosenCount === 0
-              ? "Keep everything as it is"
-              : `Apply ${chosenCount} change${chosenCount === 1 ? "" : "s"}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function LearningObjectConnections({
   courseId,
   topicId,
@@ -2405,22 +1976,25 @@ function LearningObjectConnections({
   // which concept is being written rather than only that something is running.
   const [missingProgress, setMissingProgress] = useState(null);
   const [filter, setFilter] = useState("all");
-  // The open grouping review, and which of its proposals the teacher ticked.
-  const [regroupPreview, setRegroupPreview] = useState(null);
-  const [regroupSelectedIds, setRegroupSelectedIds] = useState([]);
   const [versionRemoval, setVersionRemoval] = useState(null);
   const automaticClassificationRef = useRef("");
-  // The bundle controls, keyed `${object id}-${action}`, and the one to focus
-  // again once a correction has come back. See `bundleControlKey`.
-  const bundleControlRefs = useRef(new Map());
-  const refocusAfterCorrection = useRef("");
-  // The review panel itself: rendered for the whole "objects" step regardless
-  // of filter or search, so it is where focus lands when a correction's own
-  // control (and its row's "Move to..." fallback) is no longer rendered --
-  // Move out on the last object of another PDF in a filtered/searched view
-  // sends the object into a one-PDF concept the view then hides, leaving
-  // neither control mounted.
-  const reviewPanelRef = useRef(null);
+  const sourcesFinalized = Boolean(topic?.source_review?.finalized);
+
+  async function finalizeSources() {
+    setBusyAction("finalize-sources");
+    onError("");
+    onMessage("");
+    try {
+      const updatedCourse = await finalizeTopicSources(courseId, topicId);
+      onCourseChange(updatedCourse);
+      onMessage("Lesson sources finalized. PDF uploads and source changes are now locked for this subtopic.");
+      onReviewStepChange("versions");
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusyAction("");
+    }
+  }
 
   const materialSignature = useMemo(
     () => materials
@@ -2474,10 +2048,6 @@ function LearningObjectConnections({
     };
   }, [courseId, topicId, materialSignature, onError]);
 
-  useEffect(() => {
-    if (resources) logLearningObjectMatchDebug(resources);
-  }, [resources]);
-
   // Grouping can place corroborated objects into one concept on its own, and a
   // placement unpublishes the topic so the published lesson never describes
   // content that changed. Nothing else announces that, so the panel says it.
@@ -2494,7 +2064,6 @@ function LearningObjectConnections({
   const groups = resources?.learning_object_groups || [];
   // The page header's Learning path button needs this, and it is only known
   // here, where the concepts are loaded.
-  const matchSuggestions = resources?.match_suggestions || [];
   const allQuestionPairings = resources?.question_pairings || [];
   const gaps = contentGaps(groups, allQuestionPairings);
   useEffect(() => {
@@ -2531,37 +2100,6 @@ function LearningObjectConnections({
     () => new Map(materials.map((material) => [Number(material.id), material])),
     [materials],
   );
-  // Keyboard focus across a bundle correction.
-  //
-  // Every correction replaces the whole payload, so the row the teacher just
-  // pressed in is unmounted and mounted again -- and when the object moves to
-  // another concept it is mounted somewhere else entirely. A teacher on a
-  // screen reader would land back at the top of the page after every press.
-  // The controls therefore keep themselves in the tab order (`aria-disabled`
-  // rather than `disabled`, which blurs a focused element the moment it is
-  // set), and the control that was pressed is focused again once the request
-  // has come back and the new payload has rendered.
-  function bundleControlKey(item, action) {
-    return `${item.id}-${action}`;
-  }
-
-  function registerBundleControl(key) {
-    return (element) => {
-      if (element) bundleControlRefs.current.set(key, element);
-      else bundleControlRefs.current.delete(key);
-    };
-  }
-
-  // The destinations a "Move to..." menu offers: every other concept of this
-  // topic, named the way the cards name them so the two cannot disagree.
-  function conceptName(group) {
-    return group.display_title || group.label || group.learning_objects?.[0]?.title || "Untitled concept";
-  }
-
-  function otherConcepts(groupId) {
-    return groups.filter((group) => group.id !== groupId);
-  }
-
   // How many PDFs teach this concept. That -- not how many objects one PDF
   // chops it into -- is what "Grouped", "Standalone" and "N variations" are
   // about: the teacher is judging cross-PDF corroboration here, and a concept
@@ -2582,71 +2120,6 @@ function LearningObjectConnections({
     if (filter === "single" && variationCount(group) !== 1) return false;
     return true;
   });
-  // Grouped objects edited since their grouping was decided. Counted by the
-  // server without running any model, so it is cheap to show on every load.
-  const regroupChangedCount = resources?.regrouping?.changed_count || 0;
-
-  async function openRegroupingReview() {
-    if (reviewStep !== "objects" || !regroupChangedCount) return;
-    setBusyAction("regroup-preview");
-    onError("");
-    onMessage("");
-    try {
-      const preview = await fetchRegroupingPreview(courseId, topicId);
-      setRegroupPreview(preview);
-      setRegroupSelectedIds(
-        (preview.proposals || [])
-          .filter((proposal) => proposal.default_selected)
-          .map((proposal) => proposal.learning_object_id),
-      );
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  function toggleRegroupSelection(objectId) {
-    setRegroupSelectedIds((current) => (
-      current.includes(objectId)
-        ? current.filter((id) => id !== objectId)
-        : [...current, objectId]
-    ));
-  }
-
-  async function applyRegroupingReview() {
-    if (!regroupPreview) return;
-    const chosen = regroupSelectedIds.filter((id) => (
-      regroupPreview.proposals.some((proposal) => proposal.selectable && proposal.learning_object_id === id)
-    ));
-    setBusyAction("regroup-apply");
-    onError("");
-    onMessage("");
-    try {
-      const data = await applyRegrouping(courseId, topicId, chosen);
-      setResources(data.resources);
-      setRegroupPreview(null);
-      setRegroupSelectedIds([]);
-      const { applied = [], unpublished } = data.summary || {};
-      if (unpublished || applied.length) {
-        // Publication state and group membership live on the course the page
-        // holds, so it has to be reloaded for the rest of the review to agree.
-        onCourseChange(await fetchCourse(courseId));
-      }
-      onMessage(
-        applied.length === 0
-          ? "Grouping kept as it is. The edited learning objects are marked as reviewed."
-          : `${applied.length} learning object${applied.length === 1 ? "" : "s"} regrouped.${
-            unpublished ? " The topic is unpublished until you publish it again." : ""
-          } Review the content versions of the affected concepts.`,
-      );
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setBusyAction("");
-    }
-  }
-
   useEffect(() => {
     if (reviewStep !== "versions") automaticClassificationRef.current = "";
   }, [reviewStep]);
@@ -2700,115 +2173,6 @@ function LearningObjectConnections({
     unclassifiedGroupSignature,
     automaticClassificationStorageKey,
   ]);
-
-  // Every correction to an automatic bundle runs through one handler shape:
-  // call, replace the payload, say what happened. Buttons only -- the teachers
-  // this is built for work with a screen reader, so nothing is dragged.
-  async function runBundleCorrection(item, call, describe, focusKey = "") {
-    if (reviewStep !== "objects" || busyAction) return;
-    if (focusKey) refocusAfterCorrection.current = focusKey;
-    setBusyAction(`move-${item.id}`);
-    onError("");
-    onMessage("");
-    try {
-      const data = await call();
-      setResources(data);
-      onMessage(withUnpublishedNote(describe, data));
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  // Runs after the corrected payload has rendered, so the control is the new
-  // DOM node rather than the unmounted one. The object may have moved into
-  // another concept, where the "Move out" button is gone the moment its new
-  // concept holds it alone -- so the row's "Move to..." menu, which is always
-  // rendered, is the fallback that keeps the teacher on the object they just
-  // moved instead of at the top of the page. Under a filter or search that
-  // new concept's row can itself be hidden -- a one-PDF concept Move out just
-  // created is filtered out by "Grouped", for instance -- so neither control
-  // exists to receive focus. The review panel landmark is the last resort:
-  // it is rendered for the whole "objects" step no matter what the filter or
-  // search hides, so focus never falls all the way back to the document body.
-  useEffect(() => {
-    if (busyAction || !refocusAfterCorrection.current) return;
-    const [objectId] = refocusAfterCorrection.current.split("-");
-    const target = [refocusAfterCorrection.current, `${objectId}-move-to`]
-      .map((key) => bundleControlRefs.current.get(key))
-      .find((element) => element && element.isConnected && !element.disabled);
-    refocusAfterCorrection.current = "";
-    if (target) target.focus();
-    else if (reviewPanelRef.current) reviewPanelRef.current.focus();
-  }, [busyAction, resources]);
-
-  function moveObjectOutOfBundle(item) {
-    return runBundleCorrection(
-      item,
-      () => moveObjectOut(courseId, topicId, item.id),
-      `“${item.title}” is now a concept of its own.`,
-      bundleControlKey(item, "move-out"),
-    );
-  }
-
-  function moveObjectToGroup(item, groupId, groupLabelText) {
-    return runBundleCorrection(
-      item,
-      () => moveObjectToConcept(courseId, topicId, item.id, groupId),
-      `“${item.title}” was moved to “${groupLabelText}”.`,
-      bundleControlKey(item, "move-to"),
-    );
-  }
-
-  async function reviewMatchSuggestion(suggestion, decision) {
-    setBusyAction(`suggestion-${decision}-${suggestion.id}`);
-    onError("");
-    onMessage("");
-    const startedAt = performance.now();
-    const evidence = suggestion.evidence || {};
-    console.groupCollapsed(
-      `[MAVIA review] ${decision} object pair ${suggestion.id}`,
-    );
-    console.info("Request", {
-      decision,
-      suggestion_id: suggestion.id,
-      source: suggestion.source_learning_object?.title,
-      candidate: suggestion.candidate_learning_object?.title,
-      similarity: suggestion.similarity_score,
-      confidence: suggestion.confidence,
-      winner_margin: evidence.winner_margin,
-      minimum_group_member_score: evidence.minimum_group_member_score,
-      content_support: evidence.content_support,
-      minimum_group_content_support: evidence.minimum_group_content_support,
-    });
-    try {
-      const action = decision === "accept"
-        ? acceptLearningObjectMatchSuggestion
-        : rejectLearningObjectMatchSuggestion;
-      const data = await action(courseId, topicId, suggestion.id);
-      console.info("Response", {
-        request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
-        server: data.debug,
-        remaining_object_reviews: data.match_suggestions?.length || 0,
-      });
-      setResources(data);
-      onMessage(
-        decision === "accept"
-          ? withUnpublishedNote("Suggested learning objects were connected.", data)
-          : "Suggested connection was rejected and the objects remain separate.",
-      );
-    } catch (err) {
-      console.error("Review failed", {
-        request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
-        error: err,
-      });
-      onError(err.message);
-    } finally {
-      console.groupEnd();
-      setBusyAction("");
-    }
-  }
 
   async function assignVersion(learningObjectId, slot) {
     setBusyAction(`version-assign-${learningObjectId}`);
@@ -3186,6 +2550,11 @@ function LearningObjectConnections({
               Grouping changed, so this topic was unpublished. Republish when you are ready.
             </p>
           )}
+          {sourcesFinalized && (
+            <p role="status" className="connection-unpublished-note">
+              Lesson sources are finalized. This concept review is now read-only.
+            </p>
+          )}
         </div>
         <span className="connection-source-count">
           {confirmedSourceCount} confirmed source{confirmedSourceCount === 1 ? "" : "s"}
@@ -3195,30 +2564,8 @@ function LearningObjectConnections({
       <section
         className="connection-review-panel"
         aria-labelledby="connection-review-title"
-        ref={reviewPanelRef}
         tabIndex={-1}
       >
-
-      {!loading && (
-        <div className={`regrouping-notice ${regroupChangedCount ? "has-changes" : ""}`.trim()}>
-          <p>
-            {regroupChangedCount
-              ? `${regroupChangedCount} edited learning object${regroupChangedCount === 1 ? "" : "s"} may belong to a different concept now.`
-              : "No grouped learning object has been edited since it was grouped."}
-          </p>
-          {/* Visible but disabled when there is nothing to review, so the action is
-              discoverable without inviting a click that would do nothing. */}
-          <button
-            type="button"
-            className={`btn btn-small ${regroupChangedCount ? "btn-primary" : "btn-secondary"}`}
-            disabled={!regroupChangedCount || Boolean(busyAction)}
-            title={regroupChangedCount ? undefined : "Enabled after you edit a grouped learning object and confirm its file again."}
-            onClick={openRegroupingReview}
-          >
-            Review grouping changes
-          </button>
-        </div>
-      )}
 
       {loading ? (
         <div className="connection-empty">Checking learning-object connections…</div>
@@ -3299,7 +2646,6 @@ function LearningObjectConnections({
                               {bundle.learning_objects.map((item, itemIndex) => {
                                 const isImage = isImageLearningObject(item);
                                 const isMissingImageDescription = isImage && (item.narration_pending ?? !item.content?.trim());
-                                const moving = busyAction === `move-${item.id}`;
                                 return (
                                   <div className="connection-object-row" key={item.id}>
                                     <div className="connection-object-copy">
@@ -3339,58 +2685,6 @@ function LearningObjectConnections({
                                         {item.section_title ? ` · Section: ${item.section_title}` : ""}
                                       </small>
                                     </div>
-                                    {reviewStep === "objects" && (
-                                      // Every control here is `aria-disabled`, never
-                                      // `disabled`: a disabled element is blurred the moment
-                                      // the flag is set and announces nothing at a bundle's
-                                      // edge. Each handler guards the press instead, and the
-                                      // effect above puts focus back on the control that was
-                                      // pressed once the corrected payload has rendered.
-                                      <div className="concept-bundle-actions">
-                                        <div
-                                          className="concept-bundle-action-group"
-                                          role="group"
-                                          aria-label={`Which concept "${item.title}" belongs to`}
-                                        >
-                                          <span className="concept-bundle-action-label" aria-hidden="true">Wrong concept?</span>
-                                          {group.learning_objects.length > 1 && (
-                                            <button
-                                              type="button"
-                                              className="btn btn-secondary btn-small"
-                                              ref={registerBundleControl(bundleControlKey(item, "move-out"))}
-                                              aria-disabled={Boolean(busyAction)}
-                                              aria-label={`Give "${item.title}" a concept of its own, separate from the rest of this one`}
-                                              onClick={() => moveObjectOutOfBundle(item)}
-                                            >
-                                              {moving ? "Moving..." : "Give it its own concept"}
-                                            </button>
-                                          )}
-                                          <label className="concept-bundle-move-to">
-                                            <span className="sr-only">Move "{item.title}" into another concept that already exists</span>
-                                            <select
-                                              value=""
-                                              ref={registerBundleControl(bundleControlKey(item, "move-to"))}
-                                              aria-disabled={Boolean(busyAction) || otherConcepts(group.id).length === 0}
-                                              onChange={(event) => {
-                                                const target = otherConcepts(group.id).find(
-                                                  (candidate) => String(candidate.id) === event.target.value,
-                                                );
-                                                event.target.value = "";
-                                                if (busyAction || !target) return;
-                                                moveObjectToGroup(item, target.id, conceptName(target));
-                                              }}
-                                            >
-                                              <option value="">Move into another concept...</option>
-                                              {otherConcepts(group.id).map((candidate) => (
-                                                <option key={candidate.id} value={candidate.id}>
-                                                  {conceptName(candidate)}
-                                                </option>
-                                              ))}
-                                            </select>
-                                          </label>
-                                        </div>
-                                      </div>
-                                    )}
                                   </div>
                                 );
                               })}
@@ -3411,37 +2705,19 @@ function LearningObjectConnections({
       </section>
       </>
       )}
-      {busyAction === "regroup-preview" && (
-        <RegroupingBusy
-          title="Checking edited learning objects"
-          detail={`Comparing ${regroupChangedCount} edited learning object${regroupChangedCount === 1 ? "" : "s"} against every concept in this topic…`}
-        />
-      )}
-      {busyAction === "regroup-apply" && (
-        <RegroupingBusy title="Applying grouping changes" detail="Updating concepts and the questions linked to them…" />
-      )}
-      {regroupPreview && busyAction !== "regroup-apply" && (
-        <RegroupingReview
-          preview={regroupPreview}
-          selectedIds={regroupSelectedIds}
-          busy={Boolean(busyAction)}
-          onToggle={toggleRegroupSelection}
-          onCancel={() => {
-            setRegroupPreview(null);
-            setRegroupSelectedIds([]);
-          }}
-          onApply={applyRegroupingReview}
-        />
-      )}
       {reviewStep === "objects" && (
-        <ObjectPairsPanel
-          suggestions={matchSuggestions}
-          materialById={materialById}
-          busyAction={busyAction}
-          pendingQuestionCount={questionReviewQueue.length}
-          onReviewStepChange={onReviewStepChange}
-          onReview={reviewMatchSuggestion}
-        />
+        <StepDock>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={Boolean(busyAction)}
+            onClick={() => sourcesFinalized
+              ? onReviewStepChange("versions")
+              : finalizeSources()}
+          >
+            {busyAction === "finalize-sources" ? "Finalizing sources..." : "Next step: Content versions"}
+          </button>
+        </StepDock>
       )}
       {reviewStep === "versions" && (
         <VersionReviewPanel
@@ -3910,7 +3186,7 @@ function LearningObjectForm({ initialValue = null, submitLabel, busy, onCancel, 
   );
 }
 
-function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, onReviewConnections }) {
+function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onError, onMessage, onReviewConnections }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [selectedId, setSelectedId] = useState(material.learning_objects[0]?.id || null);
@@ -3918,10 +3194,6 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
   const [activeTab, setActiveTab] = useState("content");
   const [showAudioWarning, setShowAudioWarning] = useState(false);
   const [showDeleteMaterialConfirm, setShowDeleteMaterialConfirm] = useState(false);
-  // What confirming this edited PDF again would change in the approved PDFs,
-  // and which of those changes the teacher keeps out.
-  const [approvedChanges, setApprovedChanges] = useState(null);
-  const [keptIds, setKeptIds] = useState([]);
   const [learningObjectToDelete, setLearningObjectToDelete] = useState(null);
 
   const generatedJson = material.generated_json || {};
@@ -4013,18 +3285,12 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
     }
   }
 
-  async function confirmObjects(keep = null) {
+  async function confirmObjects() {
     setBusyAction("confirm");
     onError("");
     onMessage("");
     try {
-      const updatedCourse = await confirmLearningObjects(courseId, material.id, keep);
-      if (updatedCourse.approved_changes) {
-        setApprovedChanges(updatedCourse.approved_changes);
-        setKeptIds([]);
-        return;
-      }
-      setApprovedChanges(null);
+      const updatedCourse = await confirmLearningObjects(courseId, material.id);
       onCourseChange(updatedCourse);
       const imageResult = updatedCourse.image_description_generation;
       if (imageResult?.generated_count) {
@@ -4111,16 +3377,18 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
           <button type="button" className="btn btn-primary btn-small" onClick={onReviewConnections}>
             Review question assignments
           </button>
-          <button
-            type="button"
-            className="btn btn-danger btn-small"
-            disabled={Boolean(busyAction)}
-            onClick={() => {
-              if (window.confirm("Delete this question document and all extracted questions?")) removeMaterial();
-            }}
-          >
-            {busyAction === "delete-material" ? "Deleting..." : "Delete question file"}
-          </button>
+          {!sourceFinalized && (
+            <button
+              type="button"
+              className="btn btn-danger btn-small"
+              disabled={Boolean(busyAction)}
+              onClick={() => {
+                if (window.confirm("Delete this question document and all extracted questions?")) removeMaterial();
+              }}
+            >
+              {busyAction === "delete-material" ? "Deleting..." : "Delete question file"}
+            </button>
+          )}
         </div>
         <div className="question-document-list">
           {(material.questions || []).map((question, index) => {
@@ -4167,7 +3435,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
         </p>
       )}
 
-      <div className="generated-item-actions" style={{ marginTop: "0.75rem" }}>
+      {!sourceFinalized && <div className="generated-item-actions" style={{ marginTop: "0.75rem" }}>
         <button
           className="btn btn-danger btn-small"
           type="button"
@@ -4176,7 +3444,7 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
         >
           {busyAction === "delete-material" ? "Deleting..." : "Delete material"}
         </button>
-      </div>
+      </div>}
 
       <div className="material-workspace-tabs">
         <button
@@ -4467,80 +3735,6 @@ function MaterialCard({ material, courseId, onCourseChange, onError, onMessage, 
         </div>
       )}
 
-      {approvedChanges && (
-        <div className="modal-backdrop" role="presentation">
-          <div
-            className="modal-card reconfirm-review-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={`reconfirm-review-${material.id}`}
-          >
-            <h3 id={`reconfirm-review-${material.id}`}>
-              Confirming this file changes {approvedChanges.length} approved concept
-              {approvedChanges.length === 1 ? "" : "s"}
-            </h3>
-            <p>
-              Your edits change what this file teaches, so these parts of other, already
-              approved files would move. Choose what happens to each.
-            </p>
-            <ul className="reconfirm-change-list">
-              {approvedChanges.map((change) => {
-                const kept = keptIds.includes(change.learning_object_id);
-                return (
-                  <li key={change.learning_object_id}>
-                    <div>
-                      <strong>{change.title}</strong>
-                      <small>{change.material_title}</small>
-                      <p>
-                        Now in {change.from_label}. Would move to {change.to_label}.
-                      </p>
-                    </div>
-                    <div className="reconfirm-change-choice" role="radiogroup" aria-label={`What happens to ${change.title}`}>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`reconfirm-${change.learning_object_id}`}
-                          checked={!kept}
-                          onChange={() => setKeptIds((ids) => ids.filter((id) => id !== change.learning_object_id))}
-                        />
-                        Apply the change
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`reconfirm-${change.learning_object_id}`}
-                          checked={kept}
-                          onChange={() => setKeptIds((ids) => [...ids, change.learning_object_id])}
-                        />
-                        Keep as is
-                      </label>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={busyAction === "confirm"}
-                onClick={() => setApprovedChanges(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={busyAction === "confirm"}
-                onClick={() => confirmObjects(keptIds)}
-              >
-                {busyAction === "confirm" ? "Confirming..." : "Confirm file"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {showDeleteMaterialConfirm && (
         <div
           className="modal-backdrop"
@@ -4734,6 +3928,7 @@ export default function TopicDetailPage() {
 
   const allTopics = useMemo(() => flattenNodes(course?.hierarchy || []), [course?.hierarchy]);
   const topic = allTopics.find((node) => String(node.id) === String(topicId));
+  const sourceFinalized = Boolean(topic?.source_review?.finalized);
   const selectedModule = findTopLevelNode(topic, allTopics);
   const materials = useMemo(
     () => (course?.materials || []).filter(
@@ -4885,7 +4080,7 @@ export default function TopicDetailPage() {
             >
               <span className="lesson-pdf-short-label" aria-hidden="true">R</span>
               <span className="lesson-pdf-nav-copy">
-                <strong>Review Connections</strong>
+                <strong>Concept Review</strong>
               </span>
             </button>
 
@@ -5005,8 +4200,11 @@ export default function TopicDetailPage() {
               <p className="muted-text">
                 Selected module/topic: {selectedModule?.title || topic.title} / {topic.title}
               </p>
+              {sourceFinalized && (
+                <span className="status-pill status-completed">Lesson sources finalized</span>
+              )}
             </div>
-            {!(activeSource === "connections" && connectionReviewStep !== "objects") && (
+            {!sourceFinalized && !(activeSource === "connections" && connectionReviewStep !== "objects") && (
               <label className="btn btn-primary">
                 {uploading ? "Processing..." : "Upload PDF"}
                 <input
@@ -5048,6 +4246,7 @@ export default function TopicDetailPage() {
               key={selectedMaterial.id}
               material={selectedMaterial}
               courseId={courseId}
+              sourceFinalized={sourceFinalized}
               onCourseChange={setCourse}
               onError={setError}
               onMessage={setMessage}
