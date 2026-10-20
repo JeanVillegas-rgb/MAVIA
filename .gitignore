@@ -105,3 +105,13 @@ docs/simulation-*/
 
 brag-output
 docs/
+MAVIA-learning-path-slides.pptx
+THESIS*
+
+# Local database helper and thesis figure/evidence scripts, kept out of the shared repo
+backend/scripts/clear_generated_questions.py
+backend/scripts/owned_words_flowchart.py
+backend/scripts/passage_map.py
+backend/scripts/reference_examples.py
+backend/scripts/retrieval_figure.py
+backend/scripts/show_evidence.py
