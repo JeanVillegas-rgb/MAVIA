@@ -2,13 +2,13 @@
 
 import logging
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from django.db import transaction
 from django.utils import timezone
 
 from ..models import ConceptPrerequisite, LearningPathStep
-from . import criteria
+from . import criteria, tracing
 from .concept_units import concepts_for_topic
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
         pair = (decision["prerequisite"].id, decision["dependent"].id)
         fresh[pair] = decision
 
+    written = Counter()
     with transaction.atomic():
         existing = _stored_links(node)
         decided_pairs = {
@@ -54,11 +55,13 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
                     },
                 )
                 if created:
+                    written["new"] += 1
                     continue
             same_evidence = (
                 row.evidence == decision["evidence"] and row.cross_section == decision["cross_section"]
             )
             if row.status in ConceptPrerequisite.TEACHER_DECIDED:
+                written["unchanged" if same_evidence else "updated"] += 1
                 if not same_evidence:
                     row.evidence = decision["evidence"]
                     row.cross_section = decision["cross_section"]
@@ -69,6 +72,7 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
                 and row.status == decision["verdict"]
                 and row.source == ConceptPrerequisite.Source.DERIVED
             ):
+                written["unchanged"] += 1
                 continue
             ConceptPrerequisite.objects.filter(pk=row.pk).exclude(
                 status__in=ConceptPrerequisite.TEACHER_DECIDED,
@@ -79,6 +83,7 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
                 evidence=decision["evidence"],
                 updated_at=timezone.now(),
             )
+            written["updated"] += 1
 
         stale = [
             row.pk for pair, row in existing.items()
@@ -93,6 +98,12 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
         pair = (decision["prerequisite"].id, decision["dependent"].id)
         if pair not in decided_pairs:
             counts[decision["verdict"]] += 1
+    logger.info(
+        "[Learning path] topic %s  links: %s accepted, %s pending, %s set by the teacher | "
+        "saved: %s new, %s updated, %s unchanged, %s removed",
+        node.id, counts["accepted"], counts["pending"], counts["teacher_decided"],
+        written["new"], written["updated"], written["unchanged"], len(stale),
+    )
     return counts
 
 
@@ -201,6 +212,7 @@ def order_with_links(concepts, links, confidence=None):
     for concept in ordered:
         for following in successors[concept.id]:
             depth[following] = max(depth[following], depth[concept.id] + 1)
+    tracing.log_order(ordered, depth, ignored)
     return ordered, depth, ignored
 
 

@@ -1,6 +1,7 @@
 import logging
 import re
 import sys
+import textwrap
 from collections import Counter
 from math import ceil
 
@@ -572,6 +573,10 @@ def generate_questions_for_node(
             )
             return []
 
+    logger.info(
+        "[Questions] CONCEPT: %s  (object %s)\n    REFERENCE CONTENT FOR THE QUESTIONS:\n%s",
+        name(concept_name(node)), node.id, textwrap.indent(concept_source_text(node), "      "),
+    )
     gate_on = grounding_index is not None and enabled()
     max_retries = int(getattr(settings, "QUESTION_VALIDATION_MAX_RETRIES", 1))
     correction, drafted = "", 0
@@ -864,8 +869,9 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
         if not targets:
             break
         logger.info(
-            "[Questions] round %s of %s: %s concept(s) short of %s",
+            "[Questions] ROUND %s of %s: %s concept(s) short of %s: %s",
             round_number, rounds, len(targets), goal,
+            ", ".join(name(concept_name(node)) for node in targets),
         )
         _emit(
             on_event, "round_started",

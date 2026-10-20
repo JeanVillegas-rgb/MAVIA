@@ -1,6 +1,6 @@
-"""Prerequisite links inside one topic (criteria v6.2). Writes nothing."""
+"""Prerequisite links inside one topic (criteria v6.3). Writes nothing."""
 
-from . import embeddings
+from . import embeddings, tracing
 from .calibration import load_calibration
 from .clues import (
     MIN_SHARED_TERMS, find_term_owners, heading_vote, order_vote,
@@ -56,6 +56,7 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
     except embeddings.EncoderUnavailable:
         texts, semantic = prepare(concepts), False
     owners = find_term_owners(texts)
+    tracing.log_concepts(texts, owners)
     positions = material_positions(concepts)
     meaning_cutoff = calibration["meaning_cutoff"]
 
@@ -66,6 +67,7 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
                 continue
             facts, earlier, later = _facts(first, second, owners, positions)
             decision = reference_verdict(facts)
+            tracing.log_pair(earlier, later, facts, decision)
             if decision.verdict not in (ACCEPTED, PENDING):
                 continue
             prerequisite, dependent = (earlier, later) if decision.direction > 0 else (later, earlier)

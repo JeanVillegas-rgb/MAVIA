@@ -395,6 +395,10 @@ QUESTION_JUDGE_TIMEOUT = int(
 # pipeline; DEBUG adds the per-item detail (each drafted question, each
 # duplicate or surplus dropped) that would otherwise bury it.
 MAVIA_LOG_LEVEL = os.getenv("MAVIA_LOG_LEVEL", "INFO").upper()
+# The same switch for question generation and the learning path alone: DEBUG
+# prints their full trace (each prompt sent to the LLM, each drafted question,
+# every concept's owned words and every pair's clues) without the other apps' detail.
+MAVIA_TRACE_LEVEL = os.getenv("MAVIA_TRACE_LEVEL", MAVIA_LOG_LEVEL).upper()
 
 LOGGING = {
     "version": 1,
@@ -427,8 +431,8 @@ LOGGING = {
         # dropped by Python's last-resort handler, which passes WARNING and
         # above only.
         "lessons": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
-        "question_generation": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
-        "learning_path": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        "question_generation": {"handlers": ["trace"], "level": MAVIA_TRACE_LEVEL, "propagate": False},
+        "learning_path": {"handlers": ["trace"], "level": MAVIA_TRACE_LEVEL, "propagate": False},
         "course": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
         # the mobile engine's computations, one line each: BKT, baseline,
         # starting mastery, the ladder's reason and the command it sends

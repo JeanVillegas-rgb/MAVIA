@@ -536,6 +536,10 @@ def generate_questions(
     """One LLM call for one thinking order; returns validated question dicts."""
     prompt = _build_prompt(content, thinking_order, format_split, correction)
     schema = build_response_schema(format_split)
+    logger.debug(
+        "[Questions] PROMPT SENT TO THE LLM (%s, %s):\n%s",
+        thinking_order, " + ".join(f"{n} {fmt}" for fmt, n in format_split.items()), prompt,
+    )
 
     unusable_replies = 0
     for attempt in range(max_retries):
