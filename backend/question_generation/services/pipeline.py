@@ -133,17 +133,22 @@ def _print_material_summary(material, node_count, all_questions, stats):
     )
 
 
+def _object_text(item):
+    """An object's text, with a definition the extractor split from its term joined back to the term."""
+    content = (item.content or "").strip()
+    title = (item.title or "").strip()
+    if title and content[:1].islower():
+        return f"{title} {content}"
+    return content
+
+
 def concept_source_text(node):
     """Every telling of the concept, Standard first: the text its questions are written from."""
     from course.version_assignment import bundle_roles, standard_material_id
-    from lessons.services.concept_bundles import (
-        bundle_text,
-        bundles_for_group,
-        material_order,
-    )
+    from lessons.services.concept_bundles import bundles_for_group, material_order
 
     if node.group_id is None:
-        return node.content or ""
+        return _object_text(node)
 
     group = node.group
     bundles = {
@@ -153,7 +158,7 @@ def concept_source_text(node):
     }
     standard_id = standard_material_id(group)
     if not any(item.id == node.id for item in bundles.get(standard_id) or []):
-        return node.content or ""
+        return _object_text(node)
 
     roles = bundle_roles(group)
     rank = {
@@ -170,7 +175,7 @@ def concept_source_text(node):
         if material_id != standard_id and material_id not in roles:
             continue
         objects.extend(bundles.get(material_id) or [])
-    return bundle_text(objects) or (node.content or "")
+    return "\n".join(text for item in objects if (text := _object_text(item))) or _object_text(node)
 
 
 def _is_concept_source(node):
