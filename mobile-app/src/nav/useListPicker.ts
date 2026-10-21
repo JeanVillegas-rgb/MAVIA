@@ -87,6 +87,8 @@ export function useListPicker<T extends PickerItem>({
     }, [])
   );
   const live = enabled && focused;
+  const liveRef = useRef(live);
+  liveRef.current = live;
   const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
 
   // Clamp rather than reset: a list that loads in stages (or shrinks) should
@@ -111,6 +113,14 @@ export function useListPicker<T extends PickerItem>({
   const pickedRef = useRef(false);
   const acceptingRef = useRef(false);
   const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The longest-wait fallback of a pick still being read back (see pick()).
+  const pickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (pickTimerRef.current) clearTimeout(pickTimerRef.current);
+    },
+    []
+  );
 
   const questionRef = useRef(question);
   questionRef.current = question;
@@ -174,10 +184,17 @@ export function useListPicker<T extends PickerItem>({
     const open = () => {
       if (opened) return;
       opened = true;
-      clearTimeout(fallback);
+      if (pickTimerRef.current) clearTimeout(pickTimerRef.current);
+      pickTimerRef.current = null;
+      // The learner left this list (or the guide took over) while the choice
+      // was being read back: open nothing behind their back. The fallback
+      // used to open it anyway, five seconds later, on whatever screen they
+      // were on by then -- and that screen's list started reading over it.
+      if (!liveRef.current) return;
       onPickRef.current(item);
     };
-    const fallback = setTimeout(open, READ_BACK_MAX_MS);
+    if (pickTimerRef.current) clearTimeout(pickTimerRef.current);
+    pickTimerRef.current = setTimeout(open, READ_BACK_MAX_MS);
     narrationRef.current.speak(line, { onDone: open });
   }, []);
 

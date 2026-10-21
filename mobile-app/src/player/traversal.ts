@@ -2,7 +2,7 @@
 //
 // The engine (backend/adaptive/services.py) makes every decision on the
 // server and answers each graded question with one command: next_question,
-// retry, escalate_variant, regress, resume, advance or complete. This module
+// escalate_variant, regress, resume, advance or complete. This module
 // is the app's half: given where the student is and that command, decide what
 // they hear and see next. It holds no React, no audio and no network, so it
 // can be driven straight from a script against the live API -- see
@@ -153,7 +153,7 @@ export const RETEACH_LINE: Record<Variant, string> = {
 };
 export const DETOUR_LINE = "First, a quick review of something this builds on.";
 export const RESUME_LINE = "Now, back to where you left off.";
-export const ADVANCE_LINE = "Next idea.";
+export const ADVANCE_LINE = "Next lesson.";
 
 /** The end-of-segment review: each question the student missed and never got
  *  right, with its answer and why. Said only once the segment is over, so it can
@@ -193,7 +193,6 @@ export function applyPackage(pkg: ApiTopicPackage): PlayerState {
   return base;
 }
 
-/** The last clip of a step has finished playing. */
 export function afterAudio(state: PlayerState): PlayerState {
   const step = currentStep(state);
   // No step loaded (the package hasn't arrived): nothing has been heard, so
@@ -203,8 +202,7 @@ export function afterAudio(state: PlayerState): PlayerState {
   return { ...state, phase: ask ? "questions" : "continue", announcement: null, skipReading: false };
 }
 
-/** Follow one command from the engine (after an answer, or after continuing
- *  past a listen-only step). */
+
 export function applyCommand(state: PlayerState, command: ApiCommand): PlayerState {
   if (command.action === "complete") {
     return { ...state, phase: "done", announcement: reviewLine(command.review) };
@@ -225,8 +223,7 @@ export function applyCommand(state: PlayerState, command: ApiCommand): PlayerSta
   };
 
   switch (command.action) {
-    case "next_question": // right answer, more of this step to ask
-    case "retry": //         wrong answer, ask it again
+    case "next_question": // another question of this step (a miss is never re-asked before a re-teach)
       return { ...next, phase: "questions" };
     case "escalate_variant": // re-teach in the next explanation type, then ask again
       return { ...next, trackIndex: 0, phase: "audio", announcement: RETEACH_LINE[variant] };

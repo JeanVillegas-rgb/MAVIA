@@ -63,7 +63,6 @@ export type ApiTopicPackage = {
 
 export type ApiAction =
   | "next_question"
-  | "retry"
   | "escalate_variant"
   | "regress"
   | "resume"

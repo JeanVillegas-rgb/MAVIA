@@ -95,18 +95,75 @@ function killStaleBackends() {
   }
 }
 
+// Wi-Fi mode only: this PC's Metro address, saved into the app on every phone
+// adb can reach (see saveBundleHost). Null in USB mode, where the tunnel makes
+// the app's default, localhost:8081, already correct.
+let bundleHost = null;
+const bundleHostSavedOn = new Set();
+
+const APP_ID = "com.mavia.app";
+const APP_PREFS = `shared_prefs/${APP_ID}_preferences.xml`;
+const BUNDLE_HOST_ENTRY = /[ \t]*<string name="debug_http_host">[^<]*<\/string>/;
+
+// The app is a plain React Native debug build, not Expo Go or a dev client: it
+// ignores the QR code and, on a phone, loads its code from localhost:8081 --
+// which is this PC only through an adb tunnel. Over plain Wi-Fi it has to know
+// this PC's address. The dev menu's "Change Bundle Location" holds it only
+// until the app closes, so it is written where React Native reads it on every
+// cold start: the `debug_http_host` key of the app's default preferences.
+// A debug build lets `run-as` reach its files without root. Other keys in the
+// file are kept.
+function saveBundleHost(adb, serial, host) {
+  const entry = `    <string name="debug_http_host">${host}</string>`;
+  let xml = "";
+  try {
+    xml = execFileSync(adb, ["-s", serial, "shell", "run-as", APP_ID, "cat", APP_PREFS], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    // No preferences written yet: start a fresh file.
+  }
+  xml = xml.replace(/\r/g, "").replace(/<map\s*\/>/, "<map>\n</map>");
+  if (!xml.includes("</map>")) xml = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n</map>\n";
+  xml = BUNDLE_HOST_ENTRY.test(xml) ? xml.replace(BUNDLE_HOST_ENTRY, entry) : xml.replace("</map>", `${entry}\n</map>`);
+  execFileSync(adb, ["-s", serial, "shell", `run-as ${APP_ID} sh -c 'cat > ${APP_PREFS}'`], {
+    input: xml,
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+}
+
 function setupReverse(adb, { announce = false } = {}) {
   try {
-    const devices = execFileSync(adb, ["devices"], { encoding: "utf8" })
+    // By serial: one phone on wireless debugging is often listed more than
+    // once (its address and its mDNS names), and a bare `adb reverse` then
+    // refuses with "more than one device".
+    const serials = execFileSync(adb, ["devices"], { encoding: "utf8" })
       .split("\n")
       .slice(1)
-      .filter((line) => line.trim().endsWith("device"));
-    if (devices.length === 0) {
-      if (announce) log("reverse", "no phone attached over adb yet -- will keep checking.");
+      .filter((line) => line.trim().endsWith("device"))
+      .map((line) => line.trim().split(/\s+/)[0]);
+    if (serials.length === 0) {
+      if (announce) log("reverse", "no adb device (USB or wireless debugging) attached yet -- will keep checking.");
       return;
     }
-    for (const port of REVERSE_PORTS) {
-      execFileSync(adb, ["reverse", `tcp:${port}`, `tcp:${port}`], { stdio: "ignore" });
+    for (const serial of serials) {
+      try {
+        for (const port of REVERSE_PORTS) {
+          execFileSync(adb, ["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`], { stdio: "ignore" });
+        }
+      } catch {
+        // This entry went away mid-loop; the others still get their tunnels.
+      }
+      if (bundleHost && !bundleHostSavedOn.has(serial)) {
+        try {
+          saveBundleHost(adb, serial, bundleHost);
+          bundleHostSavedOn.add(serial);
+          log("reverse", `saved ${bundleHost} in the app on ${serial} -- close and reopen the app once to use it.`);
+        } catch {
+          // App not installed on this device, or not a debug build.
+        }
+      }
     }
     if (announce) log("reverse", `adb reverse set for ports ${REVERSE_PORTS.join(", ")}.`);
   } catch {
@@ -205,7 +262,26 @@ if (WIFI) {
   log("dev", `Wi-Fi mode: this PC is ${lan.ip} on "${lan.name}".`);
   log("dev", `the app will call the API at ${api}`);
   log("dev", "the phone must be on the SAME Wi-Fi (or this PC on the phone's hotspot).");
-  log("dev", "if Windows asks whether Python / Node may use the network, allow PRIVATE networks.");
+  log("dev", "if Windows asks whether Python / Node may use the network, allow it.");
+
+  // Where the app must load its code from over Wi-Fi (see saveBundleHost).
+  // Saved into the app automatically on any phone adb can reach.
+  bundleHost = `${lan.ip}:8081`;
+  const printBundleLocation = () => {
+    log("dev", "------------------------------------------------------------");
+    log("dev", `The app loads its code from ${bundleHost}.`);
+    log("dev", "With the phone on wireless debugging (adb connect), this script");
+    log("dev", "saves that address in the app itself -- watch for a [reverse]");
+    log("dev", '"saved ..." line, then close and reopen the app once.');
+    log("dev", "Saved once, it lasts until this PC's address changes (another");
+    log("dev", "Wi-Fi) -- adb is not needed again until then. The dev menu's");
+    log("dev", '"Change Bundle Location" is NOT a substitute: it is forgotten');
+    log("dev", "when the app closes, and its Reload leaves a white screen.");
+    log("dev", "------------------------------------------------------------");
+  };
+  printBundleLocation();
+  // Again once Expo's own start-up output has scrolled the first one away.
+  setTimeout(printBundleLocation, 15000);
 
   log("dev", `starting Django backend on 0.0.0.0:8000 (${backendPython})...`);
   spawnSupervised("backend", backendPython, ["manage.py", "runserver", "0.0.0.0:8000"], {
@@ -219,7 +295,7 @@ if (WIFI) {
 
   // --clear: EXPO_PUBLIC_* values are baked into the bundle, so a bundle
   // cached from a USB session would still call localhost.
-  log("dev", "starting Expo in LAN mode -- scan the QR code / open the app on the phone...");
+  log("dev", "starting Expo in LAN mode -- open the app on the phone...");
   spawnSupervised("expo", "npx", ["expo", "start", "--lan", "--clear"], {
     cwd: MOBILE_APP_DIR,
     shell: WIN,
@@ -238,7 +314,11 @@ if (WIFI) {
   spawnSupervised("expo", "npx", ["expo", "start"], { cwd: MOBILE_APP_DIR, shell: WIN });
 }
 
+// Both modes keep the tunnels alive. In Wi-Fi mode they only matter when the
+// phone is also on adb (wireless debugging): an installed dev build that last
+// loaded from localhost:8081 then still finds Metro instead of failing with
+// "Unable to load script". With no adb device this just keeps checking.
 const adb = resolveAdb();
-log("dev", `keeping adb reverse alive for ports ${REVERSE_PORTS.join(", ")}...`);
+log("reverse", `keeping adb reverse alive for ports ${REVERSE_PORTS.join(", ")}...`);
 setupReverse(adb, { announce: true });
 reverseTimer = setInterval(() => setupReverse(adb), REVERSE_INTERVAL_MS);

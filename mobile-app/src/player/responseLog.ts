@@ -39,10 +39,8 @@ export function describeCommand(from: number, command: ApiCommand): string {
     case "escalate_variant":
       return `ESCALATE to ${command.next_variant}`;
     case "next_question":
-      return "NEXT QUESTION in this step";
-    case "retry":
     default:
-      return "SAME question again";
+      return "NEXT QUESTION in this step";
   }
 }
 

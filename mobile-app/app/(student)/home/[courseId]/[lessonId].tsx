@@ -80,8 +80,7 @@ const THINKING_LABEL: Record<string, string> = {
 
 // What the repeat key asks, and how long it waits for an answer.
 const REPEAT_PROMPT =
-  "Do you want to hear the topic again, or the question? " +
-  "Press A for the topic, or B for the question.";
+  "Press A. To hear the topic again, or B. To Hear the question again.";
 const REPEAT_MENU_TIMEOUT_MS = 12000;
 
 export default function LessonPlayerScreen() {
@@ -110,6 +109,9 @@ export default function LessonPlayerScreen() {
   // narration from its first part; `questionRepeat` re-reads the open question.
   const [topicReplay, setTopicReplay] = useState(0);
   const [questionRepeat, setQuestionRepeat] = useState(0);
+  // Bumped by the pause key during a question. The card owns the question's
+  // recording, so it does the pausing and resuming (QuestionCard pauseSignal).
+  const [questionPause, setQuestionPause] = useState(0);
   // True while an answer is on its way to the server. Leaving the question for
   // the concept then would unmount the card mid-submit and lose its verdict.
   const submittingRef = useRef(false);
@@ -395,15 +397,10 @@ export default function LessonPlayerScreen() {
 
   // --- pause / play --------------------------------------------------------------
   // Listening: pause the clip, or play it on from where it stopped. In the
-  // question segment: stop the question being read, or read it again --
-  // never while an answer is being graded, where stopping the verdict would
-  // leave the card waiting forever.
-  const questionReadingStopped = useRef(false);
-  const currentCard = cardKey(state);
-  useEffect(() => {
-    questionReadingStopped.current = false;
-  }, [currentCard]);
-
+  // question segment: the same, on the question's own recording -- never while
+  // an answer is being graded, where stopping the verdict would leave the card
+  // waiting forever. Pause never starts the question over; that is the repeat
+  // key's job (*).
   const togglePause = useCallback(() => {
     if (phase === "audio") {
       if (player.isPlaying) player.pause();
@@ -414,13 +411,7 @@ export default function LessonPlayerScreen() {
     }
     if (phase === "questions") {
       if (submittingRef.current || lastResult.current) return;
-      if (!questionReadingStopped.current) {
-        questionReadingStopped.current = true;
-        silenceAll();
-      } else {
-        questionReadingStopped.current = false;
-        setQuestionRepeat((n) => n + 1);
-      }
+      setQuestionPause((n) => n + 1);
     }
   }, [phase, player]);
 
@@ -652,6 +643,7 @@ export default function LessonPlayerScreen() {
             onSubmit={onSubmitAnswer}
             onNext={nextQuestion}
             repeatSignal={questionRepeat}
+            pauseSignal={questionPause}
             face={renderPlayer(true)}
             inputPaused={menuOpen}
           />

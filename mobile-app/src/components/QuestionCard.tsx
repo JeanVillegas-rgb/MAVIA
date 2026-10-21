@@ -34,7 +34,7 @@ const LETTERS = ["a", "b", "c", "d", "e", "f"];
 // numpad has one physical key per letter, so the same finger position has to
 // mean the same thing whatever kind of question is on screen. A = True,
 // B = False. The backend accepts those letters for TF questions --
-// see adaptive/services.py::path_answer_is_correct.
+// see adaptive/services.py::normalize and grade.
 function optionsFor(question: Question): Option[] {
   if (question.question_type === "true_false") {
     return [
@@ -55,6 +55,9 @@ type Props = {
   // "repeat the question" voice command). Re-reads the question in place -- unlike remounting the
   // card, an answer already given is kept.
   repeatSignal?: number;
+  // Bumped by the screen when the pause key is pressed. Pauses the question's
+  // recording, or plays it on from where it stopped -- never from the start.
+  pauseSignal?: number;
   // Shown in place of the question's text and options. The question is still
   // read aloud and answered the same ways (voice, keypad, tap counting on the
   // whole card); it just isn't put on screen -- the lesson player passes its
@@ -66,7 +69,7 @@ type Props = {
   inputPaused?: boolean;
 };
 
-export default function QuestionCard({ question, index, total, onSubmit, onNext, repeatSignal = 0, face, inputPaused = false }: Props) {
+export default function QuestionCard({ question, index, total, onSubmit, onNext, repeatSignal = 0, pauseSignal = 0, face, inputPaused = false }: Props) {
   const options = useMemo(() => optionsFor(question), [question]);
   const [selected, setSelected] = useState<string | null>(null);
   const [result, setResult] = useState<SubmitResult | null>(null);
@@ -77,8 +80,12 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
   // The question's own recording. Anything else the card says stops it first
   // (say() below): expo-speech cannot stop an audio file.
   const clip = useAudioPlayer(() => {
+    clipEndedRef.current = true;
     if (openEnded) advanceOnce();
   });
+  // The recording has played to its end. Then the pause key has nothing to
+  // pause or resume -- hearing it again is the repeat key's job.
+  const clipEndedRef = useRef(false);
   // A clip that will not load is read by the device voice instead.
   const clipFailedRef = useRef(false);
 
@@ -161,6 +168,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
         if (choosingRef.current) return;
         // The tip has just finished: the clip, not the gap before it loads, is the reading.
         readingStartedRef.current = false;
+        clipEndedRef.current = false;
         clip.load(resolveMediaUrl(question.audio_url!), true);
       };
       // The tip is not part of the recording: say it, then play the question.
@@ -215,6 +223,32 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
     readQuestionAloud();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repeatSignal]);
+
+  // The pause key: pause the question's recording, or play it on from the same
+  // spot. It never starts the question over -- a finished recording is left
+  // alone, and so is a question the device voice was reading (Android cannot
+  // pause that voice, only stop it). Hearing it again is the repeat key (*).
+  const lastPause = useRef(pauseSignal);
+  useEffect(() => {
+    if (pauseSignal === lastPause.current) return;
+    lastPause.current = pauseSignal;
+    if (answered || submitting || choosingRef.current) return;
+    let did: string;
+    if (clip.isPlaying) {
+      clip.pause();
+      did = "paused the recording";
+    } else if (clip.isLoaded && !clipEndedRef.current) {
+      clip.play();
+      did = "resumed the recording";
+    } else if (narration.isSpeaking) {
+      narration.stop();
+      did = "stopped the device voice";
+    } else {
+      did = "nothing to pause";
+    }
+    if (__DEV__) console.log(`[MAVIA question] pause key: ${did}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pauseSignal]);
 
   // Set synchronously, unlike `submitting`: a keypad can deliver two presses
   // before React re-renders, and the state flags would still read false for
