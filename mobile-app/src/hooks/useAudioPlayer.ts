@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useNavigation } from "expo-router";
 
-import { registerSilencer } from "./audioBus";
+import { registerSilencer, silenceOthers } from "./audioBus";
 import { AudioPlayer, AudioStatus, createAudioPlayer, setAudioModeAsync } from "expo-audio";
 
 type PlayerState = {
@@ -56,30 +56,6 @@ export function useAudioPlayer(onFinish?: () => void) {
     }
   }, []);
 
-  const load = useCallback(
-    async (uri: string, autoPlay: boolean) => {
-      setState({ ...INITIAL });
-      try {
-        subRef.current?.remove();
-        subRef.current = null;
-        playerRef.current?.remove();
-        playerRef.current = null;
-        if (!uri) return;
-
-        const player = createAudioPlayer({ uri }, { updateInterval: 250 });
-        playerRef.current = player;
-        subRef.current = player.addListener("playbackStatusUpdate", onStatus);
-        if (autoPlay) player.play();
-      } catch (err) {
-        setState((prev) => ({
-          ...prev,
-          error: err instanceof Error ? err.message : "Couldn't load this track.",
-        }));
-      }
-    },
-    [onStatus]
-  );
-
   // Tear the player down completely rather than pausing it. Anything that
   // ends the audio phase -- skipping to the questions, a re-teach, backing
   // out -- must leave nothing able to resume underneath the next voice. A
@@ -93,6 +69,38 @@ export function useAudioPlayer(onFinish?: () => void) {
     setState({ ...INITIAL });
   }, []);
 
+  // A screen that is not the one in front may not start a sound (see
+  // audioBus.ts). Asked of the navigator when the sound would start.
+  const navigation = useNavigation();
+
+  const load = useCallback(
+    async (uri: string, autoPlay: boolean) => {
+      setState({ ...INITIAL });
+      try {
+        subRef.current?.remove();
+        subRef.current = null;
+        playerRef.current?.remove();
+        playerRef.current = null;
+        if (!uri || !navigation.isFocused()) return;
+
+        const player = createAudioPlayer({ uri }, { updateInterval: 250 });
+        playerRef.current = player;
+        subRef.current = player.addListener("playbackStatusUpdate", onStatus);
+        if (autoPlay) {
+          // One sound at a time: stop the device voice and any other clip first.
+          silenceOthers(stop);
+          player.play();
+        }
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          error: err instanceof Error ? err.message : "Couldn't load this track.",
+        }));
+      }
+    },
+    [onStatus, stop, navigation]
+  );
+
   useEffect(() => registerSilencer(stop), [stop]);
 
   // Same rule as narration: leaving the screen ends its sound. A lesson track
@@ -104,8 +112,10 @@ export function useAudioPlayer(onFinish?: () => void) {
   );
 
   const play = useCallback(async () => {
-    playerRef.current?.play();
-  }, []);
+    if (!playerRef.current || !navigation.isFocused()) return;
+    silenceOthers(stop);
+    playerRef.current.play();
+  }, [stop, navigation]);
 
   const pause = useCallback(async () => {
     playerRef.current?.pause();

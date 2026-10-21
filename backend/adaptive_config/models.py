@@ -62,7 +62,6 @@ class AdaptiveConfig(models.Model):
     )
     
 
-    #legazy
     default_difficulty = models.CharField(
         max_length=10,
         choices=Difficulty.choices,

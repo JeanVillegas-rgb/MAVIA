@@ -29,7 +29,7 @@ PLAYS_AUDIO_FOR_ACTION = {"escalate_variant", "regress", "resume", "advance"}
 #prior weight, calibration margin and the true/false guess come from AdaptiveConfig (weights), so an admin can tune them
 
 #GRADing the student responses in the question segment (for each question respo sent)
-
+ 
 LETTERS = "abcd"
 
 def normalize(question, value):
@@ -68,8 +68,7 @@ def guess_for(question_format, weights, choices=None, attempt=1):
 #3 knew the answer but slipped: prior * slip
 #4 didnt know and didnt guess right: (1-prior) * (1-guess)
 
-
-def predict_may_be_correct(prior, guess, slip): #probability of correct answer before seeing question
+def predict_may_be_correct(prior, guess, slip): #probability of correct answer before seeing question; prior is da current mastery
     return prior * (1-slip) + (1-prior) * guess
 
 def post_answer(prior, is_correct, guess, slip): #probability that they know the concept given the answer (bali % na trot na kaibaw siya sa iya gitubag)
@@ -218,11 +217,10 @@ def command(action, position, variant, question_id=None, return_to=None):
     return result
 
 
+#mga happenings:
+
 def move_on(step, steps, return_to_position):
-    if return_to_position is not None: #If ordered to return to previous concept position
-        # Back from the detour: the step already had every reading before it, so none is
-        # replayed and none is used again -- it stays on its last one (a miss there has no
-        # fuller reading to climb to) and goes straight to its questions.
+    if return_to_position is not None: 
         back = step_at(steps, return_to_position)
         result = command("resume", return_to_position, last_reading(back) if back else "standard")
         result["play_audio"] = False
@@ -242,20 +240,17 @@ def last_reading(step):
 
 
 def next_reading(step, variant):
-    #the fuller reading to re-teach in after a miss on `variant`, or None when there is none left
+    #the fuller reading to re-teach in after a miss on `variant`, or None when there is none left.
+    #a reading the step has no audio for is skipped: no simplified -> standard climbs straight to elaborated
     fuller = ESCALATION.get(variant)
-    return fuller if fuller and fuller in step["versions"] else None
+    while fuller and fuller not in step["versions"]:
+        fuller = ESCALATION.get(fuller)
+    return fuller
 
 
 #da big thinking brain
 def decide(step, steps, variant, is_correct, question_id, question_format, open_ids, reserve_ids,
            return_to_position, regressed_positions):
-    # open_ids: the step's own questions the student can still be asked, in
-    # order -- not answered correctly, not a True/False they already missed, and
-    # not one already missed on the last reading (see askable_questions).
-    # reserve_ids: the same, for the step's spare questions; they are only ever
-    # a replacement for a missed True/False, never extra work. Both computed
-    # AFTER this answer was recorded.
     answered = f"Q{question_id} ({question_format}) on {variant}"
     if is_correct:
         if open_ids:
@@ -265,12 +260,6 @@ def decide(step, steps, variant, is_correct, question_id, question_format, open_
         logger.info("[Decide] %s right -> nothing left to ask in step %s, move on", answered, step["position"])
         return move_on(step, steps, return_to_position)
 
-    # NO immediate retry: a question is never re-asked until the concept has been
-    # re-taught first. Asking again straight after a miss lets the student
-    # eliminate the wrong pick -- an MCQ drops to 1 in 3, then 1 in 2.
-    # A True/False is worse: after one miss the other answer is certain even
-    # after re-teaching, so a missed TF is never asked again -- the re-teach is
-    # followed by a DIFFERENT question of the concept, or by none.
     if question_format == "TF":
         replacements = open_ids or reserve_ids
         ask_next = replacements[0] if replacements else None
@@ -299,12 +288,12 @@ def decide(step, steps, variant, is_correct, question_id, question_format, open_
 
     if on_detour:
         why = "on a detour (one question, no re-teach)"
-    elif prerequisite is None:
+    elif prerequisite is None: 
         why = "no earlier prerequisite to review"
     else:
         why = "this step already used its regress"
 
-    # This question is done, but the step's OTHER questions still get asked: one
+    # This question is done, but the step's OTHER questions still get asked
     # question missed at every reading doesn't show the whole concept is missed,
     # and the mastery score is only fair once the student had every question.
     remaining = [q for q in open_ids if q != question_id] or (reserve_ids if question_format == "TF" and not on_detour else [])
@@ -314,11 +303,10 @@ def decide(step, steps, variant, is_correct, question_id, question_format, open_
         return command("next_question", step["position"], variant, remaining[0], return_to_position)
 
     logger.info("[Decide] %s wrong, every explanation tried, %s, nothing else to ask -> move on", answered, why)
-    return move_on(step, steps, return_to_position) # every option exhausted by the system: don't leave the student stranded--move them forward
+    return move_on(step, steps, return_to_position) #all rules exhausted by the system: don't leave the student stranded--move them forward
 
 
 def open_questions(step, student, topic, package, reserve=False):
-
     concept_answers = StudentResponse.objects.filter(student=student, topic=topic, concept_id=step["concept_id"])
     correct = set(concept_answers.filter(is_correct=True).values_list("question_id", flat=True))
     missed_tf = set(concept_answers.filter(is_correct=False, question_format="TF").values_list("question_id", flat=True))
@@ -335,10 +323,6 @@ def missed_on_last_reading(step, student, topic):
 
 
 def askable_questions(step, student, topic, package, reserve=False):
-    #the open questions still worth asking during this visit to the step: one missed on the
-    #last reading is left out, so the step goes on to its other questions instead of stopping.
-    #It comes back only when the student resumes this step after its detour, once the
-    #prerequisite was reviewed -- see first_question_on_arrival.
     used_up = missed_on_last_reading(step, student, topic)
     return [q for q in open_questions(step, student, topic, package, reserve) if q not in used_up]
 
@@ -351,13 +335,6 @@ def fresh_reserve_question(step, student, topic):
 
 
 def first_question_on_arrival(step, student, topic, package, resuming=False, detour=False):
-    #the question waiting when the student moves to a step.
-    #  resuming the step that sent them on a detour: the question they ran out of readings on,
-    #    once more -- that is what the detour was for (no reading is replayed, see move_on).
-    #  arriving on a detour: a fresh reserve question of the prerequisite, never answered and so
-    #    never reviewed -- it measures the review honestly; its served questions were already asked.
-    #  anywhere else: the first question still worth asking; a used-up one is skipped, since its
-    #    answer was already read out in the review.
     if resuming:
         return first_open_question(step, student, topic, package)
     if detour:
@@ -374,8 +351,7 @@ def first_open_question(step, student, topic, package):
     return open_ids[0] if open_ids else None
 
 
-LEAVES_THE_SEGMENT = {"advance", "resume", "complete"}  # regress leaves mid-segment: the student comes back to it
-
+LEAVES_THE_SEGMENT = {"advance", "resume", "complete"}  #segment as in katong quick assessment section
 
 def answer_text(question):
     #the right answer, said the way the options are read: "B, Liquid" -- or "True" / "False"
@@ -391,10 +367,6 @@ def answer_text(question):
 
 
 def segment_review(step, student, topic, package, detour_only=False):
-    #the step's questions this student missed and never got right, each with its answer and
-    #why. Heard once the segment is over -- never before, where it would give away a question
-    #still to come (the step's other questions share its facts). Leaving a detour
-    #(detour_only) reviews only what was asked on the detour: the rest was reviewed already.
     answers = StudentResponse.objects.filter(student=student, topic=topic, concept_id=step["concept_id"])
     if detour_only:
         answers = answers.filter(decision__on_detour=True)
@@ -510,15 +482,9 @@ def apply_answer(response, package, progress, course):
     return result
 
 
-# ---------------------------------------------------------------------------
-# teacher report (web): same response shape the Review page already reads
-# ---------------------------------------------------------------------------
+#TEACHER FLAGGING 
 
 def concepts_needing_help(course):
-    #{student_id: [concept, ...]} -- where the rules ran out: the student missed a question at
-    #every reading, went on the detour, missed its fresh question (or it had none), and then
-    #missed the same question again on the way back. Rules cannot prove more than that, so
-    #the teacher is told. Read from the answers already saved; nothing extra is stored.
     from lessons.models import LearningObjectGroup
 
     flagged = {}
@@ -528,12 +494,16 @@ def concepts_needing_help(course):
         sent = d.response
         later = list(StudentResponse.objects.filter(student_id=sent.student_id, topic_id=sent.topic_id, id__gt=sent.id)
                      .select_related("decision").order_by("id"))
-        back = next((r for r in later if r.question_id == sent.question_id), None)
-        if back is None or back.is_correct:
-            continue  # not asked again yet, or the detour worked
-        on_detour = [r for r in later if r.id < back.id and getattr(r, "decision", None) and r.decision.on_detour]
-        if any(r.is_correct for r in on_detour):
-            continue
+        #the detour's own answers: the ones right after the student was sent, until they are back.
+        #a failed detour flags the concept that sent them -- whether or not its question comes up
+        #again after (a missed True/False never does)
+        on_detour = []
+        for r in later:
+            if not (getattr(r, "decision", None) and r.decision.on_detour):
+                break
+            on_detour.append(r)
+        if not on_detour or any(r.is_correct for r in on_detour):
+            continue  # detour not answered yet, or it worked
         flagged.setdefault(sent.student_id, {})[sent.concept_id] = {
             "concept_id": sent.concept_id, "topic": sent.topic.title, "question_id": sent.question_id,
         }

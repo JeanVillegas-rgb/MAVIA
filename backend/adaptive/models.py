@@ -63,7 +63,7 @@ class StudentBaseline(models.Model):
 class Decision(models.Model):
     class Action(models.TextChoices):
         NEXT_QUESTION = "next_question", "Next question in the concept"
-        RETRY = "retry", "Asked again"
+        RETRY = "retry", "Asked again" #no longer sent (a miss is always re-taught first); kept for rows the early engine logged
         ESCALATE_VARIANT = "escalate_variant", "Re-taught with another explanation type"
         REGRESS = "regress", "Sent back through a prerequisite concept"
         RESUME = "resume", "Resumed the topic after the prerequisite"

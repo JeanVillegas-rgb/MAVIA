@@ -22,8 +22,9 @@ def course_outline(course):
                 for topic in module.children.filter(published=True).order_by("order", "id")
             ],
         }
-        for module in modules 
+        for module in modules   
     ]
+
 
 
 
@@ -54,9 +55,7 @@ def question_pool_for_student_view(question):
 
 
 def reserve_questions_for(concept_id, already_used):
-    #spare questions for a concept: final questions in its bank that the learning
-    #path did not serve (it caps each concept at 2 LOT + 1 HOT). Used only after
-    #a True/False is missed, so the re-teach is followed by a DIFFERENT question.
+    #spare questions for a concept for missed true or false questions (cuz ma memorize sa student ang answer sa TF)
     spare = GeneratedQuestion.objects.filter(
         node__group_id=concept_id, status="final"
     ).exclude(id__in=already_used).select_related("node__material").order_by("id")
@@ -132,7 +131,7 @@ def get_package(topic):
     return package
 
 
-def apply_command(progress, command):
+def apply_command(progress, command): #this is what decides what happens next after grading
     if command["action"] == "regress":
         progress.regressed_positions = progress.regressed_positions + [command["return_to_position"]]
     if command["action"] == "complete":
@@ -179,10 +178,6 @@ def submit_answer(student, topic, package, question_id, selected_answer):
 
 #listen-only steps (no questions, e.g. the guide's introduction)
 def continue_after_listening(student, topic, package):
-    #move past the current step once nothing is left to ask on it: a step with no
-    #questions, or one whose questions are all answered or spent (a missed
-    #True/False, or one missed at every reading). None if a question is still
-    #worth asking -- it must be answered first.
     progress, _ = TopicPackageProgress.objects.get_or_create(student=student, topic=topic)
     step = next((s for s in package.steps if s["position"] == progress.current_step_position), None)
     if step is None or askable_questions(step, student, topic, package):
@@ -201,11 +196,7 @@ def continue_after_listening(student, topic, package):
 
 
 def next_question_on_open(student, topic, package, progress):
-    #when a topic is opened: which question of the current step to ask (None: listen only).
-    #The one the last command asked for, if it is still open -- reopening resumes exactly
-    #where the engine left off. Otherwise (a new learner, or nothing pending) the same
-    #arrival rules as moving between steps: on a detour a fresh question, and never a
-    #question whose answer was already read out in a review.
+    
     step = next((s for s in package.steps if s["position"] == progress.current_step_position), None)
     if step is None or progress.completed:
         return None

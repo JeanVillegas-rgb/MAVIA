@@ -100,7 +100,7 @@ const KEYCODE = {
 // A and B are also True and False: a True/False question is keyed to the same
 // two keys as the first two options of a multiple-choice one, so a finger
 // position means the same thing on every question. See QuestionCard's
-// optionsFor and the backend's path_answer_is_correct.
+// optionsFor and the backend's normalize/grade (adaptive/services.py).
 export const KEYPAD_BINDINGS: Binding[] = [
   { label: "7", keycodes: [KEYCODE.NUMPAD_7, KEYCODE.DIGIT_7], characters: ["7"], action: { kind: "answer", letter: "a" } },
   { label: "8", keycodes: [KEYCODE.NUMPAD_8, KEYCODE.DIGIT_8], characters: ["8"], action: { kind: "answer", letter: "b" } },

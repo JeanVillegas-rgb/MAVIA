@@ -94,6 +94,15 @@ export default function StudentLayout() {
       <SwipeToCourses onSwipe={goToCourses}>
         <View style={styles.fill}>
           <Tabs
+            // Switching tabs is a way out of a screen like the swipe and the back
+            // key, so it silences everything first the same way. Left to blur
+            // alone, a lesson track kept playing under the next tab's voice.
+            screenListeners={{
+              tabPress: () => {
+                guide.stop();
+                silenceAll();
+              },
+            }}
             screenOptions={{
               headerShown: false,
               tabBarActiveTintColor: colors.brand600,
