@@ -72,19 +72,6 @@ class GeneratedQuestion(models.Model):
         return f"[{self.thinking_order or 'unclassified'}] {self.question_text[:50]}"
 
 
-class LearnerResponse(models.Model):
-    learner_id = models.CharField(max_length=50, db_index=True)
-    question = models.ForeignKey(GeneratedQuestion, on_delete=models.CASCADE)
-    selected_answer = models.CharField(max_length=255)
-    is_correct = models.BooleanField()
-    answered_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["learner_id", "question"]),
-        ]
-
-
 class GenerationRun(models.Model):
     """One run of a pipeline (questions, extraction, publish or versions) and its trace."""
     STATUS_CHOICES = [

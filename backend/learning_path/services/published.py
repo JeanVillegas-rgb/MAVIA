@@ -36,28 +36,6 @@ def _telling(anchor, bundle):
     return sorted(by_id.values(), key=lambda item: (item.order, item.id))
 
 
-def _legacy_audio(parts, segments):
-    """Fill Standard clips from a playlist written before objects were named in it."""
-    lookups = {}
-    filled = []
-    for part, segment in zip(parts, segments):
-        if segment["audio_url"]:
-            filled.append(segment)
-            continue
-        lookup = lookups.get(part.material_id)
-        if lookup is None:
-            playlist = (part.material.generated_json or {}).get("lesson_playlist", [])
-            lookup = lookups[part.material_id] = {} if any(
-                entry.get("learning_object_id") for entry in playlist
-            ) else {
-                entry.get("narration_item_order"): entry.get("audio_url") or ""
-                for entry in playlist
-                if entry.get("narration_item_order") is not None
-            }
-        filled.append({**segment, "audio_url": lookup.get(part.order + 1, "")})
-    return filled
-
-
 def _slot(segments):
     """One version: text, audio_url, parts and segments."""
     version = _version_from_segments(segments, origin=None)
@@ -72,7 +50,7 @@ def _slot(segments):
 def _versions(parts, group=None):
     """Standard, simplified and elaborated for one telling of a concept."""
     versions = {
-        "standard": _slot(_legacy_audio(parts, bundle_segments(parts))),
+        "standard": _slot(bundle_segments(parts)),
         "simplified": None,
         "elaborated": None,
     }

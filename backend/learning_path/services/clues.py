@@ -221,8 +221,3 @@ def read_clues(prerequisite, dependent, term_owners, positions, meaning_cutoff, 
     if semantic:
         records["meaning"] = meaning[1]
     return votes, records
-
-
-def clue_records(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic=True, min_terms=1):
-    """The numbers behind each clue, for the stored evidence."""
-    return read_clues(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic, min_terms)[1]

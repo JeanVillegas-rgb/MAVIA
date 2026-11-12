@@ -64,7 +64,6 @@ def name_terms(title):
 class ConceptText:
     concept: object
     sentences: list
-    pdfs: list
     sentence_terms: list
     passages: list
     name: tuple
@@ -109,21 +108,18 @@ def prepare(concepts, embed=None):
     concepts = list(concepts)
     texts = []
     for concept in concepts:
-        sentences, pdfs, passages, spelling = [], [], [], {}
+        sentences, passages, spelling = [], [], {}
         for member in _members(concept):
             content = getattr(member, "content", "") or ""
             passages.append(terms(content))
             for word in _kept_words(content):
                 spelling.setdefault(_stemmer.stem(word), word)
-            for sentence in split_sentences(content):
-                sentences.append(sentence)
-                pdfs.append(getattr(member, "material_id", None))
+            sentences.extend(split_sentences(content))
         name = name_terms(concept.title)
         headings = _member_headings(concept)
         texts.append(ConceptText(
             concept=concept,
             sentences=sentences,
-            pdfs=pdfs,
             sentence_terms=[terms(sentence) for sentence in sentences],
             passages=passages,
             name=name,

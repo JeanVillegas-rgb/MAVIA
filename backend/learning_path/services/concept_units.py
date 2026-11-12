@@ -18,7 +18,6 @@ class Concept:
     section_title: str
     kind: str
     order: int
-    member_text: str = ""
     group: Any = field(repr=False, default=None)
     representative: Any = field(repr=False, default=None)
     members: tuple = field(repr=False, default=())
@@ -145,7 +144,6 @@ def concepts_for_topic(node):
         group, members = record["group"], record["members"]
         representative = _representative_for(group, members)
         ordered = sorted(members, key=lambda item: _member_scan_key(item, material_rank))
-        member_text = "\n".join(item.content or "" for item in ordered)
         concepts.append(
             Concept(
                 id=group.id,
@@ -154,7 +152,6 @@ def concepts_for_topic(node):
                 section_title=representative.section_title or "",
                 kind=representative.kind,
                 order=position,
-                member_text=member_text,
                 group=group,
                 representative=representative,
                 members=tuple(ordered),
