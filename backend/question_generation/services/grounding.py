@@ -1,4 +1,4 @@
-"""Checks each draft question against the topic's concepts: retrieve the top passages, then ask an LLM checker."""
+"""Checks each draft question against the concept it was written from, with an LLM checker."""
 
 import json
 import logging
@@ -143,7 +143,7 @@ def asserted_answer(question):
 
 
 def question_query(question):
-    """The draft Q&A as one string, used as the search query and checked text."""
+    """The draft Q&A as one string: what the checker reads, and the query when concepts are ranked."""
     parts = [question.question_text]
     choices = question.choices or {}
     if isinstance(choices, dict):
@@ -252,40 +252,20 @@ def enabled():
     return bool(getattr(settings, "QUESTION_VALIDATION_ENABLED", True))
 
 
-def verify(question, index):
-    """One draft's verdict; a check that could not run passes as unverified."""
-    if not index.searchable:
+def verify(question, source):
+    """One draft's verdict against the concept it was written from; a check that could not run passes as unverified."""
+    read = {"concept": source["concept"], "preview": source["text"][:PREVIEW_CHARS]}
+    if not source["text"].strip():
         return {
             "passed": True,
-            "stage": "retrieval_unavailable",
-            "reason": index.reason or "retrieval unavailable",
+            "stage": "source_missing",
+            "reason": "the concept has no text to check against",
             "verdict": "unverified",
-            "retrieved": [],
+            "source": read,
         }
-
-    hits = index.search(question_query(question))
-    if not hits:
-        return {
-            "passed": False,
-            "stage": "retrieval",
-            "reason": "no source passage matched this question",
-            "verdict": "unsupported",
-            "retrieved": [],
-        }
-
-    passages = [chunk for _score, chunk in hits]
-    retrieved = [
-        {
-            "concept": chunk["concept"],
-            "material_id": chunk["material_id"],
-            "score": round(score, 4),
-            "preview": chunk["text"][:PREVIEW_CHARS],
-        }
-        for score, chunk in hits
-    ]
 
     try:
-        verdict, supported_answer, problem = judge(question, passages)
+        verdict, supported_answer, problem = judge(question, [source])
     except Exception as exc:
         logger.warning("Judge call failed for draft %s: %s", question.id, exc)
         return {
@@ -293,13 +273,13 @@ def verify(question, index):
             "stage": "judge_unavailable",
             "reason": f"judge unavailable: {exc}",
             "verdict": "unverified",
-            "retrieved": retrieved,
+            "source": read,
         }
 
     if verdict == "supported":
         return {
             "passed": True, "stage": "judge", "reason": "",
-            "verdict": verdict, "retrieved": retrieved,
+            "verdict": verdict, "source": read,
         }
 
     reason = problem or (
@@ -309,7 +289,7 @@ def verify(question, index):
         reason = f"{reason} -- the source supports {supported_answer!r}"
     return {
         "passed": False, "stage": "judge", "reason": reason,
-        "verdict": verdict, "retrieved": retrieved,
+        "verdict": verdict, "source": read,
     }
 
 

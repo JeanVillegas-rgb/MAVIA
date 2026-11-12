@@ -339,17 +339,15 @@ def _draft_questions_for_node(
 
 
 def _log_check(result):
-    """Log the checker's verdict and passages under the draft's line."""
+    """Log the checker's verdict under the draft's line."""
     if result["reason"]:
         logger.debug("      verdict: %s -- %s", result["verdict"], result["reason"])
     else:
         logger.debug("      verdict: %s", result["verdict"])
-    for hit in result["retrieved"]:
-        logger.debug('      %.2f  %s  "%s..."', hit["score"], hit["concept"], hit["preview"])
 
 
-def _validate_drafts_for_node(node, index, on_event=None, stats=None):
-    """Check every draft against the topic's concepts and delete failures; returns (kept, failures)."""
+def _validate_drafts_for_node(node, on_event=None, stats=None):
+    """Check every draft against the concept's own text and delete failures; returns (kept, failures)."""
     from question_generation.models import GeneratedQuestion
     from .grounding import verify
 
@@ -359,10 +357,12 @@ def _validate_drafts_for_node(node, index, on_event=None, stats=None):
     if not drafts:
         return 0, []
 
+    source = {"concept": concept_name(node), "text": concept_source_text(node)}
+    logger.debug('  checked against "%s": "%s..."', source["concept"], source["text"][:200])
     failures, reject_ids, unverified = [], [], 0
     for draft in drafts:
-        result = verify(draft, index)
-        if result["stage"] in ("retrieval_unavailable", "judge_unavailable"):
+        result = verify(draft, source)
+        if result["stage"] in ("source_missing", "judge_unavailable"):
             unverified += 1
         if result["passed"]:
             logger.debug('  ✓ grounded — "%s"', draft.question_text)
@@ -376,7 +376,7 @@ def _validate_drafts_for_node(node, index, on_event=None, stats=None):
             on_event, "question_ungrounded", draft.question_text,
             reason=result["reason"], stage=result["stage"],
             verdict=result["verdict"], node_id=node.id,
-            retrieved=result["retrieved"],
+            source=result["source"],
         )
 
     if reject_ids:
@@ -549,7 +549,6 @@ def generate_questions_for_node(
     on_event=None,
     stats=None,
     generation_fingerprint="",
-    grounding_index=None,
     append=False,
 ):
     """Draft, check and finalize one concept's questions."""
@@ -574,7 +573,7 @@ def generate_questions_for_node(
         "[Questions] CONCEPT: %s  (object %s)\n    REFERENCE CONTENT FOR THE QUESTIONS:\n%s",
         name(concept_name(node)), node.id, textwrap.indent(concept_source_text(node), "      "),
     )
-    gate_on = grounding_index is not None and enabled()
+    gate_on = enabled()
     max_retries = int(getattr(settings, "QUESTION_VALIDATION_MAX_RETRIES", 1))
     correction, drafted = "", 0
 
@@ -596,7 +595,7 @@ def generate_questions_for_node(
             node_id=node.id, attempt=attempt + 1,
         )
         _surviving, failures = _validate_drafts_for_node(
-            node, grounding_index, on_event=on_event, stats=stats,
+            node, on_event=on_event, stats=stats,
         )
         if not failures or not _bank_is_short(node, orders) or attempt == max_retries:
             break
@@ -713,20 +712,7 @@ def generate_questions_for_material(
         "reused_nodes": len(nodes) - len(nodes_to_generate),
     }
     classifier = None
-    grounding_index = None
     if nodes_to_generate:
-        from .grounding import build_index, enabled as grounding_enabled
-
-        if grounding_enabled() and material.outline_node_id:
-            grounding_index = build_index(material.outline_node)
-            _emit(
-                on_event, "grounding_index_built",
-                f"Indexed {len(grounding_index.chunks)} source passage(s) for validation",
-                material_id=material.id,
-                chunks=len(grounding_index.chunks),
-                searchable=grounding_index.searchable,
-                reason=grounding_index.reason,
-            )
         if on_event:
             _emit(
                 on_event,
@@ -776,7 +762,6 @@ def generate_questions_for_material(
             on_event=on_event,
             stats=stats,
             generation_fingerprint=fingerprints[node.id],
-            grounding_index=grounding_index,
             append=append,
         )
         all_questions.extend(questions)
@@ -807,20 +792,8 @@ def generate_questions_for_material(
     return all_questions
 
 
-def _prepare_generation(outline_node, on_event):
-    """Build the topic's grounding index, warm the model and load the classifier."""
-    from .grounding import build_index, enabled as grounding_enabled
-
-    grounding_index = None
-    if grounding_enabled():
-        grounding_index = build_index(outline_node)
-        _emit(
-            on_event, "grounding_index_built",
-            f"Indexed {len(grounding_index.chunks)} source passage(s) for validation",
-            chunks=len(grounding_index.chunks),
-            searchable=grounding_index.searchable,
-            reason=grounding_index.reason,
-        )
+def _prepare_generation(on_event):
+    """Warm the model and load the classifier."""
     if on_event:
         _emit(
             on_event, "model_warming",
@@ -832,7 +805,7 @@ def _prepare_generation(outline_node, on_event):
         )
     if _classifier_cache is None:
         _emit(on_event, "classifier_loading", "Loading Bloom's classifier model")
-    return grounding_index, _get_classifier()
+    return _get_classifier()
 
 
 def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None):
@@ -861,7 +834,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
              "ungrounded": 0, "unverified": 0}
     added, failed = 0, {}
     if targets:
-        grounding_index, classifier = _prepare_generation(outline_node, on_event)
+        classifier = _prepare_generation(on_event)
     for round_number in range(1, rounds + 1):
         if not targets:
             break
@@ -893,8 +866,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
             try:
                 kept = generate_questions_for_node(
                     node, classifier, on_event=on_event, stats=stats,
-                    generation_fingerprint=fingerprint,
-                    grounding_index=grounding_index, append=True,
+                    generation_fingerprint=fingerprint, append=True,
                 )
             except Exception as exc:
                 logger.exception("[Questions] %s  failed: %s", name(concept_name(node)), exc)
