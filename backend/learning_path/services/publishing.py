@@ -212,7 +212,7 @@ def order_with_links(concepts, links, confidence=None):
     for concept in ordered:
         for following in successors[concept.id]:
             depth[following] = max(depth[following], depth[concept.id] + 1)
-    tracing.log_order(ordered, depth, ignored)
+    tracing.log_order(ordered, depth, ignored, kept)
     return ordered, depth, ignored
 
 

@@ -5,10 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from course.version_assignment import assign_group_versions
-from lessons.services.concept_bundles import bundle_heading, ordered_members
-
-from .concept_text import strip_numbering
-from .text_signals import part_marker, strip_part_suffix
+from lessons.services.concept_bundles import ordered_members
 
 
 @dataclass(frozen=True)
@@ -45,120 +42,6 @@ def _material_rank(node):
     """Upload order of the topic's materials, oldest first."""
     materials = node.materials.order_by("created_at", "id").values_list("id", flat=True)
     return {material_id: index for index, material_id in enumerate(materials)}
-
-
-def _passage_runs(records):
-    """Yield (total, run) for each split "(Part n of m)" passage, in document order."""
-    by_key = {}
-    for record in records:
-        for item in record["members"]:
-            marker = part_marker(item.title)
-            if not marker:
-                continue
-            base, number, total = marker
-            key = (item.material_id, base.casefold(), total)
-            by_key.setdefault(key, []).append((item.order, number, record))
-
-    runs = []
-    for (_, _, total), entries in by_key.items():
-        entries.sort(key=lambda entry: entry[0])
-        current = []
-        for entry in entries:
-            if entry[1] == 1 and current:
-                runs.append((total, current))
-                current = []
-            current.append(entry)
-        if current:
-            runs.append((total, current))
-    return runs
-
-
-def _merge_split_passages(records):
-    """Merge the groups holding one split passage into a single concept."""
-    joins = []
-    for total, run in _passage_runs(records):
-        if [number for _, number, _ in run] != list(range(1, total + 1)):
-            continue
-        orders = [order for order, _, _ in run]
-        if orders != list(range(orders[0], orders[0] + len(orders))):
-            continue
-        joins.extend((run[0][2], record) for _, _, record in run[1:])
-    return _join_records(records, joins)
-
-
-def _join_records(records, joins):
-    """One record per connected set of joins."""
-    parent = {id(record): id(record) for record in records}
-
-    def find(item):
-        while parent[item] != item:
-            parent[item] = parent[parent[item]]
-            item = parent[item]
-        return item
-
-    for left, right in joins:
-        left_root, right_root = find(id(left)), find(id(right))
-        if left_root != right_root:
-            parent[right_root] = left_root
-
-    components = {}
-    for record in records:
-        components.setdefault(find(id(record)), []).append(record)
-
-    merged = []
-    for component in components.values():
-        primary = min(component, key=lambda record: record["earliest"])
-        members = []
-        for record in component:
-            members.extend(record["members"])
-        merged.append({
-            "group": primary["group"],
-            "members": members,
-            "earliest": primary["earliest"],
-        })
-    return merged
-
-
-def _name_key(name):
-    """A heading without its list number or "(Part n of m)"."""
-    return " ".join(strip_numbering(strip_part_suffix(name or "")).casefold().split())
-
-
-def _headings(members):
-    return {
-        " ".join((getattr(item, "section_title", "") or "").casefold().split())
-        for item in members
-        if (getattr(item, "section_title", "") or "").strip()
-    }
-
-
-def same_concept(first, second):
-    """True when two units are one concept that grouping kept apart."""
-    (first_name, first_members), (second_name, second_members) = first, second
-    key = _name_key(first_name)
-    if not key or key != _name_key(second_name):
-        return False
-    shared = {item.material_id for item in first_members} & {item.material_id for item in second_members}
-    if shared:
-        return any(
-            abs(left.order - right.order) == 1
-            for left in first_members for right in second_members
-            if left.material_id == right.material_id
-        )
-    left, right = _headings(first_members), _headings(second_members)
-    return not (left and right and not (left & right))
-
-
-def _join_same_name(records):
-    """Join the records of one concept that grouping split under one name."""
-    units = [(record["group"].label, record["members"]) for record in records]
-    joins = [
-        (records[first], records[second])
-        for first in range(len(records))
-        for second in range(first + 1, len(records))
-        if same_concept(units[first], units[second])
-    ]
-    return _join_records(records, joins) if joins else records
 
 
 def _material_positions(records):
@@ -255,8 +138,6 @@ def concepts_for_topic(node):
             "earliest": min(_member_scan_key(item, material_rank) for item in members),
         })
 
-    records = _merge_split_passages(records)
-    records = _join_same_name(records)
     records = _order_records(records, material_rank)
 
     concepts = []
@@ -265,20 +146,10 @@ def concepts_for_topic(node):
         representative = _representative_for(group, members)
         ordered = sorted(members, key=lambda item: _member_scan_key(item, material_rank))
         member_text = "\n".join(item.content or "" for item in ordered)
-        representative_bundle = [
-            item for item in ordered
-            if item.material_id == representative.material_id
-            and item.group_id == representative.group_id
-        ]
         concepts.append(
             Concept(
                 id=group.id,
-                title=(
-                    (bundle_heading(representative_bundle) if len(representative_bundle) >= 2 else "")
-                    or strip_part_suffix(representative.title)
-                    or group.label
-                    or ""
-                ).strip(),
+                title=(group.label or representative.title or "").strip(),
                 content=representative.content or "",
                 section_title=representative.section_title or "",
                 kind=representative.kind,

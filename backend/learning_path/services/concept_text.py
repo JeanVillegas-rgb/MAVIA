@@ -7,15 +7,9 @@ import numpy as np
 from django.conf import settings
 from nltk.stem import PorterStemmer
 
-from lessons.services.learning_object_builder import find_body_font_size, is_heading, parse_numbered_concept
-from lessons.services.lesson_pipeline import _teaching_blocks
-
-from .text_signals import strip_part_suffix
-
 MIN_SENTENCE_WORDS = settings.LEARNING_PATH_MIN_SENTENCE_WORDS
 MIN_TERM_LETTERS = settings.LEARNING_PATH_MIN_TERM_LETTERS
 MAX_NAME_TERMS = settings.LEARNING_PATH_MAX_NAME_TERMS
-HEADING_SIZE_TOLERANCE = 0.5
 
 STOP_WORDS = frozenset("""
 a about above after again against all also am an and any are as at be because been
@@ -62,7 +56,7 @@ def strip_numbering(title):
 
 def name_terms(title):
     """The stems a concept can be named by, or () when its title is a sentence."""
-    stems = tuple(terms(strip_numbering(strip_part_suffix(title or ""))))
+    stems = tuple(terms(strip_numbering(title or "")))
     return stems if 0 < len(stems) <= MAX_NAME_TERMS else ()
 
 
@@ -98,72 +92,21 @@ def part_names(concept, name):
         stems = name_terms(title)
         if stems and frozenset(stems) not in seen:
             seen.add(frozenset(stems))
-            found.append((strip_numbering(strip_part_suffix(title)), stems))
+            found.append((strip_numbering(title), stems))
     return tuple(found)
 
 
-def _printed_sections(blocks, object_block_ids):
-    """{block id: the section the block is printed in}, smaller headings nesting under bigger ones."""
-    teaching = _teaching_blocks(blocks)
-    body_font_size = find_body_font_size(teaching)
-    if body_font_size is None:
-        return {}
-    ordered = sorted(teaching, key=lambda block: (block["page"], block["bbox"][1], block["bbox"][0]))
-    starts = [index for index, block in enumerate(ordered) if str(block["block_id"]) in object_block_ids]
-    current, current_size, skipping, sections = "", 0, False, {}
-    for block in ordered[min(starts):] if starts else []:
-        if block.get("starts_excluded_section"):
-            current, current_size, skipping = "", 0, True
-            continue
-        if block.get("category") == "document_metadata":
-            continue
-        numbered = parse_numbered_concept(block["text"], block.get("leading_bold_text"))
-        heading = is_heading(block, body_font_size)
-        if skipping and not (heading or (numbered and block.get("leading_bold_text"))):
-            continue
-        if heading or numbered:
-            skipping = False
-            size = block.get("dominant_font_size") or 0
-            if heading and (not current or size >= current_size - HEADING_SIZE_TOLERANCE):
-                current, current_size = (numbered[0] if numbered else block["text"]), size
-        sections[str(block["block_id"])] = current
-    return sections
-
-
-def enclosing_headings(concepts):
-    """{object id: heading} for a text object printed inside a section other than its own."""
-    by_material = {}
-    for concept in concepts:
-        for member in getattr(concept, "members", None) or ():
-            if getattr(member, "material", None) is not None:
-                by_material.setdefault(member.material_id, {})[member.id] = member
-    found = {}
-    for members in by_material.values():
-        items = list(members.values())
-        sections = _printed_sections(
-            items[0].material.extracted_blocks or [],
-            {str(item.source_block_id) for item in items if item.source_block_id is not None},
-        )
-        for item in items:
-            printed_in = sections.get(str(item.source_block_id), "")
-            if item.kind != "image" and printed_in and printed_in != (item.section_title or ""):
-                found[item.id] = printed_in
-    return found
-
-
-def _member_headings(concept, enclosing):
-    """Every heading the concept's members sit under, including the one a term is printed under."""
-    headings = []
-    for member in getattr(concept, "members", None) or ():
-        headings.append(getattr(member, "section_title", "") or "")
-        headings.append(enclosing.get(getattr(member, "id", None), ""))
-    return headings
+def _member_headings(concept):
+    """Every heading the concept's members sit under."""
+    return [
+        getattr(member, "section_title", "") or ""
+        for member in getattr(concept, "members", None) or ()
+    ]
 
 
 def prepare(concepts, embed=None):
     """One ConceptText per concept; embed is called once for every sentence."""
     concepts = list(concepts)
-    enclosing = enclosing_headings(concepts)
     texts = []
     for concept in concepts:
         sentences, pdfs, passages, spelling = [], [], [], {}
@@ -176,7 +119,7 @@ def prepare(concepts, embed=None):
                 sentences.append(sentence)
                 pdfs.append(getattr(member, "material_id", None))
         name = name_terms(concept.title)
-        headings = _member_headings(concept, enclosing)
+        headings = _member_headings(concept)
         texts.append(ConceptText(
             concept=concept,
             sentences=sentences,

@@ -15,7 +15,6 @@ from lessons.services.concept_bundles import bundles_for_group
 from lessons.services.concept_titles import display_titles
 
 from .concept_units import concepts_for_topic
-from .text_signals import part_marker, strip_part_suffix
 
 
 def _representative(group, members):
@@ -30,50 +29,11 @@ def _representative(group, members):
     return next((m for m in members if m.represented_by_id is None), members[0] if members else None)
 
 
-def _passage_parts(anchor, members):
-    """Every part of the split passage anchor belongs to, in reading order."""
-    marker = part_marker(anchor.title)
-    if not marker:
-        return [anchor]
-    base, _number, total = marker
-    candidates = []
-    for member in members:
-        member_marker = part_marker(member.title)
-        if (
-            member_marker
-            and member.material_id == anchor.material_id
-            and member_marker[0].casefold() == base.casefold()
-            and member_marker[2] == total
-        ):
-            candidates.append((member.order, member_marker[1], member))
-    candidates.sort(key=lambda entry: entry[0])
-
-    runs, current = [], []
-    for _order, number, member in candidates:
-        if number == 1 and current:
-            runs.append(current)
-            current = []
-        current.append((number, member))
-    if current:
-        runs.append(current)
-    for run in runs:
-        if any(member.id == anchor.id for _number, member in run):
-            return [member for _number, member in sorted(run, key=lambda entry: entry[0])]
-    return [anchor]
-
-
-def _telling(anchor, members, bundle):
+def _telling(anchor, bundle):
     """Every object one telling of a concept is taught as, in reading order."""
     by_id = {item.id: item for item in bundle}
-    for part in _passage_parts(anchor, members):
-        by_id.setdefault(part.id, part)
+    by_id.setdefault(anchor.id, anchor)
     return sorted(by_id.values(), key=lambda item: (item.order, item.id))
-
-
-def _chunk_title(parts):
-    """A chunk's title without the "(Part n of m)" marker."""
-    title = parts[0].title or ""
-    return strip_part_suffix(title) if len(parts) > 1 else title
 
 
 def _legacy_audio(parts, segments):
@@ -207,14 +167,14 @@ def get_published_path(node, *, include_answers=True):
         for member in members:
             sources.setdefault(member.material_id, member.material.title)
 
-        parts = _telling(representative, members, standard_bundle_for(representative))
+        parts = _telling(representative, standard_bundle_for(representative))
         bundles = bundles_for_group(concept.group if concept is not None else group)
         seen = {part.id for part in parts}
         alternates = []
         for member in members:
             if member.id in seen or member.represented_by_id is not None:
                 continue
-            alternate_parts = _telling(member, members, bundles.get(member.material_id) or [member])
+            alternate_parts = _telling(member, bundles.get(member.material_id) or [member])
             if any(part.id in seen for part in alternate_parts):
                 continue
             seen.update(part.id for part in alternate_parts)
@@ -225,7 +185,7 @@ def get_published_path(node, *, include_answers=True):
             "position": step.position,
             "depth": step.depth,
             "concept_id": group.id,
-            "title": _chunk_title(parts),
+            "title": parts[0].title or "",
             "section_title": representative.section_title,
             "learning_object_id": representative.id,
             "sources": [{"material_id": mid, "title": title} for mid, title in sources.items()],
@@ -236,7 +196,7 @@ def get_published_path(node, *, include_answers=True):
                     "learning_object_id": alternate_parts[0].id,
                     "material_id": alternate_parts[0].material_id,
                     "material_title": alternate_parts[0].material.title,
-                    "title": _chunk_title(alternate_parts),
+                    "title": alternate_parts[0].title or "",
                     "versions": _versions(alternate_parts),
                     "questions": _questions(alternate_parts, include_answers),
                 }

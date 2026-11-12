@@ -345,11 +345,11 @@ def _log_check(result):
     else:
         logger.debug("      verdict: %s", result["verdict"])
     for hit in result["retrieved"]:
-        logger.debug('      %.2f  PDF %s  "%s..."', hit["score"], hit["material_id"], hit["preview"])
+        logger.debug('      %.2f  %s  "%s..."', hit["score"], hit["concept"], hit["preview"])
 
 
 def _validate_drafts_for_node(node, index, on_event=None, stats=None):
-    """Check every draft against the PDFs and delete failures; returns (kept, failures)."""
+    """Check every draft against the topic's concepts and delete failures; returns (kept, failures)."""
     from question_generation.models import GeneratedQuestion
     from .grounding import verify
 
@@ -526,14 +526,6 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
                 source_text_fingerprint=source_stamp,
                 generation_fingerprint=keep[0].generation_fingerprint,
             )
-
-        material = node.material
-        generated_json = material.generated_json or {}
-        if generated_json:
-            generated_json["question_audio_generated"] = False
-            generated_json["audio_playlist_generated"] = False
-            material.generated_json = generated_json
-            material.save(update_fields=["generated_json"])
 
     from lessons.services.question_workflow import mirror_generated_questions
     mirror_generated_questions(node, keep)

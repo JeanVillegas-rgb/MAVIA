@@ -1,7 +1,8 @@
-"""Checks each draft question against the topic's PDFs: retrieve the top passages, then ask an LLM checker."""
+"""Checks each draft question against the topic's concepts: retrieve the top passages, then ask an LLM checker."""
 
 import json
 import logging
+import re
 
 import requests
 from django.conf import settings
@@ -9,29 +10,30 @@ from config.groq_client import generate as groq_generate
 
 logger = logging.getLogger(__name__)
 
-CHUNK_WORDS = settings.QUESTION_VALIDATION_CHUNK_WORDS
-CHUNK_OVERLAP = settings.QUESTION_VALIDATION_CHUNK_OVERLAP
-
 PREVIEW_CHARS = 200
 
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
-def _chunk_text(text):
-    """Overlapping word windows over one PDF's extracted text."""
-    words = (text or "").split()
-    if not words:
+
+def _passages(engine, text):
+    """The text as one passage, or cut at sentence ends when the encoder cannot read it whole."""
+    text = " ".join((text or "").split())
+    if not text:
         return []
-    if len(words) <= CHUNK_WORDS:
-        return [" ".join(words)]
-    step = max(1, CHUNK_WORDS - CHUNK_OVERLAP)
-    chunks = []
-    for start in range(0, len(words), step):
-        window = words[start:start + CHUNK_WORDS]
-        if not window:
-            break
-        chunks.append(" ".join(window))
-        if start + CHUNK_WORDS >= len(words):
-            break
-    return chunks
+    if engine.supports(text):
+        return [text]
+    passages, current = [], ""
+    for sentence in _SENTENCE_END.split(text):
+        joined = f"{current} {sentence}".strip()
+        if engine.supports(joined):
+            current = joined
+            continue
+        if current:
+            passages.append(current)
+        current = _fit(engine, sentence)
+    if current:
+        passages.append(current)
+    return passages
 
 
 def _fit(engine, text):
@@ -46,11 +48,12 @@ def _fit(engine, text):
 
 
 class TopicIndex:
-    """Chunked PDF text of one topic with its embeddings; built once per run."""
+    """One topic's concepts as passages with their embeddings; built once per run."""
 
-    def __init__(self, chunks, vectors=None, reason=""):
+    def __init__(self, chunks, vectors=None, owners=None, reason=""):
         self.chunks = chunks
         self.vectors = vectors
+        self.owners = owners or []
         self.reason = reason
 
     @property
@@ -58,7 +61,7 @@ class TopicIndex:
         return bool(self.vectors) and bool(self.chunks)
 
     def search(self, query, k=None):
-        """Top-k chunks by cosine, highest first; empty when unsearchable."""
+        """Top-k concepts by cosine, highest first; empty when unsearchable."""
         k = k or int(getattr(settings, "QUESTION_VALIDATION_TOP_K", 3))
         if not self.searchable:
             return []
@@ -69,33 +72,40 @@ class TopicIndex:
         if not fitted:
             return []
         vector = engine.embeddings([fitted])[0]
-        scored = [
-            (sum(a * b for a, b in zip(vector, candidate)), chunk)
-            for candidate, chunk in zip(self.vectors, self.chunks)
-        ]
+        best = {}
+        for candidate, owner in zip(self.vectors, self.owners):
+            score = sum(a * b for a, b in zip(vector, candidate))
+            if owner not in best or score > best[owner]:
+                best[owner] = score
+        scored = [(score, self.chunks[owner]) for owner, score in best.items()]
         scored.sort(key=lambda row: -row[0])
         return scored[:k]
 
 
 def build_index(outline_node):
-    """Index every completed PDF of one topic. Never raises."""
-    from lessons.models import LearningMaterial
+    """Index every concept of one topic's completed PDFs by the text its questions are written from. Never raises."""
+    from lessons.models import LearningMaterial, LearningObject
+    from .pipeline import _is_concept_source, concept_name, concept_source_text
 
-    materials = LearningMaterial.objects.filter(
-        outline_node=outline_node, status=LearningMaterial.Status.COMPLETED,
-    ).order_by("created_at", "id")
+    objects = LearningObject.objects.filter(
+        material__outline_node=outline_node,
+        material__status=LearningMaterial.Status.COMPLETED,
+    ).exclude(content="").select_related("material", "group").order_by(
+        "material__created_at", "material_id", "order", "id",
+    )
 
-    chunks = []
-    for material in materials:
-        for body in _chunk_text(material.extracted_text or ""):
-            chunks.append({
-                "material_id": material.id,
-                "material_title": material.title,
-                "text": body,
-            })
-
+    chunks = [
+        {
+            "concept": concept_name(item),
+            "material_id": item.material_id,
+            "material_title": item.material.title,
+            "text": text,
+        }
+        for item in objects
+        if _is_concept_source(item) and (text := concept_source_text(item).strip())
+    ]
     if not chunks:
-        return TopicIndex([], reason="no extracted PDF text to index")
+        return TopicIndex([], reason="no concept text to index")
 
     try:
         from lessons.services.embedding_service import sentence_embedding_runtime
@@ -105,22 +115,20 @@ def build_index(outline_node):
         logger.warning("Grounding index has no sentence encoder: %s", exc)
         return TopicIndex(chunks, reason=f"sentence encoder unavailable: {exc}")
 
-    usable, texts = [], []
-    for chunk in chunks:
-        fitted = _fit(engine, chunk["text"])
-        if fitted:
-            usable.append(chunk)
-            texts.append(fitted)
-    if not texts:
-        return TopicIndex(chunks, reason="no chunk fit the encoder window")
+    pieces = [
+        (owner, passage)
+        for owner, chunk in enumerate(chunks) for passage in _passages(engine, chunk["text"])
+    ]
+    if not pieces:
+        return TopicIndex(chunks, reason="no passage fit the encoder window")
 
     try:
-        vectors = engine.embeddings(texts)
+        vectors = engine.embeddings([passage for _, passage in pieces])
     except Exception as exc:
-        logger.warning("Grounding index could not embed chunks: %s", exc)
+        logger.warning("Grounding index could not embed passages: %s", exc)
         return TopicIndex(chunks, reason=f"embedding failed: {exc}")
 
-    return TopicIndex(usable, vectors=vectors)
+    return TopicIndex(chunks, vectors=vectors, owners=[owner for owner, _ in pieces])
 
 
 def asserted_answer(question):
@@ -224,7 +232,7 @@ def judge(question, passages):
     """(verdict, supported_answer, problem) for one draft and its passages."""
     prompt = JUDGE_PROMPT.format(
         passages="\n\n".join(
-            f"[{index + 1}] ({chunk['material_title']}) {chunk['text']}"
+            f"[{index + 1}] ({chunk['concept']}) {chunk['text']}"
             for index, chunk in enumerate(passages)
         ),
         draft=question_query(question),
@@ -268,6 +276,7 @@ def verify(question, index):
     passages = [chunk for _score, chunk in hits]
     retrieved = [
         {
+            "concept": chunk["concept"],
             "material_id": chunk["material_id"],
             "score": round(score, 4),
             "preview": chunk["text"][:PREVIEW_CHARS],

@@ -363,17 +363,13 @@ QUESTION_OVERGENERATION_FACTOR = float(
 
 # Corrective-RAG grounding gate for generated questions
 # (question_generation/services/grounding.py). Every draft is checked against
-# the topic's own PDF text before it can become a final question.
+# the topic's own learning objects before it can become a final question.
 QUESTION_VALIDATION_ENABLED = os.getenv(
     "QUESTION_VALIDATION_ENABLED", "True"
 ).lower() in {"1", "true", "yes"}
 # Passages retrieved per draft. Three is enough to carry the one sentence a
 # question turns on plus its neighbours; more mostly dilutes the judge prompt.
 QUESTION_VALIDATION_TOP_K = int(os.getenv("QUESTION_VALIDATION_TOP_K", "3"))
-# Size of the PDF passages the grounding check retrieves, in words, and how
-# many words neighbouring passages share.
-QUESTION_VALIDATION_CHUNK_WORDS = int(os.getenv("QUESTION_VALIDATION_CHUNK_WORDS", "90"))
-QUESTION_VALIDATION_CHUNK_OVERLAP = int(os.getenv("QUESTION_VALIDATION_CHUNK_OVERLAP", "30"))
 # Corrective passes after the first. Each one is a full set of LLM calls, so
 # this trades run time for bank completeness; the loop stops early once the
 # quota is met.

@@ -1,4 +1,4 @@
-"""Prerequisite links inside one topic (criteria v6.3). Writes nothing."""
+"""Prerequisite links inside one topic (criteria v7.0). Writes nothing."""
 
 from . import embeddings, tracing
 from .calibration import load_calibration
@@ -14,7 +14,7 @@ from .fusion import (
 from .relatedness import relatedness
 
 RULE = "reference-order"
-VERSION = "6.3"
+VERSION = "7.0"
 
 _PDF_ORDER = {1: SHARED, -1: SHARED, 0: DISAGREE, None: NONE_SHARED}
 
