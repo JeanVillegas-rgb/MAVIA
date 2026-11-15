@@ -56,9 +56,6 @@ class GeneratedQuestion(models.Model):
 
     status = models.CharField(
         max_length=5, choices=STATUS_CHOICES, default="draft", db_index=True)
-    generation_fingerprint = models.CharField(
-        max_length=64, blank=True, default="", db_index=True,
-    )
     source_text_fingerprint = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 

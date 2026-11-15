@@ -452,11 +452,8 @@ export function keepVersionText(courseId, nodeId, variantId) {
 }
 
 // Regenerates: the concept's untouched questions are replaced.
-export function startQuestionGeneration(materialId, learningObjectId = null) {
-  const path = learningObjectId
-    ? `/generation/materials/${materialId}/nodes/${learningObjectId}/start/`
-    : `/generation/materials/${materialId}/start/`;
-  return request(path, {
+export function startQuestionGeneration(materialId, learningObjectId) {
+  return request(`/generation/materials/${materialId}/nodes/${learningObjectId}/start/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

@@ -11,11 +11,7 @@ from django.db.models import Q
 
 from config.console import name
 from .bloom_classifier import BloomClassifier
-from .question_generator import (
-    generate_questions,
-    question_bank_fingerprint,
-    warm_question_model,
-)
+from .question_generator import generate_questions, warm_question_model
 
 logger = logging.getLogger(__name__)
 
@@ -198,17 +194,14 @@ def _draft_questions_for_node(
     node,
     classifier,
     on_event=None,
-    generation_fingerprint="",
     correction="",
     orders=None,
 ):
     """Run the LLM calls for one concept and save the replies as drafts."""
     from question_generation.models import GeneratedQuestion
 
-    draft_rows = GeneratedQuestion.objects.filter(node=node, status="draft")
-    draft_rows.exclude(generation_fingerprint=generation_fingerprint).delete()
     resumed = list(
-        draft_rows.filter(generation_fingerprint=generation_fingerprint).order_by("id")
+        GeneratedQuestion.objects.filter(node=node, status="draft").order_by("id")
     )
 
     inferred = []
@@ -320,7 +313,6 @@ def _draft_questions_for_node(
                 explanation=q.get("explanation", ""),
                 thinking_order=thinking_order,
                 status="draft",
-                generation_fingerprint=generation_fingerprint,
             )
             for q in questions
         ]
@@ -524,7 +516,6 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         if keep:
             generated.filter(edited, node=node, status="final").update(
                 source_text_fingerprint=source_stamp,
-                generation_fingerprint=keep[0].generation_fingerprint,
             )
 
     from lessons.services.question_workflow import mirror_generated_questions
@@ -548,10 +539,10 @@ def generate_questions_for_node(
     classifier,
     on_event=None,
     stats=None,
-    generation_fingerprint="",
     append=False,
 ):
-    """Draft, check and finalize one concept's questions."""
+    """Draft, check and finalize one concept's questions; drafts left by an earlier run are discarded first."""
+    from question_generation.models import GeneratedQuestion
     from .grounding import correction_note, enabled
 
     orders = caps = None
@@ -569,6 +560,8 @@ def generate_questions_for_node(
             )
             return []
 
+    GeneratedQuestion.objects.filter(node=node, status="draft").delete()
+
     logger.info(
         "[Questions] CONCEPT: %s  (object %s)\n    REFERENCE CONTENT FOR THE QUESTIONS:\n%s",
         name(concept_name(node)), node.id, textwrap.indent(concept_source_text(node), "      "),
@@ -582,7 +575,6 @@ def generate_questions_for_node(
             node,
             classifier,
             on_event=on_event,
-            generation_fingerprint=generation_fingerprint,
             correction=correction,
             orders=orders,
         )
@@ -633,39 +625,14 @@ def top_up_plan(node):
     return orders, caps
 
 
-def _complete_current_bank(node, fingerprint):
-    """A reusable complete bank, or [] when the bank must be regenerated."""
-    final = list(node.generated_questions.filter(status="final").order_by("id"))
-    if not final or any(q.generation_fingerprint != fingerprint for q in final):
-        return []
-    counts = Counter(q.thinking_order for q in final)
-    if any(
-        counts.get(order, 0) < config["count"]
-        for order, config in QUESTION_DISTRIBUTION.items()
-    ):
-        return []
-    return final
-
-
-def generate_questions_for_material(
-    material,
-    on_event=None,
-    node_ids=None,
-    *,
-    skip_complete=False,
-    append=False,
-):
-    """Generate questions for a material's learning objects, or only node_ids."""
-    from question_generation.models import GeneratedQuestion
-
-    nodes_qs = (
+def generate_questions_for_material(material, node_ids, on_event=None, *, append=False):
+    """Generate questions for the given learning objects of one PDF."""
+    candidates = list(
         material.learning_objects
         .exclude(content="")
+        .filter(id__in=node_ids)
         .order_by("order")
     )
-    if node_ids is not None:
-        nodes_qs = nodes_qs.filter(id__in=node_ids)
-    candidates = list(nodes_qs)
     nodes = [node for node in candidates if _is_concept_source(node)]
     if len(nodes) != len(candidates):
         logger.info(
@@ -677,28 +644,15 @@ def generate_questions_for_material(
                 for node in candidates if node not in nodes
             ),
         )
-    fingerprints = {
-        node.id: question_bank_fingerprint(concept_source_text(node), QUESTION_DISTRIBUTION)
-        for node in nodes
-    }
-    reusable = {
-        node.id: _complete_current_bank(node, fingerprints[node.id])
-        for node in nodes
-    } if skip_complete else {}
-    nodes_to_generate = [node for node in nodes if not reusable.get(node.id)]
-    if node_ids is None:
-        GeneratedQuestion.objects.filter(node__material=material).exclude(
-            node__in=nodes).delete()
     logger.info(
-        "[Questions] PDF %s  started: %s concepts to write questions for, %s unchanged and reused",
-        material.id, len(nodes_to_generate), len(nodes) - len(nodes_to_generate),
+        "[Questions] PDF %s  started: %s concept(s) to write questions for",
+        material.id, len(nodes),
     )
     _emit(
         on_event, "material_started",
         f"Generating questions for {len(nodes)} content nodes",
         material_id=material.id, material_title=material.title,
-        node_count=len(nodes), generate_count=len(nodes_to_generate),
-        reuse_count=len(nodes) - len(nodes_to_generate),
+        node_count=len(nodes),
     )
 
     all_questions = []
@@ -709,10 +663,9 @@ def generate_questions_for_material(
         "trimmed": 0,
         "ungrounded": 0,
         "unverified": 0,
-        "reused_nodes": len(nodes) - len(nodes_to_generate),
     }
     classifier = None
-    if nodes_to_generate:
+    if nodes:
         if on_event:
             _emit(
                 on_event,
@@ -736,20 +689,6 @@ def generate_questions_for_material(
 
     total_nodes = len(nodes)
     for position, node in enumerate(nodes, start=1):
-        cached = reusable.get(node.id)
-        if cached:
-            all_questions.extend(cached)
-            _emit(
-                on_event,
-                "node_skipped",
-                f"Reused unchanged question bank: {concept_name(node)}",
-                node_id=node.id,
-                title=concept_name(node),
-                count=len(cached),
-                index=position,
-                total=total_nodes,
-            )
-            continue
         logger.info("[Questions] (%s/%s) %s  writing questions", position, total_nodes, name(concept_name(node)))
         _emit(
             on_event, "node_started", f"Generating questions for: {concept_name(node)}",
@@ -761,7 +700,6 @@ def generate_questions_for_material(
             classifier,
             on_event=on_event,
             stats=stats,
-            generation_fingerprint=fingerprints[node.id],
             append=append,
         )
         all_questions.extend(questions)
@@ -780,7 +718,6 @@ def generate_questions_for_material(
         f"Completed {len(all_questions)} questions from {stats['total_drafted']} new drafts",
         total=len(all_questions),
         drafted=stats["total_drafted"],
-        reused_nodes=stats["reused_nodes"],
         excluded_create=stats["excluded_create"],
         duplicates=stats["duplicates"],
         trimmed=stats["trimmed"],
@@ -862,11 +799,9 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
                 node_id=node.id, title=concept_name(node),
                 index=position, total=len(targets), round=round_number, rounds=rounds,
             )
-            fingerprint = question_bank_fingerprint(concept_source_text(node), QUESTION_DISTRIBUTION)
             try:
                 kept = generate_questions_for_node(
-                    node, classifier, on_event=on_event, stats=stats,
-                    generation_fingerprint=fingerprint, append=True,
+                    node, classifier, on_event=on_event, stats=stats, append=True,
                 )
             except Exception as exc:
                 logger.exception("[Questions] %s  failed: %s", name(concept_name(node)), exc)

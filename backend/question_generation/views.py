@@ -48,21 +48,16 @@ def _event_recorder(run_id):
     return on_event
 
 
-def _run_pipeline(run_id, material_id, node_ids=None, skip_complete=False, append=False):
-    """Thread target: material generation, traced to the DB."""
+def _run_pipeline(run_id, node_id, append=False):
+    """Thread target: one concept's generation, traced to the DB."""
     from .services.pipeline import generate_questions_for_material
 
     on_event = _event_recorder(run_id)
 
     try:
         run = GenerationRun.objects.select_related("material").get(id=run_id)
-        material = run.material
         questions = generate_questions_for_material(
-            material,
-            on_event=on_event,
-            node_ids=node_ids,
-            skip_complete=skip_complete or run.node_id is None,
-            append=append,
+            run.material, [node_id], on_event=on_event, append=append,
         )
         on_event("saved", f"Saved {len(questions)} questions to database",
                  {"count": len(questions)})
@@ -161,8 +156,8 @@ class StartTopicGenerationView(APIView):
 
 
 class StartGenerationView(APIView):
-    """POST /api/generation/materials/<id>/start/: generate for a material, or one object."""
-    def post(self, request, material_id, node_id=None):
+    """POST /api/generation/materials/<id>/nodes/<id>/start/: generate for one concept."""
+    def post(self, request, material_id, node_id):
         try:
             material = LearningMaterial.objects.get(id=material_id)
         except LearningMaterial.DoesNotExist:
@@ -182,45 +177,23 @@ class StartGenerationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        node = None
-        requested_node_id = node_id if node_id is not None else request.data.get("node_id")
-        skip_complete = request.data.get("skip_complete", requested_node_id is None) is True
         append = request.data.get("append") is True
-        if requested_node_id is not None:
-            node = content_nodes.filter(id=requested_node_id).first()
-            if node is None:
-                return Response(
-                    {"error": "Learning object not found for this material "
-                              "(or it has no narration content)"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            standard, standard_error = _standard_question_source(node)
-            if standard_error:
-                return Response({"error": standard_error}, status=status.HTTP_409_CONFLICT)
-            if standard.id != node.id:
-                return Response(
-                    {"error": "Questions can only be generated from this concept's Standard version.",
-                     "standard_learning_object_id": standard.id},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            standard_ids = []
-            seen_groups = set()
-            for candidate in content_nodes.select_related("group"):
-                scope_key = candidate.group_id or f"object:{candidate.id}"
-                if scope_key in seen_groups:
-                    continue
-                seen_groups.add(scope_key)
-                standard, standard_error = _standard_question_source(candidate)
-                if standard_error:
-                    return Response({"error": standard_error}, status=status.HTTP_409_CONFLICT)
-                if standard.material_id == material.id:
-                    standard_ids.append(standard.id)
-            if not standard_ids:
-                return Response(
-                    {"error": "This material contains no Standard learning objects to generate from."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        node = content_nodes.filter(id=node_id).first()
+        if node is None:
+            return Response(
+                {"error": "Learning object not found for this material "
+                          "(or it has no narration content)"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        standard, standard_error = _standard_question_source(node)
+        if standard_error:
+            return Response({"error": standard_error}, status=status.HTTP_409_CONFLICT)
+        if standard.id != node.id:
+            return Response(
+                {"error": "Questions can only be generated from this concept's Standard version.",
+                 "standard_learning_object_id": standard.id},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         busy = _question_run_in_progress()
         if busy is not None:
@@ -231,17 +204,12 @@ class StartGenerationView(APIView):
         )
         threading.Thread(
             target=_run_pipeline,
-            args=(
-                run.id,
-                material.id,
-                [node.id] if node else standard_ids,
-                skip_complete,
-            ),
+            args=(run.id, node.id),
             kwargs={"append": append},
             daemon=True,
         ).start()
         return Response(
-            {"run_id": run.id, "node_id": node.id if node else None},
+            {"run_id": run.id, "node_id": node.id},
             status=status.HTTP_201_CREATED,
         )
 

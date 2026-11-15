@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import re
@@ -11,7 +10,6 @@ from config.groq_client import GroqRateLimitError, generate as groq_generate
 
 logger = logging.getLogger(__name__)
 
-QUESTION_GENERATOR_VERSION = 2
 QUESTION_TEMPERATURE = settings.QUESTION_TEMPERATURE
 QUESTION_NUM_PREDICT = settings.QUESTION_NUM_PREDICT
 MAX_UNUSABLE_REPLIES = settings.QUESTION_MAX_UNUSABLE_REPLIES
@@ -127,24 +125,6 @@ QUESTION_SCHEMA = {
 }
 
 SUPPORTED_FORMATS = ("MCQ", "TF")
-
-
-def question_bank_fingerprint(content, distribution):
-    """Hash of a bank's source text and generation settings."""
-    payload = {
-        "version": QUESTION_GENERATOR_VERSION,
-        "content": content,
-        "model": settings.QUESTION_LLM_MODEL,
-        "distribution": distribution,
-        "prompts": PROMPT_TEMPLATES,
-        "examples": FEW_SHOT_EXAMPLES,
-        "format_instructions": FORMAT_INSTRUCTIONS,
-        "schemas": QUESTION_SCHEMA,
-        "temperature": QUESTION_TEMPERATURE,
-        "num_predict": QUESTION_NUM_PREDICT,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _ollama_metrics(data):
