@@ -33,6 +33,7 @@ def lesson_blocks():
             "dominant_font_size": 14.0,
             "is_bold": True,
             "leading_bold_text": "Solids",
+            "docling_label": "section_header",
         },
         {
             "block_id": 1,
@@ -43,6 +44,7 @@ def lesson_blocks():
             "dominant_font_size": 10.0,
             "is_bold": False,
             "leading_bold_text": None,
+            "docling_label": "text",
         },
     ]
 

@@ -11,9 +11,11 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from .models import CourseGroup, LearningMaterial, OutlineNode, Question
+from question_generation.models import Question as BankQuestion
 from .services import question_workflow
 from .services.question_workflow import (
     detected_question_payloads,
+    parse_question_structure,
     synchronize_detected_questions,
 )
 from .test_utils import authenticated_api_client
@@ -59,6 +61,24 @@ class QuestionLabellingTests(TestCase):
 
         self.assertEqual(
             (question.bloom_level, question.thinking_order, question.category), ("", "", ""),
+        )
+
+    def test_upload_mirrors_question_to_unlabelled_bank_row(self):
+        question = self.upload()
+
+        bank_question = BankQuestion.objects.get(extracted_question=question)
+
+        self.assertEqual(bank_question.source, "lesson_pdf")
+        self.assertEqual(bank_question.outline_node_id, self.node.id)
+        self.assertEqual(bank_question.question_format, "MCQ")
+        self.assertEqual(bank_question.choices, {
+            "A": "Anything that has mass",
+            "B": "Only liquids",
+        })
+        self.assertEqual(bank_question.correct_answer, "")
+        self.assertEqual(
+            (bank_question.bloom_level, bank_question.thinking_order, bank_question.category),
+            ("", "", ""),
         )
 
     def test_an_unlabelled_question_is_not_given_to_learners(self):
@@ -108,3 +128,18 @@ class QuestionLabellingTests(TestCase):
 
         question.refresh_from_db()
         self.assertEqual(question.thinking_order, "LOT")
+
+    def test_extracts_lettered_choices_from_common_pdf_formats(self):
+        result = parse_question_structure(
+            "Which state of matter has a fixed volume?\n"
+            "(A) Solid\n"
+            "B: Liquid\n"
+            "C - Gas\n"
+            "D. Plasma"
+        )
+
+        self.assertEqual(result["question_type"], Question.Type.MULTIPLE_CHOICE)
+        self.assertEqual(
+            result["choices"],
+            ["Solid", "Liquid", "Gas", "Plasma"],
+        )

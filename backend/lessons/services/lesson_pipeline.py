@@ -78,7 +78,6 @@ def _teaching_blocks(classified):
 
 
 def _describe_visuals_if_available(drafts, images_by_url):
-    """Describe figures without making a temporary Groq outage reject the PDF."""
     if not drafts or not images_by_url:
         return ""
     try:
@@ -93,17 +92,27 @@ def _describe_visuals_if_available(drafts, images_by_url):
 
 
 def generate_material_outputs(material, *, propagate_validation_error=False):
-    """Run the complete lesson pipeline and store MAVIA-compatible records."""
     try:
-        blocks, visuals = extract_lesson_pdf_blocks(material.pdf_file.path)
+        extraction = extract_lesson_pdf_blocks(material.pdf_file.path)
+        if len(extraction) == 2:
+            blocks, visuals = extraction
+        elif len(extraction) == 3:
+            blocks, visuals, _ = extraction
+        else:
+            raise LessonPipelineUnavailableError(
+                "Lesson PDF extractor returned an unsupported result shape."
+            )
+
         if not blocks:
             raise LessonPipelineError(
                 "No extractable lesson text was found. The PDF may require OCR."
             )
         classified = classify_blocks(blocks)
+
         extracted_text = "\n\n".join(block["text"] for block in blocks)
         stored_visuals, images_by_url = _store_visuals(material, visuals)
         drafts = build_learning_objects(_teaching_blocks(classified), stored_visuals)
+
         role = detect_instructional_document_role(classified)
         matching_drafts = drafts
         if role == "assessment":

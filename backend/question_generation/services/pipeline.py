@@ -412,6 +412,8 @@ def _draft_questions_for_node(
         batch = [
             GeneratedQuestion(
                 node=node,
+                outline_node=node.material.outline_node,
+                source="generated",
                 question_text=q["question"],
                 question_format=q["format"],
                 choices=q.get("choices"),
