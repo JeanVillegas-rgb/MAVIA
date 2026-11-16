@@ -253,7 +253,7 @@ def enabled():
 
 
 def verify(question, source):
-    """One draft's verdict against the concept it was written from; a check that could not run passes as unverified."""
+    """One draft's verdict against the concept it was written from; a check that could not run comes back "unverified"."""
     read = {"concept": source["concept"], "preview": source["text"][:PREVIEW_CHARS]}
     if not source["text"].strip():
         return {
@@ -294,7 +294,7 @@ def verify(question, source):
 
 
 def correction_note(failures):
-    """The feedback added to the generation prompt on a corrective retry."""
+    """The feedback added to the next round's generation prompt: the rejected drafts and why."""
     if not failures:
         return ""
     lines = [f'- "{text}" was rejected: {reason}' for text, reason in failures[:6]]
