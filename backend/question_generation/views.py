@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from lessons.models import LearningMaterial
 from course.version_assignment import assign_group_versions
+from user.permissions import IsTeacherOrAdmin
 
 from .models import GenerationEvent, GenerationRun
 
@@ -278,3 +279,106 @@ class GenerationTraceView(APIView):
                 for e in events
             ],
         })
+
+
+def _topic(outline_node_id):
+    from lessons.models import OutlineNode
+
+    return OutlineNode.objects.filter(pk=outline_node_id).first()
+
+
+TOPIC_NOT_FOUND = {"detail": "Topic not found."}
+
+
+def _teacher_question_response(action, outline_node_id, *args, created=False):
+    """Run a teacher's action on a question and answer with the question and what happened to it."""
+    from lessons.serializers import QuestionSerializer
+    from .services.teacher_questions import QuestionError
+
+    node = _topic(outline_node_id)
+    if node is None:
+        return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+    try:
+        result = action(node, *args)
+    except QuestionError as error:
+        return Response({"detail": error.detail, **error.extra}, status=error.status)
+    if result is None:
+        return Response({"deleted": True})
+    question, outcome = result
+    return Response(
+        {"question": QuestionSerializer(question).data, "outcome": outcome},
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
+class TeacherQuestionView(APIView):
+    """POST /api/generation/topics/<id>/questions/: add a question the teacher typed."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id):
+        from .services.teacher_questions import add_question
+
+        return _teacher_question_response(add_question, outline_node_id, request.data, created=True)
+
+
+class TeacherQuestionEditView(APIView):
+    """PATCH or DELETE /api/generation/topics/<id>/questions/<id>/: edit or delete a question."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def patch(self, request, outline_node_id, question_id):
+        from .services.teacher_questions import edit_question
+
+        return _teacher_question_response(edit_question, outline_node_id, question_id, request.data)
+
+    def delete(self, request, outline_node_id, question_id):
+        from .services.teacher_questions import delete_question
+
+        return _teacher_question_response(delete_question, outline_node_id, question_id)
+
+
+class QuestionPairingView(APIView):
+    """POST /api/generation/topics/<id>/questions/<id>/pairing/: confirm, change or drop a question's concept."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id, question_id):
+        from .services.teacher_questions import review_pairing
+
+        return _teacher_question_response(review_pairing, outline_node_id, question_id, request.data)
+
+
+class LabelQuestionsView(APIView):
+    """POST /api/generation/topics/<id>/questions/label/: label the printed questions not labelled yet."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id):
+        from lessons.services.question_workflow import label_printed_questions
+
+        node = _topic(outline_node_id)
+        if node is None:
+            return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        try:
+            labelled = label_printed_questions(node)
+        except Exception as error:
+            logger.exception("[Questions] topic %s  labelling printed questions failed", node.id)
+            return Response(
+                {"detail": f"The printed questions could not be labelled: {error}"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"labelled": labelled})
+
+
+class KeepQuestionsView(APIView):
+    """POST /api/generation/topics/<id>/concepts/<id>/keep-questions/: keep a bank whose concept text changed."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id, group_id):
+        from lessons.models import LearningObjectGroup
+        from .services.bank_status import keep_bank
+
+        group = LearningObjectGroup.objects.filter(pk=group_id, outline_node_id=outline_node_id).first()
+        if group is None:
+            return Response(
+                {"detail": "Concept not found in this topic."}, status=status.HTTP_404_NOT_FOUND,
+            )
+        keep_bank(group)
+        return Response({"kept": True})

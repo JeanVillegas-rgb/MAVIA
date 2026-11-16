@@ -1136,7 +1136,8 @@ function QuestionGenerationTool({
     setGeneratingKey(`keep-${item.groupId}`);
     onError("");
     try {
-      onResourcesChange(await keepQuestionBank(courseId, topicId, item.groupId));
+      await keepQuestionBank(topicId, item.groupId);
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
       onMessage(`Kept the questions for “${item.conceptLabel}” as they are.`);
     } catch (err) {
       onError(err.message);
@@ -1436,25 +1437,21 @@ function ManualQuestionPanel({
       const finalChoices = questionType === "true_false"
         ? ["True", "False"]
         : choices.map((choice) => choice.trim()).filter(Boolean);
-      const data = await createTopicQuestion(courseId, topicId, {
+      const data = await createTopicQuestion(topicId, {
         prompt: prompt.trim(),
         question_type: questionType,
         choices: finalChoices,
         correct_answer: correctAnswer,
         learning_object_group_id: conceptGroupId || null,
       });
-      onResourcesChange(data.resources);
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
       const updatedCourse = await fetchCourse(courseId);
       onCourseChange(updatedCourse);
       setPrompt("");
       setChoices(["", "", "", ""]);
       setCorrectAnswer(questionType === "true_false" ? "True" : "");
       setConceptGroupId("");
-      onMessage(
-        conceptGroupId
-          ? "Question added and paired with the selected concept."
-          : "Question added and matched with the best available confirmed concept.",
-      );
+      onMessage(data.outcome.message);
     } catch (err) {
       onError(err.message);
     } finally {
@@ -2077,7 +2074,8 @@ function LearningObjectConnections({
   async function labelQuestions() {
     setLabelling({ running: true, error: "" });
     try {
-      setResources(await labelTopicQuestions(courseId, topicId));
+      await labelTopicQuestions(topicId);
+      setResources(await fetchLearningResources(courseId, topicId));
       setLabelling({ running: false, error: "" });
     } catch (err) {
       setLabelling({ running: false, error: err.message });
@@ -2458,28 +2456,22 @@ function LearningObjectConnections({
     });
     try {
       const data = await reviewQuestionPairing(
-        courseId,
         topicId,
         question.id,
         decision,
         learningObjectGroupId,
       );
+      const latest = await fetchLearningResources(courseId, topicId);
       console.info("Response", {
         request_ms: Math.round((performance.now() - startedAt) * 10) / 10,
-        server: data.debug,
-        remaining_question_reviews: (data.question_pairings || []).filter((item) => {
+        outcome: data.outcome,
+        remaining_question_reviews: (latest.question_pairings || []).filter((item) => {
           const status = item.learning_object_links?.[0]?.review_status;
           return !status || status === "pending_review" || status === "unmatched";
         }).length,
       });
-      setResources(data);
-      if (decision === "confirm") {
-        onMessage("Question paired with the suggested concept.");
-      } else if (decision === "change") {
-        onMessage("Question moved to the selected concept.");
-      } else {
-        onMessage("Question left unpaired for the learning-path module.");
-      }
+      setResources(latest);
+      onMessage(data.outcome.message);
       return true;
     } catch (err) {
       console.error("Review failed", {
@@ -2499,9 +2491,9 @@ function LearningObjectConnections({
     onError("");
     onMessage("");
     try {
-      const data = await updateTopicQuestion(courseId, topicId, question.id, values);
-      setResources(data.resources);
-      onMessage("Question updated and LOTS/HOTS classification refreshed.");
+      const data = await updateTopicQuestion(topicId, question.id, values);
+      setResources(await fetchLearningResources(courseId, topicId));
+      onMessage(data.outcome.message);
       return true;
     } catch (err) {
       onError(err.message);
@@ -2517,7 +2509,8 @@ function LearningObjectConnections({
     onError("");
     onMessage("");
     try {
-      setResources(await deleteTopicQuestion(courseId, topicId, question.id));
+      await deleteTopicQuestion(topicId, question.id);
+      setResources(await fetchLearningResources(courseId, topicId));
       onMessage("Question deleted.");
       return true;
     } catch (err) {

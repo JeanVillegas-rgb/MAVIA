@@ -236,10 +236,10 @@ TIERS = ("LOT", "HOT")
 def counts_toward_minimum(question: Question, link: QuestionLearningObjectLink) -> bool:
     """Whether ``question``, paired to a concept by ``link``, fills its minimum.
 
-    A generated question counts once paired. A teacher's own question counts
-    once the teacher pairs it. A printed one counts only after the teacher has
-    both edited it and confirmed its pairing: it arrives as extraction left it,
-    and the matcher's confidence is not the teacher's.
+    A generated question and a teacher's own question count once paired. A
+    printed one counts only after the teacher has both edited it and confirmed
+    its pairing: it arrives as extraction left it, and the matcher's confidence
+    is not the teacher's.
     """
     if (
         question.thinking_order not in TIERS
@@ -248,14 +248,15 @@ def counts_toward_minimum(question: Question, link: QuestionLearningObjectLink) 
     ):
         return False
     status = link.review_status
-    if question.source_type == Question.SourceType.GENERATED:
+    if question.source_type in (Question.SourceType.GENERATED, Question.SourceType.MANUAL):
         return status in (
             QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
             QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
         )
-    if status != QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED:
-        return False
-    return question.source_type == Question.SourceType.MANUAL or question.teacher_edited
+    return (
+        status == QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED
+        and question.teacher_edited
+    )
 
 
 def concept_tier_counts(learning_object) -> dict:

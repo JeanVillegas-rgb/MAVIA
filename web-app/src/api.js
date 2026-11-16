@@ -196,15 +196,15 @@ export function deleteLearningObject(courseId, materialId, objectId) {
 
 // Labels (Bloom level, LOTS/HOTS, category) the printed questions in a topic
 // that upload stored without them. Run when the Questions step opens.
-export function labelTopicQuestions(courseId, nodeId) {
-  return request(`/courses/${courseId}/outline-nodes/${nodeId}/label-questions/`, { method: "POST" });
+export function labelTopicQuestions(nodeId) {
+  return request(`/generation/topics/${nodeId}/questions/label/`, { method: "POST" });
 }
 
 // "Keep as is" for a concept whose text changed after its questions were
 // written: the questions stay; only the check moves forward.
-export function keepQuestionBank(courseId, nodeId, groupId) {
+export function keepQuestionBank(nodeId, groupId) {
   return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/concepts/${groupId}/keep-questions/`,
+    `/generation/topics/${nodeId}/concepts/${groupId}/keep-questions/`,
     { method: "POST" }
   );
 }
@@ -244,14 +244,13 @@ export function finalizeTopicSources(courseId, nodeId) {
 }
 
 export function reviewQuestionPairing(
-  courseId,
   nodeId,
   questionId,
   decision,
   learningObjectGroupId = null
 ) {
   return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/questions/${questionId}/pairing/`,
+    `/generation/topics/${nodeId}/questions/${questionId}/pairing/`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -265,17 +264,17 @@ export function reviewQuestionPairing(
   );
 }
 
-export function createTopicQuestion(courseId, nodeId, data) {
-  return request(`/courses/${courseId}/outline-nodes/${nodeId}/questions/`, {
+export function createTopicQuestion(nodeId, data) {
+  return request(`/generation/topics/${nodeId}/questions/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
 }
 
-export function deleteTopicQuestion(courseId, nodeId, questionId) {
+export function deleteTopicQuestion(nodeId, questionId) {
   return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/questions/${questionId}/`,
+    `/generation/topics/${nodeId}/questions/${questionId}/`,
     { method: "DELETE" }
   );
 }
@@ -471,9 +470,9 @@ export function startTopicQuestionGeneration(topicId) {
   });
 }
 
-export function updateTopicQuestion(courseId, nodeId, questionId, data) {
+export function updateTopicQuestion(nodeId, questionId, data) {
   return request(
-    `/courses/${courseId}/outline-nodes/${nodeId}/questions/${questionId}/`,
+    `/generation/topics/${nodeId}/questions/${questionId}/`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
