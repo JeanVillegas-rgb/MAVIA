@@ -1,4 +1,4 @@
-"""Checks each draft question against the concept it was written from, with an LLM checker."""
+"""The LLM checker for questions, and the topic's concepts as searchable passages."""
 
 import json
 import logging
@@ -60,9 +60,8 @@ class TopicIndex:
     def searchable(self):
         return bool(self.vectors) and bool(self.chunks)
 
-    def search(self, query, k=None):
-        """Top-k concepts by cosine, highest first; empty when unsearchable."""
-        k = k or int(getattr(settings, "QUESTION_VALIDATION_TOP_K", 3))
+    def rank(self, query):
+        """Every concept by cosine to the query, highest first; empty when unsearchable."""
         if not self.searchable:
             return []
         from lessons.services.embedding_service import sentence_embedding_runtime
@@ -79,7 +78,7 @@ class TopicIndex:
                 best[owner] = score
         scored = [(score, self.chunks[owner]) for owner, score in best.items()]
         scored.sort(key=lambda row: -row[0])
-        return scored[:k]
+        return scored
 
 
 def build_index(outline_node):
@@ -97,6 +96,7 @@ def build_index(outline_node):
     chunks = [
         {
             "concept": concept_name(item),
+            "object_id": item.id,
             "material_id": item.material_id,
             "material_title": item.material.title,
             "text": text,

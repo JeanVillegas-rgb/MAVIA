@@ -367,9 +367,6 @@ QUESTION_OVERGENERATION_FACTOR = float(
 QUESTION_VALIDATION_ENABLED = os.getenv(
     "QUESTION_VALIDATION_ENABLED", "True"
 ).lower() in {"1", "true", "yes"}
-# Passages retrieved per draft. Three is enough to carry the one sentence a
-# question turns on plus its neighbours; more mostly dilutes the judge prompt.
-QUESTION_VALIDATION_TOP_K = int(os.getenv("QUESTION_VALIDATION_TOP_K", "3"))
 # Corrective passes after the first. Each one is a full set of LLM calls, so
 # this trades run time for bank completeness; the loop stops early once the
 # quota is met.
