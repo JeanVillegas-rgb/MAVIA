@@ -197,7 +197,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         "nodes",
         "outlines",
         "materials__learning_objects",
-        "materials__questions",
+        "materials__questions__question_bank_rows",
     ).all()
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
@@ -1320,7 +1320,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             course.materials.filter(module_node=module)
             .prefetch_related(
                 "learning_objects",
-                "questions",
+                "questions__question_bank_rows",
             )
             .order_by("-created_at")
         )

@@ -313,8 +313,6 @@ def _sync_extracted_question_to_bank(question: ExtractedQuestion):
 @transaction.atomic
 def synchronize_detected_questions(material, classified_blocks):
     """Synchronize extracted PDF questions and their unlabelled bank mirrors."""
-    from question_generation.models import Question as BankQuestion
-
     existing = {
         question_fingerprint(question.prompt): question
         for question in material.questions.all()
@@ -341,8 +339,4 @@ def synchronize_detected_questions(material, classified_blocks):
             question.save(update_fields=[*payload, "order"])
         _sync_extracted_question_to_bank(question)
         retained_ids.append(question.id)
-    dropped = material.questions.exclude(id__in=retained_ids)
-    BankQuestion.objects.filter(
-        extracted_question__in=dropped, teacher_edited=False, paired_by="",
-    ).delete()
-    dropped.delete()
+    material.questions.exclude(id__in=retained_ids).delete()

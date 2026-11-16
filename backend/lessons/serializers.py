@@ -159,6 +159,9 @@ class LearningObjectSerializer(serializers.ModelSerializer):
 
 
 class ExtractedQuestionSerializer(serializers.ModelSerializer):
+    in_bank = serializers.SerializerMethodField()
+    teacher_reviewed = serializers.SerializerMethodField()
+
     class Meta:
         model = ExtractedQuestion
         fields = [
@@ -172,7 +175,18 @@ class ExtractedQuestionSerializer(serializers.ModelSerializer):
             "source_page",
             "source_block_id",
             "source_excerpt",
+            "in_bank",
+            "teacher_reviewed",
         ]
+
+    def get_in_bank(self, obj):
+        return bool(obj.question_bank_rows.all())
+
+    def get_teacher_reviewed(self, obj):
+        return any(
+            row.teacher_edited or row.paired_by == "teacher"
+            for row in obj.question_bank_rows.all()
+        )
 
 
 class LearningObjectMutationSerializer(serializers.ModelSerializer):

@@ -3190,6 +3190,8 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
   const [learningObjectToDelete, setLearningObjectToDelete] = useState(null);
 
   const generatedJson = material.generated_json || {};
+  const printedInBank = (material.questions || []).filter((question) => question.in_bank).length;
+  const printedReviewed = (material.questions || []).filter((question) => question.teacher_reviewed).length;
   const isAssessmentDocument = isQuestionMaterial(material);
   const learningObjectsConfirmed = Boolean(generatedJson.learning_objects_confirmed);
   const lessonPlaylist = generatedJson.lesson_playlist || [];
@@ -3746,6 +3748,17 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
               The uploaded PDF, extracted content, learning objects, and generated audio will be
               permanently removed.
             </p>
+            {printedInBank > 0 && (
+              <p>
+                <strong>
+                  {printedInBank} question{printedInBank === 1 ? "" : "s"} printed in this PDF will
+                  also be deleted
+                </strong>
+                {printedReviewed > 0
+                  ? `, including ${printedReviewed} you edited or paired to a concept.`
+                  : "."}
+              </p>
+            )}
             <div className="modal-actions">
               <button
                 type="button"

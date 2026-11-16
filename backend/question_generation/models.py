@@ -104,14 +104,14 @@ class Question(models.Model):
         null=True,
         blank=True,
         related_name="question_bank_rows",
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
     )
     question_file = models.ForeignKey(
         QuestionFile,
         null=True,
         blank=True,
         related_name="questions",
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
     )
     paired_by = models.CharField(
         max_length=10,
@@ -154,6 +154,26 @@ class Question(models.Model):
                     & ~models.Q(thinking_order="")
                 ),
                 name="final_question_is_complete",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        source="lesson_pdf",
+                        extracted_question__isnull=False,
+                        question_file__isnull=True,
+                    )
+                    | models.Q(
+                        source="questionnaire",
+                        question_file__isnull=False,
+                        extracted_question__isnull=True,
+                    )
+                    | models.Q(
+                        source__in=["generated", "manual"],
+                        extracted_question__isnull=True,
+                        question_file__isnull=True,
+                    )
+                ),
+                name="source_matches_origin",
             ),
             models.UniqueConstraint(
                 fields=["outline_node", "content_fingerprint"],
