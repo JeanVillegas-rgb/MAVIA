@@ -145,6 +145,22 @@ class Question(models.Model):
             models.Index(fields=["node", "status"]),
             models.Index(fields=["outline_node", "status"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(status="final") | (
+                    models.Q(node__isnull=False)
+                    & ~models.Q(paired_by="")
+                    & ~models.Q(question_format="")
+                    & ~models.Q(thinking_order="")
+                ),
+                name="final_question_is_complete",
+            ),
+            models.UniqueConstraint(
+                fields=["outline_node", "content_fingerprint"],
+                condition=~models.Q(status="draft") & ~models.Q(content_fingerprint=""),
+                name="one_question_text_per_topic",
+            ),
+        ]
 
     def __str__(self):
         return f"[{self.thinking_order or 'unclassified'}] {self.question_text[:50]}"

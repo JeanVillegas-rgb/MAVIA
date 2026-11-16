@@ -277,30 +277,37 @@ def detected_question_payloads(classified_blocks):
 
 
 def _sync_extracted_question_to_bank(question: ExtractedQuestion):
-    """Mirror one PDF extraction into the question bank without labelling or pairing it."""
+    """Mirror one PDF extraction into the question bank, unless the topic already has the same question."""
     from question_generation.models import Question as BankQuestion
     from question_generation.services.question_bank import bank_values
 
+    fingerprint = question_fingerprint(question.prompt)
     content = {
         "question_text": question.prompt,
         **bank_values(question.question_type, question.choices, question.correct_answer),
-        "content_fingerprint": question_fingerprint(question.prompt),
+        "content_fingerprint": fingerprint,
     }
-    bank_question, created = BankQuestion.objects.get_or_create(
-        extracted_question=question,
-        defaults={
-            "outline_node": question.material.outline_node,
-            "status": "review",
-            "source": "lesson_pdf",
+    own = BankQuestion.objects.filter(extracted_question=question).first()
+    same_text = BankQuestion.objects.filter(
+        outline_node=question.material.outline_node, content_fingerprint=fingerprint,
+    ).exclude(status="draft")
+    if own is not None:
+        same_text = same_text.exclude(pk=own.pk)
+    if same_text.exists():
+        return own
+    if own is None:
+        return BankQuestion.objects.create(
+            extracted_question=question,
+            outline_node=question.material.outline_node,
+            status="review",
+            source="lesson_pdf",
             **content,
-        },
-    )
-    untouched = not (bank_question.teacher_edited or bank_question.paired_by)
-    if not created and untouched:
+        )
+    if not (own.teacher_edited or own.paired_by):
         for field, value in content.items():
-            setattr(bank_question, field, value)
-        bank_question.save(update_fields=list(content))
-    return bank_question
+            setattr(own, field, value)
+        own.save(update_fields=list(content))
+    return own
 
 
 @transaction.atomic

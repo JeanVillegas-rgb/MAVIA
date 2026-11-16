@@ -1,5 +1,4 @@
 import logging
-import re
 import sys
 import textwrap
 from collections import Counter
@@ -87,13 +86,6 @@ def _emit(on_event, event_type, message, **data):
     """Send a trace event to on_event, if one was given."""
     if on_event:
         on_event(event_type, message, data or None)
-
-
-def _dedup_key(question_text):
-    """Lowercased, punctuation-free text used to spot duplicate questions."""
-    text = (question_text or "").lower()
-    text = re.sub(r"[^a-z0-9\s]", "", text)
-    return re.sub(r"\s+", " ", text).strip()
 
 
 def _print_node_summary(node, kept, rejected):
@@ -407,19 +399,17 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
     counts = Counter()
     seen = set()
     duplicates = excluded_create = trimmed = 0
+    from lessons.services.question_workflow import question_fingerprint
     from .question_bank import topic_questions
 
-    taken = ~Q(source="generated")
-    if append:
-        taken |= Q(node=node, status="final")
-    seen.update(
-        _dedup_key(text)
-        for text in topic_questions(node.material.outline_node)
-        .filter(taken).values_list("question_text", flat=True)
-    )
+    taken = topic_questions(node.material.outline_node)
+    if not append:
+        same_concept = Q(node__group_id=node.group_id) if node.group_id else Q(node=node)
+        taken = taken.exclude(same_concept & Q(source="generated", teacher_edited=False))
+    seen.update(question_fingerprint(text) for text in taken.values_list("question_text", flat=True))
 
     for draft in drafts:
-        key = _dedup_key(draft.question_text)
+        key = question_fingerprint(draft.question_text)
         if key in seen:
             duplicates += 1
             reject_ids.append(draft.id)
@@ -491,7 +481,6 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
             GeneratedQuestion.objects.filter(id__in=reject_ids).delete()
         from .bank_status import text_fingerprint
         source_stamp = text_fingerprint(concept_source_text(node))
-        from lessons.services.question_workflow import question_fingerprint
         for question in keep:
             question.source_text_fingerprint = source_stamp
             question.content_fingerprint = question_fingerprint(question.question_text)
