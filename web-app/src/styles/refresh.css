@@ -793,7 +793,7 @@ body {
 
 /* The fixing buttons in Needs review and the bank sit under every question,
    so they are kept slim. */
-.question-review-card .btn-small,
+.question-concern-card .btn-small,
 .question-bank-item .btn-small {
   padding: 0.32rem 0.85rem;
   font-size: 0.84rem;
@@ -833,7 +833,7 @@ body {
 
 /* A Needs review card: where the question came from, the question with its
    level on the right, then what the teacher has to act on. */
-.question-review-card {
+.question-concern-card {
   gap: 0.6rem;
 }
 

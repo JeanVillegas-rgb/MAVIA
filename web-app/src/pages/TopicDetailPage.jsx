@@ -1477,7 +1477,7 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
 
   if (held) {
     return (
-      <article className="question-learning-object-card question-review-card" id={`bank-question-${question.id}`}>
+      <article className="question-learning-object-card question-concern-card" id={`bank-question-${question.id}`}>
         <div className="question-review-head">
           <small className="question-review-from">
             <b>FROM:</b> {SOURCE_NAMES[source] || "Typed"}{question.source_file ? ` (${question.source_file})` : ""}
