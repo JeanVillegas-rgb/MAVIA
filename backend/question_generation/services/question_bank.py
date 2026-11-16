@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 TIERS = ("LOT", "HOT")
 FAILED_CHECKS = ("contradicted", "unsupported")
+NOT_CHECKED = "The answer could not be checked right now. Edit and save the question again to retry."
+NO_CONCEPT = "No concept's text supports this answer. Choose a concept or revise the question."
 CONFIRMED_OBJECTS = {"material__generated_json__learning_objects_confirmed": True}
 
 TYPE_OF_FORMAT = {
@@ -63,15 +65,29 @@ def structure_issues(question):
     return validation_issues(**screen_values(question))
 
 
-def settle(question, issues=()):
-    """Record what is wrong with the question and set its status by the one rule for final."""
-    question.validation_issues = list(issues)
+def issues(question):
+    """What keeps the question from being final, worked out from the question itself."""
+    missing = structure_issues(question)
+    if missing:
+        return missing
+    if question.check_result in FAILED_CHECKS and question.node_id:
+        from .pipeline import concept_name
+
+        return [f'"{concept_name(question.node)}" does not support this answer: {question.check_note}']
+    if question.check_result == "unsupported":
+        return [NO_CONCEPT]
+    if question.check_result == "unverified" and question.source != "generated":
+        return [NOT_CHECKED]
+    return []
+
+
+def settle(question):
+    """Set the question's status by the one rule for final, then save it."""
     ready = (
         question.node_id
         and question.paired_by
-        and not question.validation_issues
-        and question.check_result not in FAILED_CHECKS
         and question.thinking_order in TIERS
+        and not issues(question)
     )
     question.status = "final" if ready else "review"
     question.content_fingerprint = question_fingerprint(question.question_text)
@@ -146,6 +162,7 @@ def _pairing(question):
 def screen_row(question):
     """One bank question as the Questions screen reads it."""
     pairing = _pairing(question)
+    problems = issues(question)
     return {
         "id": question.id,
         "outline_node_id": question.outline_node_id,
@@ -156,8 +173,8 @@ def screen_row(question):
         "thinking_order": question.thinking_order,
         "category": question.category,
         "status": question.status,
-        "validation_status": "needs_review" if question.validation_issues else "ready",
-        "validation_issues": question.validation_issues,
+        "validation_status": "needs_review" if problems else "ready",
+        "validation_issues": problems,
         "check_result": question.check_result,
         "check_note": question.check_note,
         "pairing_status": pairing[0]["review_status"] if pairing else "unmatched",

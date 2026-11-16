@@ -137,7 +137,6 @@ class Question(models.Model):
     )
     check_note = models.TextField(blank=True, default="")
     teacher_edited = models.BooleanField(default=False)
-    validation_issues = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

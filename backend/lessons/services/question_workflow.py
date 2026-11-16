@@ -128,14 +128,13 @@ def validation_issues(question_type: str, choices, correct_answer: str) -> list[
 
 def duplicate_in_topic(material, fingerprint: str):
     """The same question already extracted from another PDF of the topic, if any."""
-    return (
-        ExtractedQuestion.objects.filter(
-            material__course_id=material.course_id,
-            material__outline_node_id=material.outline_node_id,
-            content_fingerprint=fingerprint,
-        )
-        .order_by("id")
-        .first()
+    topic_questions = ExtractedQuestion.objects.filter(
+        material__course_id=material.course_id,
+        material__outline_node_id=material.outline_node_id,
+    ).order_by("id")
+    return next(
+        (question for question in topic_questions if question_fingerprint(question.prompt) == fingerprint),
+        None,
     )
 
 
@@ -270,7 +269,6 @@ def detected_question_payloads(classified_blocks):
             seen.add(fingerprint)
             payloads.append({
                 **values,
-                "content_fingerprint": fingerprint,
                 "source_page": block.get("page"),
                 "source_block_id": block.get("block_id"),
                 "source_excerpt": excerpt,
@@ -286,10 +284,7 @@ def _sync_extracted_question_to_bank(question: ExtractedQuestion):
     content = {
         "question_text": question.prompt,
         **bank_values(question.question_type, question.choices, question.correct_answer),
-        "content_fingerprint": question.content_fingerprint,
-        "validation_issues": validation_issues(
-            question.question_type, question.choices, question.correct_answer,
-        ),
+        "content_fingerprint": question_fingerprint(question.prompt),
     }
     bank_question, created = BankQuestion.objects.get_or_create(
         extracted_question=question,
@@ -314,7 +309,7 @@ def synchronize_detected_questions(material, classified_blocks):
     from question_generation.models import Question as BankQuestion
 
     existing = {
-        question.content_fingerprint or question_fingerprint(question.prompt): question
+        question_fingerprint(question.prompt): question
         for question in material.questions.all()
     }
     retained_ids = []
@@ -326,7 +321,7 @@ def synchronize_detected_questions(material, classified_blocks):
             len(payloads),
         )
     for order, payload in enumerate(payloads):
-        key = payload["content_fingerprint"]
+        key = question_fingerprint(payload["prompt"])
         question = existing.get(key) or duplicate_in_topic(material, key)
         if question is None:
             question = ExtractedQuestion.objects.create(material=material, order=order, **payload)

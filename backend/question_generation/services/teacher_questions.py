@@ -13,6 +13,7 @@ from .question_bank import (
     CONFIRMED_OBJECTS,
     bank_values,
     duplicate_in_topic,
+    issues,
     screen_values,
     settle,
     structure_issues,
@@ -22,9 +23,6 @@ from .question_bank import (
 logger = logging.getLogger(__name__)
 
 SUPPORTED_TYPES = (ExtractedQuestion.Type.TRUE_FALSE, ExtractedQuestion.Type.MULTIPLE_CHOICE)
-
-NOT_CHECKED = "The answer could not be checked right now. Edit and save the question again to retry."
-NO_CONCEPT = "No concept's text supports this answer. Choose a concept or revise the question."
 
 
 class QuestionError(ValueError):
@@ -66,9 +64,9 @@ def _form_values(data, question=None):
     else:
         choices = [str(choice).strip() for choice in choices if str(choice).strip()]
 
-    issues = validation_issues(question_type, choices, answer)
-    if issues:
-        raise QuestionError(" ".join(issues), validation_issues=issues)
+    missing = validation_issues(question_type, choices, answer)
+    if missing:
+        raise QuestionError(" ".join(missing), validation_issues=missing)
     return {"question_text": prompt, **bank_values(question_type, choices, answer)}
 
 
@@ -97,11 +95,11 @@ def _members(group):
     )
 
 
-def _place(object_id, paired_by, concept="", check_result="", check_note="", issue=""):
+def _place(object_id, paired_by, concept="", check_result="", check_note=""):
     """Where a question goes and what the answer check found there."""
     return {
         "object_id": object_id, "paired_by": paired_by, "concept": concept,
-        "check_result": check_result, "check_note": check_note, "issue": issue,
+        "check_result": check_result, "check_note": check_note,
     }
 
 
@@ -115,15 +113,7 @@ def _teacher_place(question, target, members, check=True):
     if not check:
         return _place(target.id, "teacher", concept)
     result = verify(question, {"concept": concept, "text": concept_source_text(lead)})
-    verdict, reason = result["verdict"], result["reason"]
-    if verdict == "supported":
-        return _place(target.id, "teacher", concept, verdict)
-    if verdict == "unverified":
-        return _place(target.id, "teacher", concept, verdict, reason, NOT_CHECKED)
-    return _place(
-        target.id, "teacher", concept, verdict, reason,
-        f'"{concept}" does not support this answer: {reason}',
-    )
+    return _place(target.id, "teacher", concept, result["verdict"], result["reason"])
 
 
 def _chosen_place(question, group, check=True):
@@ -150,41 +140,33 @@ def _found_place(question, index):
         return _place(chunk["object_id"], "auto", concept, "supported")
     if result["status"] == KEY_CONFLICT:
         supported = result["supported_answer"]
-        return _place(
-            chunk["object_id"], "", concept, "contradicted", supported,
-            f'"{concept}" supports a different answer' + (f": {supported}" if supported else "."),
-        )
+        note = f"the text supports {supported}" if supported else "the text gives a different answer"
+        return _place(chunk["object_id"], "", concept, "contradicted", note)
     if result["status"] == UNVERIFIED:
-        return _place(None, "", check_result="unverified", issue=NOT_CHECKED)
-    return _place(None, "", check_result="unsupported", issue=NO_CONCEPT)
+        return _place(None, "", check_result="unverified")
+    return _place(None, "", check_result="unsupported")
 
 
-def _apply(question, place, broken=()):
+def _apply(question, place):
     """Give the question its concept and the result of the check, then settle whether it is final."""
     place = place or _place(None, "")
     question.node_id = place["object_id"]
     question.paired_by = place["paired_by"]
     question.check_result = place["check_result"]
     question.check_note = place["check_note"]
-    settle(question, list(broken) or ([place["issue"]] if place["issue"] else []))
+    settle(question)
 
 
-def _outcome(place, verb, broken=()):
+def _outcome(question, place, verb):
     """What happened to the question, in a sentence for the teacher."""
-    if broken:
-        return {
-            "status": "held",
-            "message": f"Question {verb}, but it still needs details. {' '.join(broken)}",
-        }
+    problems = " ".join(issues(question))
+    if structure_issues(question):
+        return {"status": "held", "message": f"Question {verb}, but it still needs details. {problems}"}
     if place is None:
         return {"status": "unpaired", "message": f"Question {verb} with no concept assigned."}
-    if not place["issue"]:
-        concept = f'"{place["concept"]}"'
-        return {"status": "paired", "message": f"Question {verb} and paired with {concept}."}
-    return {
-        "status": "held",
-        "message": f"Question {verb} but held for review. {place['issue']}",
-    }
+    if problems:
+        return {"status": "held", "message": f"Question {verb} but held for review. {problems}"}
+    return {"status": "paired", "message": f'Question {verb} and paired with "{place["concept"]}".'}
 
 
 def _refuse_duplicate(node, question):
@@ -206,7 +188,7 @@ def add_question(node, data):
     group = _chosen_group(node, data)
     place = _chosen_place(question, group) if group else _found_place(question, build_index(node))
     _apply(question, place)
-    return question, _outcome(place, "added")
+    return question, _outcome(question, place, "added")
 
 
 def edit_question(node, question_id, data):
@@ -227,7 +209,7 @@ def edit_question(node, question_id, data):
     if question.source != "manual":
         question.teacher_edited = True
     _apply(question, place)
-    return question, _outcome(place, "updated")
+    return question, _outcome(question, place, "updated")
 
 
 def review_pairing(node, question_id, data):
@@ -248,11 +230,11 @@ def review_pairing(node, question_id, data):
     elif decision == "confirm":
         place, verb = _confirmed_place(question, check=not broken), "confirmed"
     else:
-        _apply(question, _place(None, "teacher"), broken)
+        _apply(question, _place(None, "teacher"))
         return question, {"status": "unpaired", "message": "Question left unpaired."}
 
-    _apply(question, place, broken)
-    return question, _outcome(place, verb, broken)
+    _apply(question, place)
+    return question, _outcome(question, place, verb)
 
 
 def delete_question(node, question_id):
@@ -271,7 +253,7 @@ def label_printed(node):
         question.outline_node = node
         broken = structure_issues(question)
         if broken or question.node_id or question.paired_by:
-            settle(question, broken)
+            settle(question)
         else:
             _apply(question, _found_place(question, index))
     if pending:

@@ -367,7 +367,6 @@ class ExtractedQuestion(models.Model):
         on_delete=models.CASCADE,
     )
     prompt = models.TextField()
-    content_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
     question_type = models.CharField(
         max_length=30,
         choices=Type.choices,
