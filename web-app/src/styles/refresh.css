@@ -12,95 +12,6 @@
    races to rules buried in pipeline.css, so the markup now has two wrapper
    columns and this only has to lay out two boxes. Nothing left to lose to.
    -------------------------------------------------------------------------- */
-/* This panel is itself a grid item of the outer .connection-review-layout, so
-   it was being sized by THAT grid while its own children were being placed by
-   rules from pipeline.css. Three passes of grid-column tinkering lost to that
-   every time.
-   Two things make it immune rather than merely louder:
-     - it spans the full outer row, whatever that grid's column count is;
-     - it lays its own children out with FLEX, which ignores stray
-       `grid-column` declarations entirely. There is nothing left to inherit
-       a placement from. */
-.match-suggestion-panel.panel-aside.question-tools-panel {
-  grid-column: 1 / -1 !important;
-  width: 100% !important;
-  max-width: none !important;
-  display: flex !important;
-  flex-direction: row !important;
-  /* Stretch, not flex-start: the two columns are halves of one job, and a
-     short bank beside a tall form read as one finished panel and one that had
-     been cut off. The bank's list takes up the slack rather than the card
-     ending early. */
-  align-items: stretch;
-  gap: 2rem;
-  /* pipeline.css forced `overflow-y: auto !important` on this whole panel,
-     which is where the unwanted scrollbar came from. The panel is not the
-     long thing; the bank inside it is. */
-  overflow: visible !important;
-}
-
-.question-tools-panel > .qt-col--bank {
-  flex: 1 1 54%;
-}
-.question-tools-panel > .qt-col--tools {
-  flex: 1 1 46%;
-}
-
-/* Each column is its own panel with its own surface, so the two jobs read as
-   two places rather than one long strip. The outer panel stops being a card
-   and becomes the tinted ground they sit on. */
-.qt-col {
-  display: grid;
-  gap: 1rem;
-  align-content: start;
-  min-width: 0;
-  background: var(--mv-surface);
-  border-radius: var(--mv-radius);
-  padding: 1.5rem;
-}
-
-.match-suggestion-panel.panel-aside.question-tools-panel {
-  background: var(--mv-panel);
-}
-
-/* The bank is the long half, so it is the part that scrolls -- but it scrolls
-   to FILL its column rather than to a fixed height. A 46vh cap made the card
-   end wherever that landed, which is what left it shorter than the form
-   beside it. */
-.qt-col--bank {
-  display: flex;
-  flex-direction: column;
-}
-.qt-col--bank .saved-question-sidebar {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.qt-col--bank .saved-question-list {
-  flex: 1;
-  min-height: 12rem;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 0.35rem;
-}
-
-/* The divider said "add questions" under the bank, which only made sense when
-   the two were stacked. Side by side, each column has its own heading. */
-.question-source-divider {
-  display: none;
-}
-
-@media (max-width: 1100px) {
-  .match-suggestion-panel.panel-aside.question-tools-panel {
-    flex-direction: column !important;
-    gap: 1.5rem;
-  }
-  .question-tools-panel > .qt-col--bank,
-  .question-tools-panel > .qt-col--tools {
-    flex: 1 1 auto;
-  }
-}
 
 /* --------------------------------------------------------------------------
    Scrollbars.
@@ -109,8 +20,7 @@
    capsule that only darkens under the pointer.
    -------------------------------------------------------------------------- */
 .mv-root *,
-.connection-review-panel,
-.saved-question-list {
+.connection-review-panel {
   scrollbar-width: thin;
   scrollbar-color: var(--mv-border-strong) transparent;
 }
@@ -469,26 +379,12 @@ body {
   height: 100%;
 }
 
-.app-shell:has(.dag-workspace) {
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.dag-workspace {
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
 /* --- The two graph screens ------------------------------------------------
    `.pg-canvas` was a fixed `70vh`, so the header above it plus the shell's own
    4rem bottom padding always added up to more than one window: every visit to
    a learning path began with a scrollbar and ended in empty ground. The canvas
    now takes whatever height is left over instead of naming its own. */
-.app-shell:has(.learning-path-page),
-.app-shell:has(.cp-layout) {
+.app-shell:has(.learning-path-page) {
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -498,35 +394,9 @@ body {
   padding: 1.25rem 0;
 }
 
-/* The heading card keeps its height; only the graph below it flexes. */
-.app-shell:has(.cp-layout) > .card {
-  flex: 0 0 auto;
-}
-
 .app-shell > .learning-path-page {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.app-shell > .cp-layout {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin-top: 0;
-}
-
-.app-shell > .cp-layout > .pg-canvas {
-  height: 100%;
-  min-height: 0;
-}
-
-/* The arrow panel is a column beside a full-height canvas, so it scrolls in
-   place rather than stretching the row to the length of its link list. */
-.cp-layout > .cp-panel {
-  align-self: stretch;
-  min-height: 0;
-  max-height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -542,17 +412,13 @@ body {
 /* One scrollbar treatment for the new scrollers, matching the panels that
    already had it. */
 #root::-webkit-scrollbar,
-.dag-workspace::-webkit-scrollbar,
-.app-shell > .learning-path-page::-webkit-scrollbar,
-.cp-layout > .cp-panel::-webkit-scrollbar {
+.app-shell > .learning-path-page::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 #root::-webkit-scrollbar-thumb,
-.dag-workspace::-webkit-scrollbar-thumb,
-.app-shell > .learning-path-page::-webkit-scrollbar-thumb,
-.cp-layout > .cp-panel::-webkit-scrollbar-thumb {
+.app-shell > .learning-path-page::-webkit-scrollbar-thumb {
   background: rgba(20, 24, 31, 0.18);
   border-radius: 999px;
   border: 3px solid transparent;
@@ -560,9 +426,7 @@ body {
 }
 
 #root::-webkit-scrollbar-track,
-.dag-workspace::-webkit-scrollbar-track,
-.app-shell > .learning-path-page::-webkit-scrollbar-track,
-.cp-layout > .cp-panel::-webkit-scrollbar-track {
+.app-shell > .learning-path-page::-webkit-scrollbar-track {
   background: transparent;
 }
 
@@ -696,16 +560,6 @@ body {
 .question-mode-tabs > button[aria-selected="true"] {
   color: var(--mv-brand-600);
   border-bottom-color: var(--mv-brand-600);
-}
-
-/* A labelled question the learner quiz has no tier for. Plain text with a
-   dotted underline, so it reads as something to hover for the reason. */
-.question-not-served {
-  color: var(--mv-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-decoration: underline dotted;
-  cursor: help;
 }
 
 /* LOTS/HOTS counters on each concept in the Questions step. */

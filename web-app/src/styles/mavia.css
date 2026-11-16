@@ -82,13 +82,6 @@
   box-sizing: border-box;
 }
 
-/* ---------- Typography helpers ---------- */
-.mv-display {
-  font-family: var(--mv-font-display);
-  font-weight: 800;
-  line-height: 1.04;
-  letter-spacing: -0.035em;
-}
 .mv-eyebrow {
   font-size: 0.72rem;
   font-weight: 700;
@@ -429,41 +422,6 @@
   gap: 0.9rem;
 }
 
-.mv-role-picker {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.7rem;
-}
-.mv-role-opt {
-  border: 1px solid var(--mv-border-strong);
-  border-radius: var(--mv-radius-sm);
-  padding: 0.8rem;
-  text-align: center;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--mv-muted);
-  transition: all 0.12s ease;
-}
-.mv-role-opt input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-.mv-role-opt:has(input:checked) {
-  border-color: var(--mv-brand-500);
-  background: var(--mv-brand-50);
-  color: var(--mv-brand-800);
-  box-shadow: 0 0 0 3px var(--mv-brand-100);
-}
-.mv-role-opt small {
-  display: block;
-  font-weight: 400;
-  font-size: 0.75rem;
-  margin-top: 0.15rem;
-  color: var(--mv-faint);
-}
-
 .mv-alert {
   padding: 0.7rem 0.9rem;
   border-radius: var(--mv-radius-sm);
@@ -603,18 +561,6 @@
   font-weight: 600;
   font-size: clamp(1.5rem, 3vw, 2rem);
   color: var(--mv-ink);
-}
-.mv-dropzone {
-  margin-top: 1.25rem;
-  border: 2px dashed var(--mv-border-strong);
-  border-radius: var(--mv-radius);
-  padding: 2.25rem 1.5rem;
-  text-align: center;
-  color: var(--mv-muted);
-  background: var(--mv-panel);
-}
-.mv-dropzone strong {
-  color: var(--mv-brand-700);
 }
 
 /* Stat tiles */
