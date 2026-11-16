@@ -365,9 +365,8 @@ function ReviewQueuePanel({
     <section className="connection-review-panel" aria-labelledby="match-suggestion-title">
       <div className="connection-review-heading">
         <div>
-          <span className="connection-eyebrow">Question generation</span>
-          <h3 id="match-suggestion-title">Generate and review questions</h3>
-          <p>Generate questions from the confirmed lesson content or add your own, then check and fix them in the question bank.</p>
+          <span className="connection-eyebrow">Question pairs</span>
+          <h3 id="match-suggestion-title">Questions for this topic</h3>
         </div>
         <span className="connection-source-count">{questionPairings.length} question{questionPairings.length === 1 ? "" : "s"}</span>
       </div>
@@ -1434,24 +1433,6 @@ function questionGroupId(question) {
   return question.learning_object_links?.[0]?.learning_object_group_id ?? null;
 }
 
-// Why a question is not given to learners, in the teacher's words. The server
-// works out what is missing or what the answer check found; this adds the
-// cases that are a state rather than a problem.
-function heldReasons(question, suggested) {
-  const pairing = question.learning_object_links?.[0]?.review_status;
-  const reasons = [...(question.validation_issues || [])];
-  if (pairing === "teacher_unpaired") {
-    reasons.push("You left this question without a concept, so learners do not get it.");
-  } else if (question.bloom_level && !question.thinking_order) {
-    reasons.push(NOT_SERVED_TIP);
-  } else if (!reasons.length && suggested) {
-    reasons.push(`Suggested concept: ${conceptTitle(suggested)}. Confirm it or choose another.`);
-  } else if (!reasons.length) {
-    reasons.push("No concept yet. Choose one so learners can get this question.");
-  }
-  return reasons;
-}
-
 function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onReview, onKeep }) {
   const [choosing, setChoosing] = useState(false);
   const [choice, setChoice] = useState("");
@@ -1506,34 +1487,59 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
       <button type="button" className="btn btn-danger btn-small question-bank-delete" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
     </div>
   );
+  const levelPills = (
+    <>
+      {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
+      {question.category && (
+        <span className={`question-category-pill ${categoryPillClass(question.category)}`}>{question.category}</span>
+      )}
+    </>
+  );
+  const choiceList = Boolean(question.choices?.length) && (
+    <ul className="generated-question-choices">
+      {question.choices.map((text, index) => (
+        <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
+          {text}
+        </li>
+      ))}
+    </ul>
+  );
+
+  if (held) {
+    return (
+      <article className="question-learning-object-card question-review-card" id={`bank-question-${question.id}`}>
+        <small className="question-review-from">
+          <b>FROM:</b> {SOURCE_NAMES[source] || "Typed"}{question.source_file ? ` (${question.source_file})` : ""}
+          {concept && <><span aria-hidden="true"> · </span><b>CONCEPT:</b> {conceptTitle(concept)}</>}
+        </small>
+        <div className="question-review-head">
+          <strong>{question.prompt}</strong>
+          <div className="generated-question-meta">{levelPills}</div>
+        </div>
+        {choiceList}
+        <div className="question-learning-object-questions">
+          <div className="version-slot-stale question-review-concerns" role="note">
+            <span>CONCERNS:</span>
+            <ul>{(question.concerns || []).map((concern) => <li key={concern}>{concern}</li>)}</ul>
+          </div>
+          {actions}
+        </div>
+      </article>
+    );
+  }
+
   return (
     <li id={`bank-question-${question.id}`}>
       <div className="generated-question-row">
         <div className="generated-question-meta">
           <span className={`question-origin-pill is-${source}`}>{SOURCE_NAMES[source] || "Typed"}</span>
-          {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
-          {question.category && (
-            <span className={`question-category-pill ${categoryPillClass(question.category)}`}>{question.category}</span>
-          )}
+          {levelPills}
         </div>
         <strong>{question.prompt}</strong>
       </div>
-      {Boolean(question.choices?.length) && (
-        <ul className="generated-question-choices">
-          {question.choices.map((text, index) => (
-            <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
-              {text}
-            </li>
-          ))}
-        </ul>
-      )}
+      {choiceList}
       {question.check_result === "kept" && (
         <small className="question-bank-kept">Kept by you. The answer check said: {question.check_note}</small>
-      )}
-      {held && (
-        <div className="version-slot-stale question-bank-reason" role="note">
-          {heldReasons(question, suggested).map((reason) => <p key={reason}>{reason}</p>)}
-        </div>
       )}
       {actions}
     </li>
@@ -1616,22 +1622,7 @@ function QuestionBankPanel({
           </div>
           {held.length ? (
             <div className="question-learning-object-list">
-              {held.map((question) => {
-                const concept = groups.find((group) => Number(group.id) === Number(questionGroupId(question)));
-                return (
-                  <article className="question-learning-object-card" key={question.id}>
-                    <div className="question-learning-object-title">
-                      <div>
-                        <strong>{concept ? conceptTitle(concept) : "No concept yet"}</strong>
-                        <small>{concept ? "Concept" : "Choose the concept this question belongs to"}</small>
-                      </div>
-                    </div>
-                    <div className="question-learning-object-questions">
-                      <ol className="question-bank-single">{row(question, true)}</ol>
-                    </div>
-                  </article>
-                );
-              })}
+              {held.map((question) => row(question, true))}
             </div>
           ) : (
             <div className="review-queue-empty">Nothing to review. Every question is ready for learners.</div>

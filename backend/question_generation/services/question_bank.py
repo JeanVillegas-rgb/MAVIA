@@ -135,7 +135,9 @@ def topic_questions(outline_node):
             Q(outline_node=outline_node) | Q(node__material__outline_node=outline_node),
         )
         .exclude(status="draft")
-        .select_related("node__material", "node__group")
+        .select_related(
+            "node__material", "node__group", "extracted_question__material", "question_file",
+        )
         .order_by("id")
     )
 
@@ -170,6 +172,60 @@ def _pairing(question):
     }]
 
 
+def source_file(question):
+    """The file a printed or questionnaire question came from, by name."""
+    if question.source == "lesson_pdf" and question.extracted_question_id:
+        material = question.extracted_question.material
+        return material.pdf_file.name.rsplit("/", 1)[-1] if material.pdf_file else material.title
+    if question.source == "questionnaire" and question.question_file_id:
+        return question.question_file.file.name.rsplit("/", 1)[-1]
+    return ""
+
+
+def concerns(question):
+    """Everything that keeps a question from learners, each as one thing the teacher can act on."""
+    from .pipeline import concept_name
+
+    found = []
+    values = screen_values(question)
+    kind = values["question_type"]
+    choices = [str(choice).strip() for choice in values["choices"] if str(choice).strip()]
+    if kind not in (ExtractedQuestion.Type.TRUE_FALSE, ExtractedQuestion.Type.MULTIPLE_CHOICE):
+        found.append("No question type set yet (multiple choice or true/false).")
+        if not choices:
+            found.append("No answer choices yet.")
+    elif kind == ExtractedQuestion.Type.MULTIPLE_CHOICE and not 2 <= len(choices) <= 4:
+        found.append(
+            f"Has {len(choices)} answer choice{'' if len(choices) == 1 else 's'}; "
+            "needs two to four, since learners answer with four keys."
+        )
+    if not values["correct_answer"]:
+        found.append("No correct answer marked yet.")
+
+    concept = concept_name(question.node) if question.node_id else ""
+    if not question.node_id:
+        found.append(
+            "Left without a concept by you, so learners do not get it."
+            if question.paired_by == "teacher"
+            else "Not attached to any concept yet."
+        )
+    elif not question.paired_by:
+        found.append(f'Suggested concept "{concept}" is not confirmed yet.')
+
+    if question.check_result in FAILED_CHECKS and question.node_id:
+        found.append(f'The answer check says "{concept}" does not support this answer: {question.check_note}')
+    elif question.check_result == "unsupported":
+        found.append("No concept's text supports this answer.")
+    elif question.check_result == "unverified" and question.source != "generated":
+        found.append(NOT_CHECKED)
+
+    if question.bloom_level and question.thinking_order not in TIERS:
+        found.append(
+            f'Its Bloom level ("{question.bloom_level}") has no LOTS/HOTS tier, so learners cannot be given it.'
+        )
+    return found
+
+
 def screen_row(question):
     """One bank question as the Questions screen reads it."""
     pairing = _pairing(question)
@@ -189,6 +245,8 @@ def screen_row(question):
         "check_result": question.check_result,
         "check_note": question.check_note,
         "can_keep": can_keep(question),
+        "concerns": concerns(question) if question.status != "final" else [],
+        "source_file": source_file(question),
         "pairing_status": pairing[0]["review_status"] if pairing else "unmatched",
         "learning_object_links": pairing,
     }
