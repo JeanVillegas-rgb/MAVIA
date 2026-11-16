@@ -14,10 +14,10 @@ def extract_lesson_pdf_blocks(pdf_path):
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
-    from io import BytesIO    
+    from io import BytesIO
     from docling_core.types.doc import TableItem, PictureItem
     from pprint import pprint
-    
+
     options = PdfPipelineOptions(
         generate_picture_images=True,
         do_table_structure=True,
