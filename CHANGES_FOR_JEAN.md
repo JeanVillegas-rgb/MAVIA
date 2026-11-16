@@ -103,6 +103,7 @@ Your rename to `question_generation.Question` (alias `GeneratedQuestion`), the n
    - Store each object's enclosing heading (e.g. "Matter" above "Solid", "Liquid", "Gas").
    - Group same-name concepts across PDFs (topic 2 had two "Everyday Examples").
    - Fix the label cut at a parenthesis ("Stamen (Male Part").
+   - The concept's display title can come out as an object's title instead of the concept's name: in Flowering Plants, the concept "Parts of a Flower Involved in Reproduction" is shown as "Lesson text" because one of its objects has that title (`display_title` in the topic payload).
 5. **When you merge `updated-jure` into your work,** please keep the removals above. Don't bring back `question_linker.py`, the pairing table, the removed endpoints or the removed `ExtractedQuestion` columns. The question pipeline no longer reads them.
 
 ## 6. Older differences you will see in a merge (not part of this change)
