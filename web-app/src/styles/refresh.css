@@ -778,3 +778,82 @@ body {
   margin: 0.15rem 0 0;
   line-height: 1.5;
 }
+
+/* Question bank tab: every question of the topic as plain full-width rows,
+   grouped into "Needs your review" and one section per concept. */
+.question-bank-panel {
+  display: grid;
+  gap: 1.5rem;
+  background: var(--mv-surface);
+  border-radius: var(--mv-radius);
+  padding: 1.5rem;
+}
+
+.question-bank-section h4 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.question-bank-hint {
+  margin: 0.2rem 0 0.6rem;
+  color: var(--mv-muted);
+  font-size: 0.88rem;
+}
+
+.question-bank-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--mv-border);
+}
+
+.question-bank-row {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--mv-border);
+}
+
+.question-bank-meta,
+.question-bank-concept {
+  color: var(--mv-muted);
+  font-size: 0.82rem;
+}
+
+.question-bank-issue {
+  margin: 0;
+  color: #9a6400;
+  font-size: 0.88rem;
+}
+
+.question-bank-actions,
+.question-bank-choose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.question-bank-choose select {
+  min-width: 14rem;
+}
+
+.question-bank-handoff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--mv-border);
+}
+
+.question-bank-handoff p {
+  margin: 0;
+  flex: 1 1 16rem;
+}
+
+/* The Add questions tab is the tools column alone now. */
+.question-tools-panel > .qt-col--tools:only-child {
+  flex: 1 1 100%;
+  max-width: 760px;
+}

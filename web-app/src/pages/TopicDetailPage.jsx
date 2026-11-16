@@ -337,7 +337,8 @@ function ReviewQueuePanel({
   busyAction,
   onReviewStepChange,
   generationProps,
-  manualPanel,
+  manualProps,
+  bankProps,
   unlabelledCount = 0,
   labelling = { running: false, error: "" },
   onRetryLabelling,
@@ -350,16 +351,21 @@ function ReviewQueuePanel({
     gaps.shortQuestions > 0 && `${gaps.shortQuestions} concept${gaps.shortQuestions === 1 ? " needs" : "s need"} ${gaps.minimumText}`,
     gaps.outOfDateQuestions > 0 && `${gaps.outOfDateQuestions} concept${gaps.outOfDateQuestions === 1 ? " has" : "s have"} questions to check`,
   ].filter(Boolean);
-  // Both views stay mounted so a running generation or a half-written
+  // All three views stay mounted so a running generation or a half-written
   // question survives switching tabs.
   const [mode, setMode] = useState("generate");
+  const [bankFocus, setBankFocus] = useState(null);
+  const openBank = (groupId = null) => {
+    setMode("bank");
+    setBankFocus({ groupId, at: Date.now() });
+  };
   return (
     <section className="connection-review-panel" aria-labelledby="match-suggestion-title">
       <div className="connection-review-heading">
         <div>
           <span className="connection-eyebrow">Question generation</span>
           <h3 id="match-suggestion-title">Generate and review questions</h3>
-          <p>Generate questions from confirmed lesson content, then check and edit the saved question list.</p>
+          <p>Generate questions from the confirmed lesson content or add your own, then check and fix them in the question bank.</p>
         </div>
         <span className="connection-source-count">{questionPairings.length} question{questionPairings.length === 1 ? "" : "s"}</span>
       </div>
@@ -385,8 +391,8 @@ function ReviewQueuePanel({
           </button>
         </div>
       )}
-      <div className="question-mode-tabs" role="tablist" aria-label="How to add questions">
-        {[["generate", "Generate"], ["manual", "Manual"]].map(([key, label]) => (
+      <div className="question-mode-tabs" role="tablist" aria-label="Questions">
+        {[["generate", "Generate"], ["manual", "Add questions"], ["bank", "Question bank"]].map(([key, label]) => (
           <button
             type="button"
             role="tab"
@@ -410,6 +416,7 @@ function ReviewQueuePanel({
           {...generationProps}
           groups={groups}
           materialById={materialById}
+          onOpenBank={openBank}
         />
       </div>
       <div
@@ -418,7 +425,21 @@ function ReviewQueuePanel({
         aria-labelledby="question-mode-manual"
         hidden={mode !== "manual"}
       >
-        {manualPanel}
+        <ManualQuestionPanel {...manualProps} groups={groups} onOpenBank={() => openBank()} />
+      </div>
+      <div
+        role="tabpanel"
+        id="question-mode-bank-panel"
+        aria-labelledby="question-mode-bank"
+        hidden={mode !== "bank"}
+      >
+        <QuestionBankPanel
+          {...bankProps}
+          questionPairings={questionPairings}
+          groups={groups}
+          busyAction={busyAction}
+          focus={bankFocus}
+        />
       </div>
 
       <StepDock>
@@ -1039,6 +1060,7 @@ function QuestionGenerationTool({
   onResourcesChange,
   onError,
   onMessage,
+  onOpenBank,
 }) {
   const [generatingKey, setGeneratingKey] = useState("");
   // Structured rather than a formatted string, because the progress dialog
@@ -1332,6 +1354,11 @@ function QuestionGenerationTool({
                       <TierCounter label="LOTS" count={item.questionCounts.LOT || 0} needed={item.questionMinimum.LOT || 0} />
                       <TierCounter label="HOTS" count={item.questionCounts.HOT || 0} needed={item.questionMinimum.HOT || 0} />
                     </div>
+                    {Boolean(produced.length) && (
+                      <button type="button" className="btn btn-secondary btn-small" onClick={() => onOpenBank(item.groupId)}>
+                        Review in question bank
+                      </button>
+                    )}
                   </div>
                   {!produced.length ? (
                     <p className="question-learning-object-empty">
@@ -1385,6 +1412,200 @@ function QuestionGenerationTool({
   );
 }
 
+const SOURCE_NAMES = {
+  generated: "Generated",
+  manual: "Typed",
+  pdf: "Lesson PDF",
+  questionnaire: "Questionnaire",
+};
+
+function conceptTitle(group) {
+  return group?.display_title || group?.label || group?.learning_objects?.[0]?.title || "Untitled concept";
+}
+
+function questionGroupId(question) {
+  return question.learning_object_links?.[0]?.learning_object_group_id ?? null;
+}
+
+// Why a question is not given to learners, in the teacher's words. The server
+// works out what is missing or what the answer check found; this adds the
+// cases that are a state rather than a problem.
+function heldReasons(question, suggested) {
+  const pairing = question.learning_object_links?.[0]?.review_status;
+  const reasons = [...(question.validation_issues || [])];
+  if (pairing === "teacher_unpaired") {
+    reasons.push("You left this question without a concept, so learners do not get it.");
+  } else if (question.bloom_level && !question.thinking_order) {
+    reasons.push(NOT_SERVED_TIP);
+  } else if (!reasons.length && suggested) {
+    reasons.push(`Suggested concept: ${conceptTitle(suggested)}. Confirm it or choose another.`);
+  } else if (!reasons.length) {
+    reasons.push("No concept yet. Choose one so learners can get this question.");
+  }
+  return reasons;
+}
+
+function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onReview }) {
+  const [choosing, setChoosing] = useState(false);
+  const [choice, setChoice] = useState("");
+  const link = question.learning_object_links?.[0];
+  const groupId = questionGroupId(question);
+  const concept = groups.find((group) => Number(group.id) === Number(groupId));
+  const suggested = link?.review_status === "pending_review" ? concept : null;
+  const tier = { LOT: "LOTS", HOT: "HOTS" }[question.thinking_order];
+  const meta = [SOURCE_NAMES[question.source_type] || "Typed", tier, question.category].filter(Boolean);
+  return (
+    <li className="question-bank-row" id={`bank-question-${question.id}`}>
+      <small className="question-bank-meta">{meta.join(" · ")}</small>
+      <strong>{question.prompt}</strong>
+      {Boolean(question.choices?.length) && (
+        <ul className="generated-question-choices">
+          {question.choices.map((text, index) => (
+            <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
+              {text}
+            </li>
+          ))}
+        </ul>
+      )}
+      {held && (
+        <>
+          <small className="question-bank-concept">Concept: {concept ? conceptTitle(concept) : "none"}</small>
+          {heldReasons(question, suggested).map((reason) => (
+            <p className="question-bank-issue" key={reason}>{reason}</p>
+          ))}
+        </>
+      )}
+      {choosing ? (
+        <form
+          className="question-bank-choose"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (await onReview(question, "change", choice)) setChoosing(false);
+          }}
+        >
+          <select required value={choice} onChange={(event) => setChoice(event.target.value)}>
+            <option value="">Choose a concept</option>
+            {groups.map((group) => (
+              <option value={group.id} key={group.id}>{conceptTitle(group)}</option>
+            ))}
+          </select>
+          <button type="submit" className="btn btn-primary btn-small" disabled={busy || !choice}>Save</button>
+          <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => setChoosing(false)}>Cancel</button>
+        </form>
+      ) : (
+        <div className="question-bank-actions">
+          {suggested && (
+            <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onReview(question, "confirm")}>
+              Confirm concept
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            disabled={busy}
+            onClick={() => { setChoice(groupId ? String(groupId) : ""); setChoosing(true); }}
+          >
+            {concept ? "Change concept" : "Choose concept"}
+          </button>
+          {concept && link?.review_status !== "teacher_unpaired" && (
+            <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onReview(question, "unpair")}>
+              Leave unpaired
+            </button>
+          )}
+          <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onEdit(question)}>Edit</button>
+          <button type="button" className="btn btn-danger btn-small" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+// Every question of the topic, whatever made it, and the one place to fix
+// them: questions not given to learners first, then each concept's own.
+function QuestionBankPanel({
+  questionPairings,
+  groups,
+  busyAction,
+  focus,
+  onEditQuestion,
+  onDeleteQuestion,
+  onReviewQuestion,
+}) {
+  const [editing, setEditing] = useState(null);
+  const busy = Boolean(busyAction);
+  const held = questionPairings.filter((question) => question.status !== "final");
+  const given = questionPairings.filter((question) => question.status === "final");
+  const knownGroups = new Set(groups.map((group) => Number(group.id)));
+  const byConcept = groups.map((group) => ({
+    group,
+    questions: given
+      .filter((question) => Number(questionGroupId(question)) === Number(group.id))
+      .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id),
+  }));
+  const elsewhere = given.filter((question) => !knownGroups.has(Number(questionGroupId(question))));
+
+  useEffect(() => {
+    if (!focus?.groupId) return;
+    document.getElementById(`bank-concept-${focus.groupId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focus]);
+
+  const row = (question, isHeld) => (
+    <BankQuestionRow
+      key={question.id}
+      question={question}
+      groups={groups}
+      held={isHeld}
+      busy={busy}
+      onEdit={setEditing}
+      onDelete={onDeleteQuestion}
+      onReview={onReviewQuestion}
+    />
+  );
+
+  return (
+    <div className="question-bank-panel">
+      {!questionPairings.length && (
+        <p className="review-queue-empty">No questions yet. Generate them, or add your own in Add questions.</p>
+      )}
+      {held.length > 0 && (
+        <section className="question-bank-section" aria-labelledby="bank-held-title">
+          <h4 id="bank-held-title">Needs your review ({held.length})</h4>
+          <p className="question-bank-hint">Learners do not get these questions until you fix them.</p>
+          <ul className="question-bank-list">{held.map((question) => row(question, true))}</ul>
+        </section>
+      )}
+      {byConcept.filter(({ questions }) => questions.length).map(({ group, questions }) => (
+        <section className="question-bank-section" id={`bank-concept-${group.id}`} key={group.id} aria-labelledby={`bank-concept-title-${group.id}`}>
+          <h4 id={`bank-concept-title-${group.id}`}>{conceptTitle(group)}</h4>
+          <p className="question-bank-hint">
+            {group.question_counts?.LOT || 0} LOTS (needs {group.question_minimum?.LOT || 0})
+            {" · "}
+            {group.question_counts?.HOT || 0} HOTS (needs {group.question_minimum?.HOT || 0})
+          </p>
+          <ul className="question-bank-list">{questions.map((question) => row(question, false))}</ul>
+        </section>
+      ))}
+      {elsewhere.length > 0 && (
+        <section className="question-bank-section" aria-labelledby="bank-other-title">
+          <h4 id="bank-other-title">Other questions</h4>
+          <ul className="question-bank-list">{elsewhere.map((question) => row(question, false))}</ul>
+        </section>
+      )}
+
+      {editing && (
+        <div className="question-edit-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditing(null); }}>
+          <div className="question-edit-modal" role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
+            <div className="question-edit-modal-head"><h3 id="question-edit-title">Edit question</h3></div>
+            <QuestionEditForm question={editing} groups={groups} busy={busy} onCancel={() => setEditing(null)} onSave={async (values) => {
+              if (await onEditQuestion(editing, values)) setEditing(null);
+            }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ManualQuestionPanel({
   courseId,
   topicId,
@@ -1393,21 +1614,16 @@ function ManualQuestionPanel({
   onCourseChange,
   onError,
   onMessage,
-  lessonMaterials,
-  questionPairings,
-  materialById,
-  busyAction,
-  onEditQuestion,
-  onDeleteQuestion,
+  onOpenBank,
 }) {
   const [uploading, setUploading] = useState(false);
+  const [lastResult, setLastResult] = useState("");
   const [questionType, setQuestionType] = useState("true_false");
   const [prompt, setPrompt] = useState("");
   const [choices, setChoices] = useState(["", "", "", ""]);
   const [correctAnswer, setCorrectAnswer] = useState("True");
   const [conceptGroupId, setConceptGroupId] = useState("");
   const [saving, setSaving] = useState(false);
-  const [editingQuestion, setEditingQuestion] = useState(null);
   function switchType(type) {
     setQuestionType(type);
     setChoices(["", "", "", ""]);
@@ -1421,12 +1637,13 @@ function ManualQuestionPanel({
     setUploading(true);
     onError("");
     onMessage("");
+    setLastResult("");
     try {
       const formData = new FormData();
       formData.append("pdf_file", file);
       const data = await uploadQuestionnaire(topicId, formData);
       onResourcesChange(await fetchLearningResources(courseId, topicId));
-      onMessage(data.message);
+      setLastResult(data.message);
     } catch (err) {
       onError(err.message);
     } finally {
@@ -1439,6 +1656,7 @@ function ManualQuestionPanel({
     setSaving(true);
     onError("");
     onMessage("");
+    setLastResult("");
     try {
       const finalChoices = questionType === "true_false"
         ? ["True", "False"]
@@ -1457,7 +1675,7 @@ function ManualQuestionPanel({
       setChoices(["", "", "", ""]);
       setCorrectAnswer(questionType === "true_false" ? "True" : "");
       setConceptGroupId("");
-      onMessage(data.outcome.message);
+      setLastResult(data.outcome.message);
     } catch (err) {
       onError(err.message);
     } finally {
@@ -1465,68 +1683,8 @@ function ManualQuestionPanel({
     }
   }
 
-  // This panel is the PDF question bank and nothing else. Generated and manual
-  // questions are shown with the concept they belong to, on the generation
-  // board, where they can be judged against the content that produced them.
-  const pdfQuestions = questionPairings.filter(
-    (question) => (question.source_type || "pdf") === "pdf",
-  );
-
   return (
     <aside className="match-suggestion-panel panel-aside question-tools-panel" aria-labelledby="manual-question-panel-title">
-      {/* Two explicit columns rather than grid-placing the panel's children by
-          selector: the bank is one job and adding a question is the other, and
-          wrapping them says so in the markup instead of depending on which
-          rule happens to win. */}
-      <div className="qt-col qt-col--bank">
-      <section className="saved-question-sidebar" aria-labelledby="saved-question-title">
-        <div className="match-suggestion-heading">
-          <div>
-            <span className="connection-eyebrow">Question bank</span>
-            <h4 id="saved-question-title">Questions from PDFs</h4>
-          </div>
-          <span>{pdfQuestions.length}</span>
-        </div>
-        {!pdfQuestions.length ? <div className="review-queue-empty">No questions were extracted from an uploaded PDF.</div> : (
-          <div className="saved-question-list is-sidebar">
-            {pdfQuestions.map((question) => {
-              const link = question.learning_object_links?.[0];
-              const group = groups.find((item) => Number(item.id) === Number(link?.learning_object_group_id));
-              const material = materialById.get(Number(question.material));
-              const concept = group?.display_title || group?.label || group?.learning_objects?.[0]?.title || link?.learning_object_title || "No concept assigned";
-              return (
-                <article className="saved-question-card" key={question.id}>
-                  <div className="question-review-meta">
-                    <span className={`question-origin-pill is-${question.source_type || "pdf"}`}>
-                      {question.source_type === "manual" ? "Manual" : question.source_type === "generated" ? "Generated" : "PDF"}
-                    </span>
-                    {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
-                    {question.bloom_level && !question.thinking_order && (
-                      <span className="has-tip question-not-served" data-tip={NOT_SERVED_TIP} tabIndex={0}>
-                        Not given to learners
-                      </span>
-                    )}
-                    {question.category && (
-                      <span className={`question-category-pill ${categoryPillClass(question.category)}`}>
-                        {question.category}
-                      </span>
-                    )}
-                  </div>
-                  <strong>{question.prompt}</strong>
-                  <small>{concept}{material?.filename || material?.title ? ` · ${material?.filename || material?.title}` : ""}</small>
-                  {question.validation_status === "needs_review" && <span className="saved-question-warning">Details required</span>}
-                  <div className="saved-question-actions">
-                    <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busyAction)} onClick={() => setEditingQuestion(question)}>Edit</button>
-                    <button type="button" className="btn btn-danger btn-small" disabled={Boolean(busyAction)} onClick={() => onDeleteQuestion(question)}>Delete</button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-      </div>
-
       <div className="qt-col qt-col--tools">
       <div className="match-suggestion-heading">
         <div>
@@ -1534,6 +1692,15 @@ function ManualQuestionPanel({
           <h4 id="manual-question-panel-title">Add questions</h4>
         </div>
       </div>
+
+      {lastResult && (
+        <div className="question-bank-handoff" role="status">
+          <p>{lastResult}</p>
+          <button type="button" className="btn btn-secondary btn-small" onClick={() => onOpenBank()}>
+            Review in question bank
+          </button>
+        </div>
+      )}
 
       <div className="question-source-upload">
         <p className="question-source-prompt">Did you prepare your questions in a PDF?</p>
@@ -1652,17 +1819,6 @@ function ManualQuestionPanel({
         </button>
       </form>
 
-      {editingQuestion && (
-        <div className="question-edit-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingQuestion(null); }}>
-          <div className="question-edit-modal" role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
-            <div className="question-edit-modal-head"><div><span className="connection-eyebrow">Edit question</span><h3 id="question-edit-title">Question details</h3></div></div>
-            <QuestionEditForm question={editingQuestion} groups={groups} busy={Boolean(busyAction)} onCancel={() => setEditingQuestion(null)} onSave={async (values) => {
-              const saved = await onEditQuestion(editingQuestion, values);
-              if (saved) setEditingQuestion(null);
-            }} />
-          </div>
-        </div>
-      )}
       </div>
     </aside>
   );
@@ -2092,10 +2248,6 @@ function LearningObjectConnections({
       labelQuestions();
     }
   }, [reviewStep, gaps.unlabelledQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
-  const questionReviewQueue = allQuestionPairings.filter((question) => {
-    const status = question.learning_object_links?.[0]?.review_status;
-    return !status || status === "pending_review" || status === "unmatched";
-  });
   const confirmedSourceCount = materials.filter(
     (material) => material.generated_json?.learning_objects_confirmed
       && material.learning_objects?.length,
@@ -2756,25 +2908,19 @@ function LearningObjectConnections({
                 (material) => material.generated_json?.learning_objects_confirmed && material.learning_objects?.length,
               ),
             }}
-            manualPanel={(
-              <ManualQuestionPanel
-                courseId={courseId}
-                topicId={topicId}
-                groups={groups}
-                onResourcesChange={setResources}
-                onCourseChange={onCourseChange}
-                onError={onError}
-                onMessage={onMessage}
-                lessonMaterials={materials.filter(
-                  (material) => material.generated_json?.learning_objects_confirmed && material.learning_objects?.length,
-                )}
-                questionPairings={allQuestionPairings}
-                materialById={materialById}
-                busyAction={busyAction}
-                onEditQuestion={editQuestion}
-                onDeleteQuestion={deleteQuestion}
-              />
-            )}
+            manualProps={{
+              courseId,
+              topicId,
+              onResourcesChange: setResources,
+              onCourseChange,
+              onError,
+              onMessage,
+            }}
+            bankProps={{
+              onEditQuestion: editQuestion,
+              onDeleteQuestion: deleteQuestion,
+              onReviewQuestion: reviewQuestion,
+            }}
           />
         </>
       )}
