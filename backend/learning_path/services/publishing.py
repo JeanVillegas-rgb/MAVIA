@@ -1,5 +1,6 @@
 """Save a topic's learning path: its prerequisite links and its step order."""
 
+import heapq
 import logging
 import math
 from collections import Counter, defaultdict
@@ -190,30 +191,30 @@ def order_with_links(concepts, links, confidence=None):
         confidence,
     )
     successors = {concept.id: set() for concept in concepts}
-    prerequisites = {concept.id: set() for concept in concepts}
+    in_degree = {concept.id: 0 for concept in concepts}
     for before, after in kept:
         successors[before].add(after)
-        prerequisites[after].add(before)
+        in_degree[after] += 1
 
-    placed_at = {}
-    remaining = {concept_id: len(prerequisites[concept_id]) for concept_id in position}
+    queue = [(position[concept_id], concept_id) for concept_id, count in in_degree.items() if count == 0]
+    heapq.heapify(queue)
 
     by_id = {concept.id: concept for concept in concepts}
-    ordered = []
-    while len(ordered) < len(concepts):
-        ready = [concept_id for concept_id, count in remaining.items() if count == 0 and concept_id not in placed_at]
-        chosen = min(ready, key=position.get)
-        placed_at[chosen] = len(ordered)
-        ordered.append(by_id[chosen])
-        for following in successors[chosen]:
-            remaining[following] -= 1
+    learning_path = []
+    while queue:
+        _, current = heapq.heappop(queue)
+        learning_path.append(by_id[current])
+        for following in successors[current]:
+            in_degree[following] -= 1
+            if in_degree[following] == 0:
+                heapq.heappush(queue, (position[following], following))
 
-    depth = {concept.id: 0 for concept in ordered}
-    for concept in ordered:
+    depth = {concept.id: 0 for concept in learning_path}
+    for concept in learning_path:
         for following in successors[concept.id]:
             depth[following] = max(depth[following], depth[concept.id] + 1)
-    tracing.log_order(ordered, depth, ignored, kept)
-    return ordered, depth, ignored
+    tracing.log_order(learning_path, depth, ignored, kept)
+    return learning_path, depth, ignored
 
 
 def path_link_confidence(node, concept_ids):
