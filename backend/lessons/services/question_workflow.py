@@ -1,12 +1,12 @@
-"""Shared intake, validation, classification and adaptive-bank synchronization."""
+"""Finds the questions printed in a lesson PDF and hands them to the question bank."""
 
 import hashlib
 import logging
 import re
 
-from django.db import models, transaction
+from django.db import transaction
 
-from lessons.models import LearningMaterial, Question, QuestionLearningObjectLink
+from lessons.models import ExtractedQuestion, LearningMaterial
 from .block_classifier import detect_instructional_document_role
 from .concept_grouper import normalize_learning_object_title
 
@@ -22,51 +22,22 @@ _QUESTION_CONTAINER_LABELS = {
 }
 
 
-CONFIRMED_PAIRING_STATUSES = (
-    QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
-    QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-)
-
-
 def question_snapshots(material: LearningMaterial) -> list[dict]:
     """Return the stable question handoff stored with a processed PDF."""
-    snapshots = []
-    questions = material.questions.prefetch_related(
-        "learning_object_links__learning_object__group"
-    ).order_by("order", "id")
-    for question in questions:
-        links = [
-            {
-                "learning_object_id": link.learning_object_id,
-                "learning_object_group_id": link.learning_object.group_id,
-                "relevance_score": link.relevance_score,
-                "method": link.method,
-                "is_primary": link.is_primary,
-                "review_status": link.review_status,
-            }
-            for link in question.learning_object_links.all()
-            if link.review_status in CONFIRMED_PAIRING_STATUSES
-        ]
-        snapshots.append({
+    return [
+        {
             "id": question.id,
             "prompt": question.prompt,
-            "source_type": question.source_type,
             "question_type": question.question_type,
             "choices": question.choices,
             "correct_answer": question.correct_answer,
-            "bloom_level": question.bloom_level,
-            "thinking_order": question.thinking_order,
-            "difficulty": question.difficulty,
-            "category": question.category,
-            "validation_status": question.validation_status,
-            "validation_issues": question.validation_issues,
             "order": question.order,
             "source_page": question.source_page,
             "source_block_id": question.source_block_id,
             "source_excerpt": question.source_excerpt,
-            "learning_object_links": links,
-        })
-    return snapshots
+        }
+        for question in material.questions.order_by("order", "id")
+    ]
 
 
 def normalized_question_text(text: str) -> str:
@@ -77,13 +48,6 @@ def normalized_question_text(text: str) -> str:
 
 def question_fingerprint(text: str) -> str:
     return hashlib.sha256(normalized_question_text(text).encode("utf-8")).hexdigest()
-
-
-def classify_question(text: str) -> dict:
-    # The generation pipeline's instance: a second copy of RoBERTa here was
-    # loaded again by the same Questions step.
-    from question_generation.services.pipeline import _get_classifier
-    return _get_classifier().classify(text)
 
 
 def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
@@ -111,15 +75,15 @@ def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
         re.search(r"\b(?:true\s*(?:or|/)\s*false|write\s+true|write\s+t\s+if)\b", lowered_excerpt)
     )
     if {choice.casefold() for choice in choices} == {"true", "false"}:
-        question_type = Question.Type.TRUE_FALSE
+        question_type = ExtractedQuestion.Type.TRUE_FALSE
         choices = ["True", "False"]
     elif len(choices) >= 2:
-        question_type = Question.Type.MULTIPLE_CHOICE
+        question_type = ExtractedQuestion.Type.MULTIPLE_CHOICE
     elif true_false_context:
-        question_type = Question.Type.TRUE_FALSE
+        question_type = ExtractedQuestion.Type.TRUE_FALSE
         choices = ["True", "False"]
     else:
-        question_type = Question.Type.OPEN_ENDED
+        question_type = ExtractedQuestion.Type.OPEN_ENDED
 
     correct_answer = ""
     answer_match = re.search(
@@ -146,9 +110,9 @@ def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
 def validation_issues(question_type: str, choices, correct_answer: str) -> list[str]:
     issues = []
     choices = choices if isinstance(choices, list) else []
-    if question_type not in {Question.Type.TRUE_FALSE, Question.Type.MULTIPLE_CHOICE}:
+    if question_type not in {ExtractedQuestion.Type.TRUE_FALSE, ExtractedQuestion.Type.MULTIPLE_CHOICE}:
         issues.append("Choose True/False or Multiple Choice.")
-    elif question_type == Question.Type.TRUE_FALSE:
+    elif question_type == ExtractedQuestion.Type.TRUE_FALSE:
         if {str(choice).casefold() for choice in choices} != {"true", "false"}:
             issues.append("True/False questions must contain True and False choices.")
         if str(correct_answer).casefold() not in {"true", "false"}:
@@ -162,331 +126,17 @@ def validation_issues(question_type: str, choices, correct_answer: str) -> list[
     return issues
 
 
-LABEL_FIELDS = ("bloom_level", "thinking_order", "category")
-
-
-def enriched_question_values(prompt, question_type, choices, correct_answer, *, classify=True) -> dict:
-    """Database-ready values for one question.
-
-    ``classify=False`` leaves the Bloom level, LOTS/HOTS and category blank:
-    questions printed in a PDF are stored at upload and labelled in the
-    Questions step, where every question-related process happens.
-    """
-    prompt = (prompt or "").strip()
-    classification = (
-        classify_question(prompt) if classify
-        else {"bloom_level": "", "thinking_order": "", "category": ""}
-    )
-    issues = validation_issues(question_type, choices, correct_answer)
-    return {
-        "prompt": prompt,
-        "question_type": question_type,
-        "choices": choices,
-        "correct_answer": correct_answer,
-        "content_fingerprint": question_fingerprint(prompt),
-        "bloom_level": classification["bloom_level"],
-        "thinking_order": classification["thinking_order"] or "",
-        "category": classification["category"],
-        "validation_status": (
-            Question.ValidationStatus.NEEDS_REVIEW if issues else Question.ValidationStatus.READY
-        ),
-        "validation_issues": issues,
-    }
-
-
-def duplicate_for_topic(course_id, outline_node_id, fingerprint: str, *, exclude_id=None):
-    query = Question.objects.filter(
-        material__course_id=course_id,
-        material__outline_node_id=outline_node_id,
-    )
-    if exclude_id:
-        query = query.exclude(pk=exclude_id)
-    existing = query.filter(content_fingerprint=fingerprint).order_by("id").first()
-    if existing:
-        return existing
-    for question in query.filter(content_fingerprint="").order_by("id"):
-        question.content_fingerprint = question_fingerprint(question.prompt)
-        question.save(update_fields=["content_fingerprint"])
-        if question.content_fingerprint == fingerprint:
-            return question
-    return None
-
-
-def duplicate_in_topic(material, fingerprint: str, *, exclude_id=None):
-    return duplicate_for_topic(
-        material.course_id,
-        material.outline_node_id,
-        fingerprint,
-        exclude_id=exclude_id,
-    )
-
-
-def question_is_approved(question: Question) -> bool:
-    return question.learning_object_links.filter(
-        review_status__in=(
-            QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
-            QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-        ),
-        is_primary=True,
-    ).exists()
-
-
-TIERS = ("LOT", "HOT")
-
-
-def counts_toward_minimum(question: Question, link: QuestionLearningObjectLink) -> bool:
-    """Whether ``question``, paired to a concept by ``link``, fills its minimum.
-
-    A generated question and a teacher's own question count once paired. A
-    printed one counts only after the teacher has both edited it and confirmed
-    its pairing: it arrives as extraction left it, and the matcher's confidence
-    is not the teacher's.
-    """
-    if (
-        question.thinking_order not in TIERS
-        or question.validation_status != Question.ValidationStatus.READY
-        or not link.is_primary
-    ):
-        return False
-    status = link.review_status
-    if question.source_type in (Question.SourceType.GENERATED, Question.SourceType.MANUAL):
-        return status in (
-            QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
-            QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-        )
+def duplicate_in_topic(material, fingerprint: str):
+    """The same question already extracted from another PDF of the topic, if any."""
     return (
-        status == QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED
-        and question.teacher_edited
-    )
-
-
-def concept_tier_counts(learning_object) -> dict:
-    """LOTS and HOTS questions counting toward the minimum of the concept
-    ``learning_object`` belongs to (just the object, when it has none)."""
-    scope = (
-        models.Q(learning_object__group_id=learning_object.group_id)
-        if learning_object.group_id
-        else models.Q(learning_object=learning_object)
-    )
-    links = QuestionLearningObjectLink.objects.filter(
-        scope,
-        learning_object__material__generated_json__learning_objects_confirmed=True,
-    ).select_related("question")
-    counted = {link.question for link in links if counts_toward_minimum(link.question, link)}
-    return {tier: sum(question.thinking_order == tier for question in counted) for tier in TIERS}
-
-
-@transaction.atomic
-def is_given_to_learners(question: Question) -> bool:
-    """Labelled, and at a level the learner quiz has a tier for.
-
-    A question not labelled yet waits for the Questions step. One labelled
-    "create" has no LOTS/HOTS tier, so it stays in the teacher's bank only --
-    the same as generated "create" questions, which are never kept at all.
-    """
-    return bool(question.bloom_level and question.thinking_order)
-
-
-def label_printed_questions(outline_node) -> int:
-    """Label every printed question in the topic that is not labelled yet.
-
-    Returns how many were labelled. Each one reaches the learners' bank once
-    labelled, if its pairing and level allow it.
-    """
-    pending = list(
-        Question.objects.filter(
-            material__outline_node=outline_node,
-            source_type=Question.SourceType.PDF,
-            bloom_level="",
-        ).order_by("material_id", "order", "id")
-    )
-    for question in pending:
-        classification = classify_question(question.prompt)
-        question.bloom_level = classification["bloom_level"]
-        question.thinking_order = classification["thinking_order"] or ""
-        question.category = classification["category"]
-        question.save(update_fields=list(LABEL_FIELDS))
-        sync_question_to_adaptive(question)
-    if pending:
-        logger.info(
-            "[Questions] topic %s  labelled %s printed question(s) with Bloom level, LOTS/HOTS and category",
-            outline_node.id, len(pending),
+        ExtractedQuestion.objects.filter(
+            material__course_id=material.course_id,
+            material__outline_node_id=material.outline_node_id,
+            content_fingerprint=fingerprint,
         )
-    return len(pending)
-
-
-def sync_question_to_adaptive(question: Question):
-    """Create/update the learner-facing row only for valid, approved questions."""
-    if (
-        question.validation_status != Question.ValidationStatus.READY
-        or not question_is_approved(question)
-        or not is_given_to_learners(question)
-    ):
-        if question.adaptive_question_id:
-            adaptive_id = question.adaptive_question_id
-            question.adaptive_question = None
-            question.save(update_fields=["adaptive_question"])
-            from question_generation.models import GeneratedQuestion
-            GeneratedQuestion.objects.filter(pk=adaptive_id).delete()
-        return None
-    link = question.learning_object_links.filter(
-        review_status__in=(
-            QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
-            QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-        ),
-        is_primary=True,
-    ).select_related("learning_object").first()
-    if link is None:
-        return None
-
-    from question_generation.models import GeneratedQuestion
-    question_format = "TF" if question.question_type == Question.Type.TRUE_FALSE else "MCQ"
-    choice_map = None
-    adaptive_answer = question.correct_answer
-    if question_format == "MCQ":
-        choice_map = {
-            chr(65 + index): choice
-            for index, choice in enumerate(question.choices or [])
-        }
-        adaptive_answer = next(
-            (letter for letter, value in choice_map.items() if value == question.correct_answer),
-            "",
-        )
-    defaults = {
-        "node": link.learning_object,
-        "outline_node": question.material.outline_node,
-        "source": "lesson_pdf" if question.source_type == Question.SourceType.PDF else "manual",
-        "question_text": question.prompt,
-        "question_format": question_format,
-        "choices": choice_map,
-        "correct_answer": adaptive_answer,
-        "bloom_level": question.bloom_level,
-        "thinking_order": question.thinking_order,
-        "category": question.category,
-        "status": "final",
-    }
-    if question.adaptive_question_id:
-        GeneratedQuestion.objects.filter(pk=question.adaptive_question_id).update(**defaults)
-        adaptive = GeneratedQuestion.objects.get(pk=question.adaptive_question_id)
-    else:
-        adaptive = GeneratedQuestion.objects.create(**defaults)
-        question.adaptive_question = adaptive
-        question.save(update_fields=["adaptive_question"])
-    return adaptive
-
-
-def delete_generated_questions_for(learning_object):
-    """Delete the questions generated from this one learning object, and no others.
-
-    Call it before deleting the object. A generated question linked to another
-    surviving object as well -- the same text generated twice -- is kept, as is
-    any question a teacher re-paired to a different concept. Questions extracted
-    from a PDF are never deleted here; they only lose their link to this object.
-    """
-    from question_generation.models import GeneratedQuestion
-
-    generated_here = set(
-        QuestionLearningObjectLink.objects.filter(
-            learning_object=learning_object,
-            method="generated_from_object",
-        ).values_list("question_id", flat=True)
+        .order_by("id")
+        .first()
     )
-    still_needed = set(
-        QuestionLearningObjectLink.objects.filter(question_id__in=generated_here)
-        .exclude(learning_object=learning_object)
-        .values_list("question_id", flat=True)
-    )
-    doomed = list(
-        Question.objects.filter(
-            pk__in=generated_here - still_needed,
-            source_type=Question.SourceType.GENERATED,
-        )
-    )
-    adaptive_ids = [item.adaptive_question_id for item in doomed if item.adaptive_question_id]
-    Question.objects.filter(pk__in=[item.id for item in doomed]).delete()
-    GeneratedQuestion.objects.filter(
-        models.Q(node=learning_object) | models.Q(pk__in=adaptive_ids)
-    ).delete()
-    return len(doomed)
-
-
-@transaction.atomic
-def mirror_generated_questions(node, generated_questions):
-    """Expose generated adaptive questions in the same teacher review list."""
-    # Clear only this concept's stale generated rows (and ones with no concept
-    # at all). Clearing every generated row in the file without a learner-facing
-    # copy also removed other concepts' questions a teacher had sent back for
-    # review.
-    stale_ids = list(
-        Question.objects.filter(
-            material=node.material,
-            source_type=Question.SourceType.GENERATED,
-            adaptive_question__isnull=True,
-        )
-        .filter(
-            models.Q(learning_object_links__learning_object=node)
-            | models.Q(learning_object_links__isnull=True)
-        )
-        .values_list("id", flat=True)
-    )
-    Question.objects.filter(pk__in=stale_ids).delete()
-    for generated in generated_questions:
-        choice_map = generated.choices or {}
-        true_false = generated.question_format == "TF"
-        raw_answer = (generated.correct_answer or "").strip()
-        if true_false:
-            choices = ["True", "False"]
-            # A true/false answer is the answer, not a key into the choices --
-            # and the map is empty, so looking it up there found nothing and
-            # left the question with no answer key at all.
-            correct_answer = raw_answer.capitalize()
-        elif isinstance(choice_map, dict):
-            choices = [choice_map[key] for key in sorted(choice_map)]
-            # The key is what the generator returns, but an answer already
-            # written out in full is still an answer: a question must not reach
-            # a teacher with nothing marked correct.
-            correct_answer = choice_map.get(raw_answer) or (raw_answer if raw_answer in choices else "")
-        else:
-            choices = []
-            correct_answer = raw_answer
-        fingerprint = question_fingerprint(generated.question_text)
-        question = duplicate_in_topic(node.material, fingerprint)
-        if question is None:
-            question = Question.objects.create(
-                material=node.material,
-                source_type=Question.SourceType.GENERATED,
-                prompt=generated.question_text,
-                question_type=(Question.Type.TRUE_FALSE if generated.question_format == "TF" else Question.Type.MULTIPLE_CHOICE),
-                choices=choices,
-                correct_answer=correct_answer,
-                content_fingerprint=fingerprint,
-                bloom_level=generated.bloom_level,
-                thinking_order=generated.thinking_order,
-                category=generated.category,
-                validation_status=Question.ValidationStatus.READY,
-                validation_issues=[],
-                adaptive_question=generated,
-                order=node.material.questions.count(),
-                source_excerpt="Generated from a confirmed learning object.",
-            )
-        elif question.adaptive_question_id is None:
-            question.adaptive_question = generated
-            question.save(update_fields=["adaptive_question"])
-        elif question.adaptive_question_id != generated.id:
-            # A PDF/manual version is already present in the adaptive bank.
-            # Keep that canonical question and discard this generated copy.
-            generated.delete()
-            continue
-        QuestionLearningObjectLink.objects.update_or_create(
-            question=question,
-            learning_object=node,
-            defaults={
-                "relevance_score": 1.0,
-                "method": "generated_from_object",
-                "is_primary": True,
-                "review_status": QuestionLearningObjectLink.ReviewStatus.AUTO_CONFIRMED,
-            },
-        )
 
 
 def _is_answer_line(text):
@@ -612,17 +262,15 @@ def detected_question_payloads(classified_blocks):
             allow_numbered_statements=contextual,
         ):
             excerpt = block.get("text") or prompt
-            values = enriched_question_values(
-                **parse_question_structure(prompt, excerpt),
-                classify=False,
-            )
-            fingerprint = values["content_fingerprint"]
-            if not fingerprint or fingerprint in seen:
+            values = parse_question_structure(prompt, excerpt)
+            values["prompt"] = (values["prompt"] or "").strip()
+            fingerprint = question_fingerprint(values["prompt"])
+            if not values["prompt"] or fingerprint in seen:
                 continue
             seen.add(fingerprint)
             payloads.append({
                 **values,
-                "source_type": Question.SourceType.PDF,
+                "content_fingerprint": fingerprint,
                 "source_page": block.get("page"),
                 "source_block_id": block.get("block_id"),
                 "source_excerpt": excerpt,
@@ -630,63 +278,41 @@ def detected_question_payloads(classified_blocks):
     return payloads
 
 
-def _sync_extracted_question_to_bank(question: Question):
-    """Mirror one PDF extraction into the question bank without labelling it."""
+def _sync_extracted_question_to_bank(question: ExtractedQuestion):
+    """Mirror one PDF extraction into the question bank without labelling or pairing it."""
     from question_generation.models import Question as BankQuestion
+    from question_generation.services.question_bank import bank_values
 
-    question_format = {
-        Question.Type.MULTIPLE_CHOICE: "MCQ",
-        Question.Type.TRUE_FALSE: "TF",
-    }.get(question.question_type, "")
-    choices = question.choices if isinstance(question.choices, list) else []
-    choice_map = {
-        chr(65 + index): choice
-        for index, choice in enumerate(choices)
+    content = {
+        "question_text": question.prompt,
+        **bank_values(question.question_type, question.choices, question.correct_answer),
+        "content_fingerprint": question.content_fingerprint,
+        "validation_issues": validation_issues(
+            question.question_type, question.choices, question.correct_answer,
+        ),
     }
-    correct_answer = question.correct_answer or ""
-    if question_format == "MCQ":
-        correct_answer = next(
-            (
-                letter
-                for letter, choice in choice_map.items()
-                if choice == question.correct_answer
-            ),
-            "",
-        )
-    elif question_format == "TF":
-        correct_answer = correct_answer.capitalize()
-
-    bank_question, _ = BankQuestion.objects.update_or_create(
+    bank_question, created = BankQuestion.objects.get_or_create(
         extracted_question=question,
         defaults={
             "outline_node": question.material.outline_node,
-            "node": None,
-            "question_text": question.prompt,
-            "question_format": question_format,
-            "choices": choice_map or None,
-            "correct_answer": correct_answer,
-            "explanation": "",
-            "bloom_level": "",
-            "thinking_order": "",
-            "category": "",
             "status": "review",
             "source": "lesson_pdf",
-            "question_file": None,
-            "paired_by": "",
-            "check_result": "",
-            "check_note": "",
-            "teacher_edited": False,
-            "content_fingerprint": question.content_fingerprint,
-            "source_text_fingerprint": "",
-            "validation_issues": question.validation_issues,
+            **content,
         },
     )
+    untouched = not (bank_question.teacher_edited or bank_question.paired_by)
+    if not created and untouched:
+        for field, value in content.items():
+            setattr(bank_question, field, value)
+        bank_question.save(update_fields=list(content))
     return bank_question
 
 
 @transaction.atomic
 def synchronize_detected_questions(material, classified_blocks):
     """Synchronize extracted PDF questions and their unlabelled bank mirrors."""
+    from question_generation.models import Question as BankQuestion
+
     existing = {
         question.content_fingerprint or question_fingerprint(question.prompt): question
         for question in material.questions.all()
@@ -703,29 +329,18 @@ def synchronize_detected_questions(material, classified_blocks):
         key = payload["content_fingerprint"]
         question = existing.get(key) or duplicate_in_topic(material, key)
         if question is None:
-            question = Question.objects.create(material=material, order=order, **payload)
+            question = ExtractedQuestion.objects.create(material=material, order=order, **payload)
         elif question.material_id != material.id:
             continue
         else:
-            fields = [
-                field for field, value in payload.items()
-                if not (field in LABEL_FIELDS and not value)
-            ]
-            for field in fields:
-                setattr(question, field, payload[field])
+            for field, value in payload.items():
+                setattr(question, field, value)
             question.order = order
-            question.save(update_fields=[*fields, "order"])
+            question.save(update_fields=[*payload, "order"])
         _sync_extracted_question_to_bank(question)
         retained_ids.append(question.id)
-    material.questions.filter(source_type=Question.SourceType.PDF).exclude(
-        id__in=retained_ids,
-    ).delete()
-    from question_generation.models import Question as BankQuestion
-
+    dropped = material.questions.exclude(id__in=retained_ids)
     BankQuestion.objects.filter(
-        source="lesson_pdf",
-        extracted_question__material=material,
-    ).exclude(extracted_question_id__in=retained_ids).delete()
-    from .question_linker import refresh_question_learning_object_links
-
-    refresh_question_learning_object_links(material)
+        extracted_question__in=dropped, teacher_edited=False, paired_by="",
+    ).delete()
+    dropped.delete()

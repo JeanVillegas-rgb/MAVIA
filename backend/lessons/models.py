@@ -353,22 +353,13 @@ class LearningObjectMatchSuggestion(models.Model):
         )
 
 
-class Question(models.Model):
-    """A detected question kept separate from learner-facing lesson content."""
+class ExtractedQuestion(models.Model):
+    """A question found printed in a lesson PDF, as extraction left it."""
 
     class Type(models.TextChoices):
         OPEN_ENDED = "open_ended", "Open ended"
         TRUE_FALSE = "true_false", "True/False"
         MULTIPLE_CHOICE = "multiple_choice", "Multiple choice"
-
-    class SourceType(models.TextChoices):
-        PDF = "pdf", "Uploaded PDF"
-        MANUAL = "manual", "Manual"
-        GENERATED = "generated", "Generated"
-
-    class ValidationStatus(models.TextChoices):
-        READY = "ready", "Ready"
-        NEEDS_REVIEW = "needs_review", "Needs review"
 
     material = models.ForeignKey(
         LearningMaterial,
@@ -376,16 +367,7 @@ class Question(models.Model):
         on_delete=models.CASCADE,
     )
     prompt = models.TextField()
-    source_type = models.CharField(
-        max_length=20,
-        choices=SourceType.choices,
-        default=SourceType.PDF,
-        db_index=True,
-    )
     content_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
-    # A generated question the teacher has edited. Regenerating its concept's
-    # bank keeps it, alongside the new questions.
-    teacher_edited = models.BooleanField(default=False)
     question_type = models.CharField(
         max_length=30,
         choices=Type.choices,
@@ -393,84 +375,13 @@ class Question(models.Model):
     )
     choices = models.JSONField(default=list, blank=True)
     correct_answer = models.TextField(blank=True)
-    bloom_level = models.CharField(max_length=20, blank=True, db_index=True)
-    thinking_order = models.CharField(max_length=3, blank=True, db_index=True)
-    difficulty = models.CharField(max_length=10, blank=True, db_index=True)
-    category = models.CharField(max_length=30, blank=True)
-    validation_status = models.CharField(
-        max_length=20,
-        choices=ValidationStatus.choices,
-        default=ValidationStatus.NEEDS_REVIEW,
-        db_index=True,
-    )
-    validation_issues = models.JSONField(default=list, blank=True)
-    adaptive_question = models.OneToOneField(
-        "question_generation.Question",
-        null=True,
-        blank=True,
-        related_name="teacher_question",
-        on_delete=models.SET_NULL,
-    )
     order = models.PositiveIntegerField(default=0)
     source_page = models.PositiveIntegerField(null=True, blank=True)
     source_block_id = models.PositiveIntegerField(null=True, blank=True)
     source_excerpt = models.TextField(blank=True)
-    learning_objects = models.ManyToManyField(
-        LearningObject,
-        through="QuestionLearningObjectLink",
-        related_name="questions",
-    )
 
     class Meta:
         ordering = ["order", "id"]
 
     def __str__(self):
         return self.prompt[:80]
-
-
-class QuestionLearningObjectLink(models.Model):
-    """A content-question pair; relevance is not a difficulty classification."""
-
-    class ReviewStatus(models.TextChoices):
-        AUTO_CONFIRMED = "auto_confirmed", "Automatically confirmed"
-        PENDING_REVIEW = "pending_review", "Pending teacher review"
-        UNMATCHED = "unmatched", "No confident match"
-        TEACHER_CONFIRMED = "teacher_confirmed", "Teacher confirmed"
-        TEACHER_UNPAIRED = "teacher_unpaired", "Teacher left unpaired"
-
-    question = models.ForeignKey(
-        Question,
-        related_name="learning_object_links",
-        on_delete=models.CASCADE,
-    )
-    learning_object = models.ForeignKey(
-        LearningObject,
-        related_name="question_links",
-        on_delete=models.CASCADE,
-    )
-    relevance_score = models.FloatField(default=0.0)
-    method = models.CharField(max_length=100, default="layout_tfidf")
-    is_primary = models.BooleanField(default=True)
-    review_status = models.CharField(
-        max_length=30,
-        choices=ReviewStatus.choices,
-        default=ReviewStatus.PENDING_REVIEW,
-    )
-    reviewed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["-is_primary", "-relevance_score", "id"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["question", "learning_object"],
-                name="unique_question_learning_object_link",
-            ),
-            models.UniqueConstraint(
-                fields=["question"],
-                condition=models.Q(is_primary=True),
-                name="unique_primary_learning_object_per_question",
-            ),
-        ]
-
-    def __str__(self):
-        return f"Question {self.question_id} -> learning object {self.learning_object_id}"

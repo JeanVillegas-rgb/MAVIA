@@ -292,7 +292,7 @@ TOPIC_NOT_FOUND = {"detail": "Topic not found."}
 
 def _teacher_question_response(action, outline_node_id, *args, created=False):
     """Run a teacher's action on a question and answer with the question and what happened to it."""
-    from lessons.serializers import QuestionSerializer
+    from .services.question_bank import screen_row
     from .services.teacher_questions import QuestionError
 
     node = _topic(outline_node_id)
@@ -306,7 +306,7 @@ def _teacher_question_response(action, outline_node_id, *args, created=False):
         return Response({"deleted": True})
     question, outcome = result
     return Response(
-        {"question": QuestionSerializer(question).data, "outcome": outcome},
+        {"question": screen_row(question), "outcome": outcome},
         status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
     )
 
@@ -351,13 +351,13 @@ class LabelQuestionsView(APIView):
     permission_classes = [IsTeacherOrAdmin]
 
     def post(self, request, outline_node_id):
-        from lessons.services.question_workflow import label_printed_questions
+        from .services.teacher_questions import label_printed
 
         node = _topic(outline_node_id)
         if node is None:
             return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         try:
-            labelled = label_printed_questions(node)
+            labelled = label_printed(node)
         except Exception as error:
             logger.exception("[Questions] topic %s  labelling printed questions failed", node.id)
             return Response(

@@ -98,11 +98,11 @@ def _dedup_key(question_text):
 
 def _print_node_summary(node, kept, rejected):
     """One summary line per concept, judged against the minimum."""
-    from lessons.services.question_workflow import concept_tier_counts
+    from .question_bank import tier_counts
 
     added = Counter(q.thinking_order for q in kept)
     breakdown = ", ".join(f"{added.get(order, 0)} {order}" for order in QUESTION_DISTRIBUTION)
-    have = concept_tier_counts(node)
+    have = tier_counts(node)
     minimum = question_minimum()
     short = [
         f"{order} {have[order]} of {minimum[order]}"
@@ -359,6 +359,8 @@ def _validate_drafts_for_node(node, on_event=None, stats=None):
         if result["stage"] in ("source_missing", "judge_unavailable"):
             unverified += 1
         if result["passed"]:
+            draft.check_result = result["verdict"]
+            draft.save(update_fields=["check_result"])
             logger.debug('  ✓ grounded — "%s"', draft.question_text)
             _log_check(result)
             continue
@@ -420,12 +422,16 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
     counts = Counter()
     seen = set()
     duplicates = excluded_create = trimmed = 0
+    from .question_bank import topic_questions
+
+    taken = ~Q(source="generated")
     if append:
-        seen.update(
-            _dedup_key(text) for text in GeneratedQuestion.objects.filter(
-                node=node, status="final",
-            ).values_list("question_text", flat=True)
-        )
+        taken |= Q(node=node, status="final")
+    seen.update(
+        _dedup_key(text)
+        for text in topic_questions(node.material.outline_node)
+        .filter(taken).values_list("question_text", flat=True)
+    )
 
     for draft in drafts:
         key = _dedup_key(draft.question_text)
@@ -481,11 +487,8 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
             )
 
     with transaction.atomic():
-        generated = GeneratedQuestion.objects.filter(
-            Q(teacher_question__isnull=True)
-            | Q(teacher_question__source_type="generated")
-        )
-        edited = Q(teacher_question__teacher_edited=True)
+        generated = GeneratedQuestion.objects.filter(source="generated")
+        edited = Q(teacher_edited=True)
         if node.group_id:
             generated.filter(
                 edited, node__group_id=node.group_id, status="final",
@@ -493,14 +496,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
             obsolete = generated.filter(
                 node__group_id=node.group_id,
             ).exclude(node=node).exclude(edited)
-            obsolete_ids = list(obsolete.values_list("id", flat=True))
-            if obsolete_ids:
-                from lessons.models import Question
-                Question.objects.filter(
-                    source_type=Question.SourceType.GENERATED,
-                    adaptive_question_id__in=obsolete_ids,
-                ).delete()
-                obsolete.delete()
+            obsolete.delete()
 
         replaced, _ = (
             (0, None) if append
@@ -510,18 +506,22 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
             GeneratedQuestion.objects.filter(id__in=reject_ids).delete()
         from .bank_status import text_fingerprint
         source_stamp = text_fingerprint(concept_source_text(node))
+        from lessons.services.question_workflow import question_fingerprint
         for question in keep:
             question.source_text_fingerprint = source_stamp
+            question.content_fingerprint = question_fingerprint(question.question_text)
+            question.paired_by = "auto"
         GeneratedQuestion.objects.bulk_update(
-            keep, ["bloom_level", "thinking_order", "category", "status", "source_text_fingerprint"]
+            keep,
+            [
+                "bloom_level", "thinking_order", "category", "status",
+                "source_text_fingerprint", "content_fingerprint", "paired_by",
+            ],
         )
         if keep:
             generated.filter(edited, node=node, status="final").update(
                 source_text_fingerprint=source_stamp,
             )
-
-    from lessons.services.question_workflow import mirror_generated_questions
-    mirror_generated_questions(node, keep)
 
     if replaced:
         logger.debug("replaced %s existing rows for node %s", replaced, node.id)
@@ -615,9 +615,9 @@ def generate_questions_for_node(
 
 def top_up_plan(node):
     """(orders, caps): the thinking orders a concept lacks and how many more fit."""
-    from lessons.services.question_workflow import concept_tier_counts
+    from .question_bank import tier_counts
 
-    have = concept_tier_counts(node)
+    have = tier_counts(node)
     minimum = question_minimum()
     orders = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
     caps = {
@@ -749,14 +749,14 @@ def _prepare_generation(on_event):
 
 def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None):
     """Top up every concept of a topic to its minimum, in rounds."""
-    from lessons.services.question_workflow import concept_tier_counts
+    from .question_bank import tier_counts
 
     rounds = rounds or int(getattr(settings, "QUESTION_GENERATION_ROUNDS", 3))
     minimum = question_minimum()
     goal = " + ".join(f"{minimum[order]} {order}" for order in QUESTION_DISTRIBUTION)
 
     def is_short(node):
-        have = concept_tier_counts(node)
+        have = tier_counts(node)
         return any(have[order] < minimum[order] for order in QUESTION_DISTRIBUTION)
 
     targets = [node for node in nodes if is_short(node)]
@@ -788,7 +788,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
             round=round_number, rounds=rounds, total=len(targets),
         )
         for position, node in enumerate(targets, start=1):
-            have = concept_tier_counts(node)
+            have = tier_counts(node)
             wanted = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
             logger.info(
                 "[Questions] round %s/%s (%s/%s) %s  writing %s questions (has %s)",

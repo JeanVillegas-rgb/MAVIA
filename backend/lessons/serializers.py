@@ -6,8 +6,7 @@ from .models import (
     LearningMaterial,
     LearningObject,
     OutlineNode,
-    Question,
-    QuestionLearningObjectLink,
+    ExtractedQuestion,
 )
 from .services.audio_generator import remove_missing_audio_urls
 from .services.block_classifier import is_structural_metadata_label
@@ -159,77 +158,21 @@ class LearningObjectSerializer(serializers.ModelSerializer):
         return narration_pending(obj)
 
 
-class QuestionLearningObjectLinkSerializer(serializers.ModelSerializer):
-    learning_object_group_id = serializers.IntegerField(
-        source="learning_object.group_id",
-        read_only=True,
-        allow_null=True,
-    )
-    learning_object_title = serializers.CharField(
-        source="learning_object.title",
-        read_only=True,
-    )
-
+class ExtractedQuestionSerializer(serializers.ModelSerializer):
     class Meta:
-        model = QuestionLearningObjectLink
-        fields = [
-            "learning_object",
-            "learning_object_group_id",
-            "learning_object_title",
-            "relevance_score",
-            "method",
-            "is_primary",
-            "review_status",
-            "reviewed_at",
-        ]
-
-
-class QuestionSerializer(serializers.ModelSerializer):
-    learning_object_links = QuestionLearningObjectLinkSerializer(many=True, read_only=True)
-    outline_node_id = serializers.IntegerField(
-        source="material.outline_node_id",
-        read_only=True,
-        allow_null=True,
-    )
-    source_filename = serializers.SerializerMethodField()
-    pairing_status = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Question
+        model = ExtractedQuestion
         fields = [
             "id",
             "material",
-            "outline_node_id",
             "prompt",
-            "source_type",
-            "source_filename",
-            "content_fingerprint",
             "question_type",
             "choices",
             "correct_answer",
-            "bloom_level",
-            "thinking_order",
-            "difficulty",
-            "category",
-            "validation_status",
-            "validation_issues",
-            "pairing_status",
-            "adaptive_question",
             "order",
             "source_page",
             "source_block_id",
             "source_excerpt",
-            "learning_object_links",
         ]
-
-    def get_source_filename(self, obj):
-        if obj.source_type == Question.SourceType.MANUAL:
-            return ""
-        return obj.material.pdf_file.name.split("/")[-1] if obj.material.pdf_file else ""
-
-    def get_pairing_status(self, obj):
-        link = next(iter(obj.learning_object_links.all()), None)
-        return link.review_status if link else "unmatched"
 
 
 class LearningObjectMutationSerializer(serializers.ModelSerializer):
@@ -274,7 +217,7 @@ class LearningMaterialSerializer(serializers.ModelSerializer):
     outline_node_title = serializers.SerializerMethodField()
     outline_node_path = serializers.SerializerMethodField()
     module_node_title = serializers.SerializerMethodField()
-    questions = QuestionSerializer(many=True, read_only=True)
+    questions = ExtractedQuestionSerializer(many=True, read_only=True)
 
     class Meta:
         model = LearningMaterial

@@ -183,11 +183,8 @@ def remove_empty_learning_object_groups(material):
 
 
 def refresh_material_learning_relationships(material):
-    """Rebuild concept groups and downstream question links after an edit."""
+    """Rebuild concept groups after an edit."""
     if material.outline_node_id is None:
         return
     group_material_learning_objects(material)
     remove_empty_learning_object_groups(material)
-    from .question_linker import refresh_question_learning_object_links
-
-    refresh_question_learning_object_links(material)

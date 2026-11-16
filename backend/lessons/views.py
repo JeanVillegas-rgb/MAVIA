@@ -48,8 +48,6 @@ from .models import (
     LearningObject,
     LearningObjectGroup,
     OutlineNode,
-    Question,
-    QuestionLearningObjectLink,
 )
 from .features.pdf_processing.serializers import (
     CourseOutlineUploadInputSerializer,
@@ -76,7 +74,6 @@ from .serializers import (
     LearningObjectSerializer,
     OutlineNodeMutationSerializer,
     OutlineNodeSerializer,
-    QuestionSerializer,
 )
 from .services.audio_generator import (
     AudioGenerationError,
@@ -85,33 +82,18 @@ from .services.audio_generator import (
     generate_material_audio_playlist,
 )
 from .services.block_classifier import is_structural_metadata_label
-from .services.question_linker import (
-    CONFIRMED_QUESTION_PAIRING_STATUSES,
-    question_pairing_debug_configuration,
-    refresh_question_learning_object_links,
-)
 from .services.concept_grouper import (
     learning_objects_are_confirmed,
     refresh_material_learning_relationships,
 )
 from question_generation.services.bank_status import (
     bank_out_of_date,
-    keep_bank,
     refile_bank_before_delete,
     settle_bank_owner,
 )
 from question_generation.services.pipeline import question_minimum
-from .services.question_workflow import (
-    TIERS,
-    counts_toward_minimum,
-    label_printed_questions,
-    delete_generated_questions_for,
-    duplicate_for_topic,
-    duplicate_in_topic,
-    enriched_question_values,
-    question_snapshots,
-    sync_question_to_adaptive,
-)
+from question_generation.services.question_bank import TIERS, topic_rows
+from .services.question_workflow import question_snapshots
 from .services.source_review import finalize_source_review, source_review_is_finalized
 
 
@@ -215,7 +197,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         "nodes",
         "outlines",
         "materials__learning_objects",
-        "materials__questions__learning_object_links__learning_object",
+        "materials__questions",
     ).all()
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
@@ -287,38 +269,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         has_confirmed_learning_objects = learning_object_queryset.filter(
             material__outline_node=node,
         ).exists()
-        confirmed_link_queryset = (
-            QuestionLearningObjectLink.objects.filter(
-                learning_object__material__generated_json__learning_objects_confirmed=True,
-            )
-            .select_related("learning_object__group")
-            .order_by("-is_primary", "-relevance_score", "id")
+        all_questions, confirmed_questions_by_group, counted_by_group = (
+            topic_rows(node) if has_confirmed_learning_objects else ([], {}, {})
         )
-        all_questions = list(
-            Question.objects.filter(material__outline_node=node)
-            .select_related("material")
-            .prefetch_related(
-                Prefetch("learning_object_links", queryset=confirmed_link_queryset)
-            )
-            .order_by("material_id", "order", "id")
-        ) if has_confirmed_learning_objects else []
-        confirmed_questions_by_group = defaultdict(list)
         minimum = question_minimum()
-        # Toward each concept's minimum: the same rule generation uses, so the
-        # counter and the Generate button agree on who is short.
-        counted_by_group = defaultdict(set)
-        for question in all_questions:
-            group_ids = set()
-            for link in question.learning_object_links.all():
-                group_id = link.learning_object.group_id
-                if group_id is None:
-                    continue
-                if link.review_status in CONFIRMED_QUESTION_PAIRING_STATUSES:
-                    group_ids.add(group_id)
-                if counts_toward_minimum(question, link):
-                    counted_by_group[group_id].add(question)
-            for group_id in group_ids:
-                confirmed_questions_by_group[group_id].append(question)
 
         order_index = {
             material_id: index for index, material_id in enumerate(material_order(node))
@@ -536,15 +490,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                         many=True,
                         context={"request": request},
                     ).data,
-                    "questions": QuestionSerializer(
-                        confirmed_questions_by_group[group.id],
-                        many=True,
-                        context={"request": request},
-                    ).data,
-                    "question_counts": {
-                        tier: sum(question.thinking_order == tier for question in counted_by_group[group.id])
-                        for tier in TIERS
-                    },
+                    "questions": confirmed_questions_by_group.get(group.id, []),
+                    "question_counts": counted_by_group.get(
+                        group.id, {tier: 0 for tier in TIERS},
+                    ),
                     "question_minimum": minimum,
                     # Written before the concept's text last changed; the
                     # teacher keeps or regenerates it before publishing.
@@ -576,12 +525,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             "outline_node": OutlineNodeSerializer(node, context={"request": request}).data,
             "learning_object_groups": groups,
             "question_minimum": minimum,
-            "question_pairing_debug": question_pairing_debug_configuration(),
-            "question_pairings": QuestionSerializer(
-                all_questions,
-                many=True,
-                context={"request": request},
-            ).data,
+            "question_pairings": all_questions,
         }
 
         elapsed_ms = round((perf_counter() - started_at) * 1000, 1)
@@ -913,294 +857,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/questions",
-    )
-    def create_topic_question(self, request, pk=None, node_id=None):
-        """Create a teacher-authored question and immediately suggest a concept."""
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response(
-                {"detail": "Outline node not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        prompt = str(request.data.get("prompt") or "").strip()
-        question_type = str(request.data.get("question_type") or "").strip()
-        if not prompt:
-            return Response(
-                {"detail": "Enter the question text."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if question_type not in {
-            Question.Type.TRUE_FALSE,
-            Question.Type.MULTIPLE_CHOICE,
-        }:
-            return Response(
-                {"detail": "Question type must be true_false or multiple_choice."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        raw_choices = request.data.get("choices") or []
-        correct_answer = str(request.data.get("correct_answer") or "").strip()
-        if question_type == Question.Type.TRUE_FALSE:
-            choices = ["True", "False"]
-            if correct_answer.casefold() not in {"true", "false"}:
-                return Response(
-                    {"detail": "Choose True or False as the correct answer."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            correct_answer = correct_answer.title()
-        else:
-            if not isinstance(raw_choices, list):
-                return Response(
-                    {"detail": "Multiple-choice options must be a list."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            choices = [str(choice).strip() for choice in raw_choices if str(choice).strip()]
-            if len(choices) < 2 or len(choices) > 4:
-                return Response(
-                    {"detail": "Provide between two and four answer choices."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if correct_answer not in choices:
-                return Response(
-                    {"detail": "The correct answer must match one of the choices."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        values = enriched_question_values(
-            prompt,
-            question_type,
-            choices,
-            correct_answer,
-        )
-        duplicate = duplicate_for_topic(
-            course.id,
-            node.id,
-            values["content_fingerprint"],
-        )
-        if duplicate is not None:
-            return Response(
-                {
-                    "detail": "This question already exists in this topic.",
-                    "duplicate_question_id": duplicate.id,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        raw_group_id = request.data.get("learning_object_group_id")
-        target_group = None
-        if raw_group_id not in (None, ""):
-            try:
-                target_group = LearningObjectGroup.objects.get(pk=int(raw_group_id), outline_node=node)
-            except (TypeError, ValueError, LearningObjectGroup.DoesNotExist):
-                return Response(
-                    {"detail": "Selected concept was not found in this outline node."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        manual_material = LearningMaterial.objects.filter(
-            course=course,
-            outline_node=node,
-            generated_json__document_source="manual_questions",
-        ).first()
-        if manual_material is None:
-            module_node = node
-            while module_node.parent_id:
-                module_node = module_node.parent
-            manual_material = LearningMaterial.objects.create(
-                course=course,
-                outline_node=node,
-                module_node=module_node,
-                title="Manually added questions",
-                pdf_file="",
-                status=LearningMaterial.Status.COMPLETED,
-                generated_json={
-                    "document_role": "assessment",
-                    "document_source": "manual_questions",
-                    "learning_objects": [],
-                },
-            )
-
-        next_order = (manual_material.questions.aggregate(Max("order"))["order__max"] or -1) + 1
-        question = Question.objects.create(
-            material=manual_material,
-            source_type=Question.SourceType.MANUAL,
-            order=next_order,
-            source_excerpt="Manually added by the teacher.",
-            **values,
-        )
-        if target_group is not None:
-            representative = (
-                target_group.learning_objects.filter(
-                    material__generated_json__learning_objects_confirmed=True,
-                )
-                .order_by("material_id", "order", "id")
-                .first()
-            )
-            if representative is None:
-                return Response(
-                    {"detail": "The selected concept has no confirmed learning objects."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            QuestionLearningObjectLink.objects.create(
-                question=question,
-                learning_object=representative,
-                relevance_score=0.0,
-                method="teacher_selected",
-                is_primary=True,
-                review_status=QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-                reviewed_at=timezone.now(),
-            )
-        refresh_question_learning_object_links(manual_material)
-        question.refresh_from_db()
-        sync_question_to_adaptive(question)
-        generated_json = manual_material.generated_json or {}
-        generated_json["questions"] = question_snapshots(manual_material)
-        manual_material.generated_json = generated_json
-        manual_material.save(update_fields=["generated_json"])
-
-        return Response(
-            {
-                "question": QuestionSerializer(question, context={"request": request}).data,
-                "resources": self._learning_resources_payload(node, request),
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
-    @action(
-        detail=True,
-        methods=["patch", "delete"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/questions/(?P<question_id>[^/.]+)",
-    )
-    def delete_topic_question(self, request, pk=None, node_id=None, question_id=None):
-        """Permanently drop a question and every concept pairing it had."""
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response(
-                {"detail": "Outline node not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        try:
-            question = Question.objects.select_related("material").get(
-                pk=question_id,
-                material__course=course,
-                material__outline_node=node,
-            )
-        except (Question.DoesNotExist, ValueError):
-            return Response(
-                {"detail": "Question was not found in this outline node."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        material = question.material
-        if request.method == "PATCH":
-            prompt = str(request.data.get("prompt", question.prompt) or "").strip()
-            question_type = str(request.data.get("question_type", question.question_type) or "").strip()
-            choices = request.data.get("choices", question.choices)
-            correct_answer = str(request.data.get("correct_answer", question.correct_answer) or "").strip()
-            if not prompt:
-                return Response({"detail": "Enter the question text."}, status=status.HTTP_400_BAD_REQUEST)
-            if question_type not in {Question.Type.TRUE_FALSE, Question.Type.MULTIPLE_CHOICE}:
-                return Response(
-                    {"detail": "Question type must be true_false or multiple_choice."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if question_type == Question.Type.TRUE_FALSE:
-                choices = ["True", "False"]
-                correct_answer = correct_answer.title()
-            elif not isinstance(choices, list):
-                return Response({"detail": "Multiple-choice options must be a list."}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                choices = [str(choice).strip() for choice in choices if str(choice).strip()]
-
-            values = enriched_question_values(prompt, question_type, choices, correct_answer)
-            if values["validation_issues"]:
-                return Response(
-                    {"detail": " ".join(values["validation_issues"]), "validation_issues": values["validation_issues"]},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            duplicate = duplicate_in_topic(material, values["content_fingerprint"], exclude_id=question.id)
-            if duplicate is not None:
-                return Response(
-                    {"detail": "This question already exists in this topic.", "duplicate_question_id": duplicate.id},
-                    status=status.HTTP_409_CONFLICT,
-                )
-            update_pairing = "learning_object_group_id" in request.data
-            target_group = None
-            representative = None
-            if update_pairing:
-                raw_group_id = request.data.get("learning_object_group_id")
-                if raw_group_id not in (None, ""):
-                    try:
-                        target_group = LearningObjectGroup.objects.get(pk=int(raw_group_id), outline_node=node)
-                    except (TypeError, ValueError, LearningObjectGroup.DoesNotExist):
-                        return Response(
-                            {"detail": "Selected concept was not found in this outline node."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    representative = target_group.learning_objects.filter(
-                        material__generated_json__learning_objects_confirmed=True,
-                    ).order_by("material_id", "order", "id").first()
-                    if representative is None:
-                        return Response(
-                            {"detail": "The selected concept has no confirmed learning objects."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-            for field, value in values.items():
-                setattr(question, field, value)
-            if question.source_type != Question.SourceType.MANUAL:
-                # A generated one is kept through a regeneration of its
-                # concept's bank; a printed one now counts toward the
-                # concept's minimum once its pairing is confirmed too.
-                question.teacher_edited = True
-                values["teacher_edited"] = True
-            question.save(update_fields=list(values))
-
-            if update_pairing:
-                question.learning_object_links.all().delete()
-                if target_group is not None:
-                    QuestionLearningObjectLink.objects.create(
-                        question=question,
-                        learning_object=representative,
-                        relevance_score=0.0,
-                        method="teacher_selected",
-                        is_primary=True,
-                        review_status=QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-                        reviewed_at=timezone.now(),
-                    )
-            sync_question_to_adaptive(question)
-            generated_json = material.generated_json or {}
-            generated_json["questions"] = question_snapshots(material)
-            material.generated_json = generated_json
-            material.save(update_fields=["generated_json"])
-            return Response({
-                "question": QuestionSerializer(question, context={"request": request}).data,
-                "resources": self._learning_resources_payload(node, request),
-            })
-
-        adaptive_id = question.adaptive_question_id
-        question.delete()
-        if adaptive_id:
-            from question_generation.models import GeneratedQuestion
-            GeneratedQuestion.objects.filter(pk=adaptive_id).delete()
-
-        generated_json = material.generated_json or {}
-        generated_json["questions"] = question_snapshots(material)
-        material.generated_json = generated_json
-        material.save(update_fields=["generated_json"])
-        self._refresh_relationship_snapshots({material}, recompute=False)
-
-        return Response(self._learning_resources_payload(node, request))
-
-    @action(
-        detail=True,
         methods=["delete"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/learning-objects/(?P<object_id>[^/.]+)",
     )
@@ -1245,7 +901,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         # object it is filed under; it stays, re-filed, and reads as out of
         # date. Only questions generated from this object alone go with it.
         refile_bank_before_delete(learning_object)
-        delete_generated_questions_for(learning_object)
         learning_object.delete()
         if group is not None and not group.learning_objects.exists():
             group.delete()
@@ -1568,54 +1223,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/label-questions",
-    )
-    def label_topic_questions(self, request, pk=None, node_id=None):
-        """Label the printed questions not labelled yet: the Questions step's job.
-
-        Upload stores them without a Bloom level, LOTS/HOTS or category, so
-        every question process happens on the Questions screen. A failure is
-        reported, not swallowed: the teacher cannot move on until it works.
-        """
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            label_printed_questions(node)
-        except Exception as exc:  # noqa: BLE001 -- shown to the teacher with Try again
-            logger.exception("[Questions] topic %s  labelling printed questions failed", node.id)
-            return Response(
-                {"detail": f"The printed questions could not be labelled: {exc}"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        return Response(self._learning_resources_payload(node, request))
-
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/concepts/(?P<group_id>[^/.]+)/keep-questions",
-    )
-    def keep_question_bank(self, request, pk=None, node_id=None, group_id=None):
-        """Confirm an out-of-date question bank still fits the concept's text.
-
-        The questions are left exactly as they are; only the record of which
-        text they were checked against moves forward, which clears the
-        publish block -- the same as keeping an out-of-date version.
-        """
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-            group = node.learning_object_groups.get(pk=group_id)
-        except (OutlineNode.DoesNotExist, LearningObjectGroup.DoesNotExist, ValueError):
-            return Response({"detail": "Concept not found in this topic."}, status=status.HTTP_404_NOT_FOUND)
-        keep_bank(group)
-        return Response(self._learning_resources_payload(node, request))
-
-    @action(
-        detail=True,
-        methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/version-assignment",
     )
     def confirm_version_assignment(self, request, pk=None, node_id=None):
@@ -1697,108 +1304,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["post"],
-        url_path=r"outline-nodes/(?P<node_id>[^/.]+)/questions/(?P<question_id>[^/.]+)/pairing",
-    )
-    def review_question_pairing(self, request, pk=None, node_id=None, question_id=None):
-        """Confirm, redirect, or deliberately leave a suggested question pair unpaired."""
-        course = self.get_object()
-        try:
-            node = course.nodes.get(pk=node_id)
-        except OutlineNode.DoesNotExist:
-            return Response(
-                {"detail": "Outline node not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        try:
-            question = Question.objects.select_related("material").get(
-                pk=question_id,
-                material__course=course,
-                material__outline_node=node,
-            )
-        except Question.DoesNotExist:
-            return Response(
-                {"detail": "Question not found in this outline node."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        decision = str(request.data.get("decision") or "").strip().casefold()
-        if decision not in {"confirm", "change", "unpair"}:
-            return Response(
-                {"detail": "decision must be confirm, change, or unpair."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        existing = question.learning_object_links.filter(
-            learning_object__material__generated_json__learning_objects_confirmed=True,
-        ).select_related(
-            "learning_object__group"
-        ).order_by("-is_primary", "-relevance_score", "id").first()
-        now = timezone.now()
-
-        if decision == "change":
-            try:
-                group_id = int(request.data.get("learning_object_group_id"))
-            except (TypeError, ValueError):
-                return Response(
-                    {"detail": "Select a valid learning-object group."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            try:
-                group = LearningObjectGroup.objects.get(pk=group_id, outline_node=node)
-            except LearningObjectGroup.DoesNotExist:
-                return Response(
-                    {"detail": "Learning-object group not found in this outline node."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            confirmed_group_objects = group.learning_objects.filter(
-                material__generated_json__learning_objects_confirmed=True,
-            )
-            representative = (
-                confirmed_group_objects.filter(material=question.material).order_by("order", "id").first()
-                or confirmed_group_objects.order_by("material_id", "order", "id").first()
-            )
-            if representative is None:
-                return Response(
-                    {"detail": "The selected concept group has no learning objects."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            question.learning_object_links.all().delete()
-            QuestionLearningObjectLink.objects.create(
-                question=question,
-                learning_object=representative,
-                relevance_score=0.0,
-                method="teacher_selected",
-                is_primary=True,
-                review_status=QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED,
-                reviewed_at=now,
-            )
-        elif existing is None:
-            return Response(
-                {"detail": "No suggested question pairing is available to review."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        elif decision == "confirm":
-            question.learning_object_links.exclude(pk=existing.pk).delete()
-            existing.is_primary = True
-            existing.review_status = QuestionLearningObjectLink.ReviewStatus.TEACHER_CONFIRMED
-            existing.reviewed_at = now
-            existing.save(update_fields=["is_primary", "review_status", "reviewed_at"])
-        else:
-            question.learning_object_links.exclude(pk=existing.pk).delete()
-            existing.is_primary = False
-            existing.review_status = QuestionLearningObjectLink.ReviewStatus.TEACHER_UNPAIRED
-            existing.reviewed_at = now
-            existing.save(update_fields=["is_primary", "review_status", "reviewed_at"])
-
-        question.refresh_from_db()
-        sync_question_to_adaptive(question)
-        # Preserve the explicit teacher decision without rescoring every question.
-        self._refresh_relationship_snapshots({question.material}, recompute=False)
-        return Response(self._learning_resources_payload(node, request))
-
-    @action(
-        detail=True,
         methods=["get"],
         url_path=r"modules/(?P<module_id>[^/.]+)/materials",
     )
@@ -1815,7 +1320,7 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             course.materials.filter(module_node=module)
             .prefetch_related(
                 "learning_objects",
-                "questions__learning_object_links__learning_object",
+                "questions",
             )
             .order_by("-created_at")
         )
@@ -2325,7 +1830,6 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             # The concept's bank stays with the concept (re-filed); only this
             # object's own generated questions go with it.
             refile_bank_before_delete(learning_object)
-            delete_generated_questions_for(learning_object)
             learning_object.delete()
             # A group whose only member was deleted is not a concept any more.
             if group is not None and not group.learning_objects.exists():

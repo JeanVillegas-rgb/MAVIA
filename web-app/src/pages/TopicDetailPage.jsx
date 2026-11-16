@@ -3384,27 +3384,14 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
           )}
         </div>
         <div className="question-document-list">
-          {(material.questions || []).map((question, index) => {
-            const link = question.learning_object_links?.[0];
-            const isConfirmed = ["auto_confirmed", "teacher_confirmed"].includes(link?.review_status);
-            const statusLabel = isConfirmed
-              ? "Assigned"
-              : link?.review_status === "pending_review"
-                ? "Needs review"
-                : "Not matched";
-            return (
-              <div className="question-document-row" key={question.id}>
-                <span>{index + 1}</span>
-                <div>
-                  <strong>{question.prompt}</strong>
-                  <small>
-                    {statusLabel}
-                    {link?.learning_object_title ? ` · ${link.learning_object_title}` : ""}
-                  </small>
-                </div>
+          {(material.questions || []).map((question, index) => (
+            <div className="question-document-row" key={question.id}>
+              <span>{index + 1}</span>
+              <div>
+                <strong>{question.prompt}</strong>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </article>
     );

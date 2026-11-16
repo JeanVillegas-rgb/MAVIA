@@ -100,7 +100,7 @@ class Question(models.Model):
         db_index=True,
     )
     extracted_question = models.ForeignKey(
-        "lessons.Question",
+        "lessons.ExtractedQuestion",
         null=True,
         blank=True,
         related_name="question_bank_rows",

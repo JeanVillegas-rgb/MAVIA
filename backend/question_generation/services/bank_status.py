@@ -83,19 +83,7 @@ def refile_bank_before_delete(learning_object):
 
 
 def _move_bank(source, target):
-    from lessons.models import QuestionLearningObjectLink
-
     source.generated_questions.update(node=target)
-    for link in QuestionLearningObjectLink.objects.filter(
-        learning_object=source, method="generated_from_object",
-    ):
-        if QuestionLearningObjectLink.objects.filter(
-            question_id=link.question_id, learning_object=target,
-        ).exists():
-            link.delete()
-        else:
-            link.learning_object = target
-            link.save(update_fields=["learning_object"])
 
 
 def settle_bank_owner(group):

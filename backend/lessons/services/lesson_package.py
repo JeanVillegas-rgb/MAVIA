@@ -4,7 +4,7 @@ Adapter for ``Milestone1-Jean/backend/course/services.py::LessonPackageService``
 that reads mavia's own data instead of the ported ``course`` app: modules are
 top-level ``OutlineNode``s, a lesson is a child topic, tracks come straight
 from each material's ``generated_json["lesson_playlist"]``, and questions are
-``lessons.Question`` rows.
+``lessons.ExtractedQuestion`` rows.
 
 ``learning_path`` (below) is the one piece of this payload that does *not*
 come from the ``lessons`` app's own rows: it is the topic's published
@@ -14,7 +14,7 @@ prerequisite structure the adaptive rules use, without a second request.
 It is ``None`` until the topic has been published with a learning path.
 """
 
-from lessons.models import LearningMaterial, OutlineNode, Question
+from lessons.models import ExtractedQuestion, LearningMaterial, OutlineNode
 
 from .audio_generator import _playlist_text_by_order
 
@@ -100,7 +100,7 @@ def _lesson_tracks(lesson_node):
 
 def _lesson_questions(lesson_node):
     questions = (
-        Question.objects.filter(material__outline_node=lesson_node)
+        ExtractedQuestion.objects.filter(material__outline_node=lesson_node)
         .order_by("order", "id")
         .distinct()
     )
@@ -160,7 +160,7 @@ def build_course_module_summaries(course, *, published_only=False):
         question_count = 0
         for node in lesson_nodes:
             track_count += len(_lesson_tracks(node))
-            question_count += Question.objects.filter(
+            question_count += ExtractedQuestion.objects.filter(
                 material__outline_node=node
             ).distinct().count()
         summaries.append(
