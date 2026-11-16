@@ -76,6 +76,33 @@ def upload_questionnaire(node, upload):
     return counts
 
 
+def topic_questionnaires(node):
+    """The questionnaires uploaded to the topic, with how many questions each still has and how many the teacher worked on."""
+    files = []
+    for question_file in QuestionFile.objects.filter(outline_node=node).order_by("uploaded_at", "id"):
+        questions = list(question_file.questions.all())
+        files.append({
+            "id": question_file.id,
+            "name": question_file.file.name.rsplit("/", 1)[-1],
+            "uploaded_at": question_file.uploaded_at,
+            "questions": len(questions),
+            "reviewed": sum(
+                question.teacher_edited or question.paired_by == "teacher" or question.check_result == "kept"
+                for question in questions
+            ),
+        })
+    return files
+
+
+def delete_questionnaire(node, file_id):
+    """Delete an uploaded questionnaire and every question that came from it."""
+    question_file = QuestionFile.objects.filter(pk=file_id, outline_node=node).first()
+    if question_file is None:
+        raise QuestionError("Questionnaire was not found in this topic.", status=404)
+    question_file.file.delete(save=False)
+    question_file.delete()
+
+
 def outcome_message(counts):
     """What the upload did, in a sentence for the teacher."""
     if not counts["found"]:

@@ -264,6 +264,15 @@ export function reviewQuestionPairing(
   );
 }
 
+// The questionnaires uploaded to a topic, and deleting one with its questions.
+export function fetchQuestionnaires(nodeId) {
+  return request(`/generation/topics/${nodeId}/questionnaire/`);
+}
+
+export function deleteQuestionnaire(nodeId, fileId) {
+  return request(`/generation/topics/${nodeId}/questionnaire/${fileId}/`, { method: "DELETE" });
+}
+
 // The teacher keeps a question the answer check held.
 export function keepTopicQuestion(nodeId, questionId) {
   return request(`/generation/topics/${nodeId}/questions/${questionId}/keep/`, { method: "POST" });

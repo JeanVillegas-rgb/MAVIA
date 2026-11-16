@@ -27,6 +27,8 @@ import {
   keepVersionText,
   reviewQuestionPairing,
   uploadQuestionnaire,
+  fetchQuestionnaires,
+  deleteQuestionnaire,
   keepTopicQuestion,
   startQuestionGeneration,
   startTopicQuestionGeneration,
@@ -1667,6 +1669,34 @@ function ManualQuestionPanel({
 }) {
   const [uploading, setUploading] = useState(false);
   const [lastResult, setLastResult] = useState(null);
+  const [questionnaires, setQuestionnaires] = useState([]);
+  const [questionnaireToDelete, setQuestionnaireToDelete] = useState(null);
+  const [deletingQuestionnaire, setDeletingQuestionnaire] = useState(false);
+
+  async function loadQuestionnaires() {
+    try {
+      setQuestionnaires(await fetchQuestionnaires(topicId));
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+  useEffect(() => { loadQuestionnaires(); }, [topicId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function removeQuestionnaire() {
+    setDeletingQuestionnaire(true);
+    onError("");
+    try {
+      await deleteQuestionnaire(topicId, questionnaireToDelete.id);
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
+      await loadQuestionnaires();
+      setLastResult({ message: `${questionnaireToDelete.name} and its questions were deleted.`, held: false });
+      setQuestionnaireToDelete(null);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setDeletingQuestionnaire(false);
+    }
+  }
   const [questionType, setQuestionType] = useState("true_false");
   const [prompt, setPrompt] = useState("");
   const [choices, setChoices] = useState(["", "", "", ""]);
@@ -1692,6 +1722,7 @@ function ManualQuestionPanel({
       formData.append("pdf_file", file);
       const data = await uploadQuestionnaire(topicId, formData);
       onResourcesChange(await fetchLearningResources(courseId, topicId));
+      await loadQuestionnaires();
       setLastResult({ message: data.message, held: data.held > 0 });
     } catch (err) {
       onError(err.message);
@@ -1766,6 +1797,29 @@ function ManualQuestionPanel({
               <input type="file" accept=".pdf,application/pdf" hidden disabled={uploading} onChange={handleUpload} />
             </label>
           </div>
+          {questionnaires.length > 0 && (
+            <div className="question-learning-object-questions">
+              <h5>Uploaded questionnaires</h5>
+              <ul className="questionnaire-file-list">
+                {questionnaires.map((file) => (
+                  <li key={file.id}>
+                    <div>
+                      <strong>{file.name}</strong>
+                      <small>{file.questions} question{file.questions === 1 ? "" : "s"} in this topic</small>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-small"
+                      disabled={uploading || deletingQuestionnaire}
+                      onClick={() => setQuestionnaireToDelete(file)}
+                    >
+                      Delete questionnaire
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </article>
 
         <article className="question-learning-object-card">
@@ -1869,6 +1923,50 @@ function ManualQuestionPanel({
           </form>
         </article>
       </div>
+
+      {questionnaireToDelete && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deletingQuestionnaire) setQuestionnaireToDelete(null);
+          }}
+        >
+          <div className="modal-card delete-material-modal" role="dialog" aria-modal="true" aria-labelledby="delete-questionnaire-title">
+            <div className="delete-modal-heading">
+              <span className="delete-modal-icon" aria-hidden="true">!</span>
+              <div>
+                <h3 id="delete-questionnaire-title">Delete questionnaire?</h3>
+                <p>This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="delete-material-summary">
+              <strong>{questionnaireToDelete.name}</strong>
+            </div>
+            {questionnaireToDelete.questions > 0 ? (
+              <p>
+                <strong>
+                  {questionnaireToDelete.questions} question{questionnaireToDelete.questions === 1 ? "" : "s"} from
+                  this questionnaire will also be deleted
+                </strong>
+                {questionnaireToDelete.reviewed > 0
+                  ? `, including ${questionnaireToDelete.reviewed} you edited, paired to a concept or kept.`
+                  : "."}
+              </p>
+            ) : (
+              <p>None of its questions are left in this topic.</p>
+            )}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" disabled={deletingQuestionnaire} onClick={() => setQuestionnaireToDelete(null)}>
+                Keep questionnaire
+              </button>
+              <button type="button" className="btn btn-danger" disabled={deletingQuestionnaire} onClick={removeQuestionnaire}>
+                {deletingQuestionnaire ? "Deleting..." : "Delete questionnaire"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

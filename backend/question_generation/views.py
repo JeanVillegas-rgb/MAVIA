@@ -358,9 +358,17 @@ class KeepQuestionView(APIView):
 
 
 class QuestionnaireUploadView(APIView):
-    """POST /api/generation/topics/<id>/questionnaire/: add the questions in a teacher's questionnaire PDF."""
+    """GET or POST /api/generation/topics/<id>/questionnaire/: list the topic's questionnaires, or add the questions in a new one."""
     permission_classes = [IsTeacherOrAdmin]
     parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request, outline_node_id):
+        from .services.questionnaire import topic_questionnaires
+
+        node = _topic(outline_node_id)
+        if node is None:
+            return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        return Response(topic_questionnaires(node))
 
     def post(self, request, outline_node_id):
         from .services.questionnaire import outcome_message, upload_questionnaire
@@ -380,6 +388,24 @@ class QuestionnaireUploadView(APIView):
             {**counts, "message": outcome_message(counts)},
             status=status.HTTP_201_CREATED if counts["added"] else status.HTTP_200_OK,
         )
+
+
+class QuestionnaireFileView(APIView):
+    """DELETE /api/generation/topics/<id>/questionnaire/<id>/: delete a questionnaire and its questions."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def delete(self, request, outline_node_id, file_id):
+        from .services.questionnaire import delete_questionnaire
+        from .services.teacher_questions import QuestionError
+
+        node = _topic(outline_node_id)
+        if node is None:
+            return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        try:
+            delete_questionnaire(node, file_id)
+        except QuestionError as error:
+            return Response({"detail": error.detail}, status=error.status)
+        return Response({"deleted": True})
 
 
 class LabelQuestionsView(APIView):
