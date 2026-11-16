@@ -391,21 +391,6 @@ def _validate_drafts_for_node(node, on_event=None, stats=None):
     return surviving, failures
 
 
-def _bank_is_short(node, orders=None):
-    """True while the surviving drafts cannot fill the quota."""
-    from question_generation.models import GeneratedQuestion
-
-    counts = Counter(
-        GeneratedQuestion.objects.filter(node=node, status="draft")
-        .values_list("thinking_order", flat=True)
-    )
-    return any(
-        counts.get(order, 0) < config["count"]
-        for order, config in QUESTION_DISTRIBUTION.items()
-        if orders is None or order in orders
-    )
-
-
 def finalize_node_questions(node, classifier, on_event=None, stats=None, append=False, caps=None):
     """Deduplicate, classify, drop "create", trim to quota, then make the drafts final."""
     from question_generation.models import GeneratedQuestion
@@ -542,8 +527,9 @@ def generate_questions_for_node(
     on_event=None,
     stats=None,
     append=False,
+    correction="",
 ):
-    """Draft, check and finalize one concept's questions; drafts left by an earlier run are discarded first."""
+    """One round for one concept: draft, check, classify and save; returns (kept, the correction for a next round)."""
     from question_generation.models import GeneratedQuestion
     from .grounding import correction_note, enabled
 
@@ -560,7 +546,7 @@ def generate_questions_for_node(
                 f"{concept_name(node)} already meets the minimum",
                 node_id=node.id,
             )
-            return []
+            return [], ""
 
     GeneratedQuestion.objects.filter(node=node, status="draft").delete()
 
@@ -568,37 +554,17 @@ def generate_questions_for_node(
         "[Questions] CONCEPT: %s  (object %s)\n    REFERENCE CONTENT FOR THE QUESTIONS:\n%s",
         name(concept_name(node)), node.id, textwrap.indent(concept_source_text(node), "      "),
     )
-    gate_on = enabled()
-    max_retries = int(getattr(settings, "QUESTION_VALIDATION_MAX_RETRIES", 1))
-    correction, drafted = "", 0
-
-    for attempt in range(max_retries + 1):
-        drafted += _draft_questions_for_node(
-            node,
-            classifier,
-            on_event=on_event,
-            correction=correction,
-            orders=orders,
-        )
-        if not gate_on:
-            break
-
+    drafted = _draft_questions_for_node(
+        node, classifier, on_event=on_event, correction=correction, orders=orders,
+    )
+    failures = []
+    if enabled():
         _emit(
             on_event, "grounding_started",
-            f"Checking drafts against the lesson's source text (pass {attempt + 1})",
-            node_id=node.id, attempt=attempt + 1,
+            "Checking drafts against the lesson's source text",
+            node_id=node.id,
         )
-        _surviving, failures = _validate_drafts_for_node(
-            node, on_event=on_event, stats=stats,
-        )
-        if not failures or not _bank_is_short(node, orders) or attempt == max_retries:
-            break
-        correction = correction_note(failures)
-        _emit(
-            on_event, "grounding_retry",
-            f"Regenerating {len(failures)} rejected question(s) with correction feedback",
-            node_id=node.id, attempt=attempt + 1, rejected=len(failures),
-        )
+        _surviving, failures = _validate_drafts_for_node(node, on_event=on_event, stats=stats)
 
     if stats is not None:
         stats["total_drafted"] = stats.get("total_drafted", 0) + drafted
@@ -608,9 +574,15 @@ def generate_questions_for_node(
         f"Classifying and filtering {drafted} draft(s)",
         node_id=node.id, drafted=drafted,
     )
-    return finalize_node_questions(
+    kept = finalize_node_questions(
         node, classifier, on_event=on_event, stats=stats, append=append, caps=caps,
     )
+    return kept, correction_note(failures)
+
+
+def is_short(node):
+    """True while the concept has fewer LOTS or HOTS questions than the minimum."""
+    return bool(top_up_plan(node)[0])
 
 
 def top_up_plan(node):
@@ -697,13 +669,22 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
             node_id=node.id, title=concept_name(node),
             index=position, total=total_nodes,
         )
-        questions = generate_questions_for_node(
-            node,
-            classifier,
-            on_event=on_event,
-            stats=stats,
-            append=append,
-        )
+        questions, correction = [], ""
+        rounds = int(getattr(settings, "QUESTION_GENERATION_ROUNDS", 3))
+        for round_number in range(1, rounds + 1):
+            if round_number > 1:
+                if not is_short(node):
+                    break
+                _emit(
+                    on_event, "round_started",
+                    f"Round {round_number} of {rounds}: {concept_name(node)} is still short",
+                    round=round_number, rounds=rounds, total=1,
+                )
+            kept, correction = generate_questions_for_node(
+                node, classifier, on_event=on_event, stats=stats,
+                append=append or round_number > 1, correction=correction,
+            )
+            questions.extend(kept)
         all_questions.extend(questions)
         _emit(
             on_event, "node_finished",
@@ -755,10 +736,6 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
     minimum = question_minimum()
     goal = " + ".join(f"{minimum[order]} {order}" for order in QUESTION_DISTRIBUTION)
 
-    def is_short(node):
-        have = tier_counts(node)
-        return any(have[order] < minimum[order] for order in QUESTION_DISTRIBUTION)
-
     targets = [node for node in nodes if is_short(node)]
     logger.info(
         "[Questions] topic %s  started: %s of %s concepts short of %s",
@@ -771,7 +748,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
     )
     stats = {"total_drafted": 0, "excluded_create": 0, "duplicates": 0, "trimmed": 0,
              "ungrounded": 0, "unverified": 0}
-    added, failed = 0, {}
+    added, failed, corrections = 0, {}, {}
     if targets:
         classifier = _prepare_generation(on_event)
     for round_number in range(1, rounds + 1):
@@ -802,8 +779,9 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
                 index=position, total=len(targets), round=round_number, rounds=rounds,
             )
             try:
-                kept = generate_questions_for_node(
+                kept, corrections[node.id] = generate_questions_for_node(
                     node, classifier, on_event=on_event, stats=stats, append=True,
+                    correction=corrections.get(node.id, ""),
                 )
             except Exception as exc:
                 logger.exception("[Questions] %s  failed: %s", name(concept_name(node)), exc)

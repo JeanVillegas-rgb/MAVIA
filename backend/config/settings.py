@@ -294,7 +294,9 @@ QUESTION_COUNT_HOT = int(os.getenv("QUESTION_COUNT_HOT", "5"))
 # The page reads these from the API; nothing else holds a copy.
 QUESTION_MIN_LOT = int(os.getenv("QUESTION_MIN_LOT", "4"))
 QUESTION_MIN_HOT = int(os.getenv("QUESTION_MIN_HOT", "2"))
-# Rounds one "Generate" click runs, each one only for concepts still short.
+# Rounds of write, check, classify and save per concept; a round after the
+# first runs only while the concept is still short of the minimum, and carries
+# the previous round's rejection reasons into the prompt.
 QUESTION_GENERATION_ROUNDS = int(os.getenv("QUESTION_GENERATION_ROUNDS", "3"))
 # How each tier's drafts are split between multiple choice and true/false.
 QUESTION_FORMAT_WEIGHT_MCQ = int(os.getenv("QUESTION_FORMAT_WEIGHT_MCQ", "2"))
@@ -367,12 +369,6 @@ QUESTION_OVERGENERATION_FACTOR = float(
 QUESTION_VALIDATION_ENABLED = os.getenv(
     "QUESTION_VALIDATION_ENABLED", "True"
 ).lower() in {"1", "true", "yes"}
-# Corrective passes after the first. Each one is a full set of LLM calls, so
-# this trades run time for bank completeness; the loop stops early once the
-# quota is met.
-QUESTION_VALIDATION_MAX_RETRIES = int(
-    os.getenv("QUESTION_VALIDATION_MAX_RETRIES", "1")
-)
 # The judging model. Deliberately separate from QUESTION_LLM_MODEL so the
 # judge can be a different (or larger) model than the generator.
 QUESTION_JUDGE_MODEL = (
