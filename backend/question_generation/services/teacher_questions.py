@@ -164,7 +164,7 @@ def _outcome(question, place, verb):
     if structure_issues(question):
         return {"status": "held", "message": f"Question {verb}, but it still needs details. {problems}"}
     if place is None:
-        return {"status": "unpaired", "message": f"Question {verb} with no concept assigned."}
+        return {"status": "held", "message": f"Question {verb}. It still has no concept."}
     if problems:
         return {"status": "held", "message": f"Question {verb} but held for review. {problems}"}
     return {"status": "paired", "message": f'Question {verb} and paired with "{place["concept"]}".'}
@@ -200,10 +200,9 @@ def edit_question(node, question_id, data):
     _refuse_duplicate(node, question)
     _label(question)
 
-    if "learning_object_group_id" in data:
-        group = _chosen_group(node, data)
-    else:
-        group = question.node.group if question.node_id and question.paired_by else None
+    group = _chosen_group(node, data)
+    if group is None and question.node_id and question.paired_by:
+        group = question.node.group
     place = _chosen_place(question, group) if group else None
 
     question.outline_node = node
@@ -214,11 +213,11 @@ def edit_question(node, question_id, data):
 
 
 def review_pairing(node, question_id, data):
-    """Apply a teacher's ruling on a question's concept: confirm the suggestion, change it, or leave it unpaired."""
+    """Apply a teacher's ruling on a question's concept: confirm the suggested one, or choose another."""
     question = _question(node, question_id)
     decision = str(data.get("decision") or "").strip().casefold()
-    if decision not in ("confirm", "change", "unpair"):
-        raise QuestionError("decision must be confirm, change, or unpair.")
+    if decision not in ("confirm", "change"):
+        raise QuestionError("decision must be confirm or change.")
     broken = structure_issues(question)
 
     if decision == "change":
@@ -228,11 +227,8 @@ def review_pairing(node, question_id, data):
         place, verb = _chosen_place(question, group, check=not broken), "moved"
     elif question.node_id is None:
         raise QuestionError("No suggested question pairing is available to review.")
-    elif decision == "confirm":
-        place, verb = _confirmed_place(question, check=not broken), "confirmed"
     else:
-        _apply(question, _place(None, "teacher"))
-        return question, {"status": "unpaired", "message": "Question left unpaired."}
+        place, verb = _confirmed_place(question, check=not broken), "confirmed"
 
     _apply(question, place)
     return question, _outcome(question, place, verb)

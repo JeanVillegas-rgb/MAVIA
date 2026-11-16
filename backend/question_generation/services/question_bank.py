@@ -155,18 +155,15 @@ def _pairing(question):
     confirmed = node is not None and (node.material.generated_json or {}).get(
         "learning_objects_confirmed",
     )
-    if confirmed:
-        review_status = {"auto": "auto_confirmed", "teacher": "teacher_confirmed"}.get(
-            question.paired_by, "pending_review",
-        )
-    elif question.paired_by == "teacher" and node is None:
-        review_status = "teacher_unpaired"
-    else:
+    if not confirmed:
         return []
+    review_status = {"auto": "auto_confirmed", "teacher": "teacher_confirmed"}.get(
+        question.paired_by, "pending_review",
+    )
     return [{
-        "learning_object": node.id if confirmed else None,
-        "learning_object_group_id": node.group_id if confirmed else None,
-        "learning_object_title": node.title if confirmed else "",
+        "learning_object": node.id,
+        "learning_object_group_id": node.group_id,
+        "learning_object_title": node.title,
         "method": "teacher_selected" if question.paired_by == "teacher" else "answer_check",
         "review_status": review_status,
     }]
@@ -204,11 +201,7 @@ def concerns(question):
 
     concept = concept_name(question.node) if question.node_id else ""
     if not question.node_id:
-        found.append(
-            "Left without a concept by you, so learners do not get it."
-            if question.paired_by == "teacher"
-            else "Not attached to any concept yet."
-        )
+        found.append("Not attached to any concept yet.")
     elif not question.paired_by:
         found.append(f'Suggested concept "{concept}" is not confirmed yet.')
 

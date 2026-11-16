@@ -302,30 +302,6 @@ function versionSummary(group) {
   return `${versions} from ${files.size} file${files.size === 1 ? "" : "s"}`;
 }
 
-// A question leaves the review queue as soon as the teacher has ruled on it.
-// Declining sets `teacher_unpaired`, which is a decision -- not an unreviewed
-// state -- so it must not keep the question in the queue. `auto_confirmed`
-// never needed a teacher at all. Exported so the classification can be tested
-// without rendering the panel.
-export const PENDING_REVIEW_STATUSES = ["pending_review", "unmatched"];
-
-export function questionReviewState(question) {
-  const link = question?.learning_object_links?.[0];
-  const status = link?.review_status || "unmatched";
-  const isPending = PENDING_REVIEW_STATUSES.includes(status);
-  let label = "Needs review";
-  if (status === "auto_confirmed") {
-    label = "Auto-paired";
-  } else if (status === "teacher_confirmed") {
-    label = link?.method === "teacher_selected" ? "Moved" : "Paired";
-  } else if (status === "teacher_unpaired") {
-    label = "Unpaired";
-  } else if (status === "unmatched") {
-    label = "No confident match";
-  }
-  return { status, isPending, label };
-}
-
 // Why a question rated "create" stays out of the learner quiz.
 const NOT_SERVED_TIP = "MAVIA maps Bloom's levels to the learner quiz's two tiers: remember, "
   + "understand and apply are LOTS; analyze and evaluate are HOTS. \u201cCreate\u201d has no tier "
@@ -486,10 +462,8 @@ function QuestionEditForm({ question, groups, busy, onCancel, onSave }) {
   );
   const [choices, setChoices] = useState(() => [...(question.choices || []), "", "", "", ""].slice(0, 4));
   const [answer, setAnswer] = useState(question.correct_answer || "");
-  const [conceptGroupId, setConceptGroupId] = useState(() => {
-    const link = question.learning_object_links?.[0];
-    return link?.learning_object_group_id ? String(link.learning_object_group_id) : "";
-  });
+  const initialGroupId = question.learning_object_links?.[0]?.learning_object_group_id;
+  const [conceptGroupId, setConceptGroupId] = useState(initialGroupId ? String(initialGroupId) : "");
 
   function changeType(next) {
     setType(next);
@@ -513,7 +487,7 @@ function QuestionEditForm({ question, groups, busy, onCancel, onSave }) {
       <label>Question<textarea required rows="3" value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
       <label>Type<select value={type} onChange={(event) => changeType(event.target.value)}><option value="true_false">True/False</option><option value="multiple_choice">Multiple choice</option></select></label>
       <label>Concept to tie to<select value={conceptGroupId} onChange={(event) => setConceptGroupId(event.target.value)}>
-        <option value="">No concept assigned</option>
+        {!initialGroupId && <option value="">Not chosen yet</option>}
         {groups.map((group) => <option value={group.id} key={group.id}>{group.display_title || group.label || group.learning_objects?.[0]?.title || "Untitled concept"}</option>)}
       </select></label>
       {type === "multiple_choice" && choices.map((choice, index) => (
@@ -1479,11 +1453,6 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
       >
         {concept ? "Change concept" : "Choose concept"}
       </button>
-      {concept && link?.review_status !== "teacher_unpaired" && (
-        <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onReview(question, "unpair")}>
-          Leave unpaired
-        </button>
-      )}
       <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onEdit(question)}>Edit</button>
       <button type="button" className="btn btn-danger btn-small question-bank-delete" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
     </div>
