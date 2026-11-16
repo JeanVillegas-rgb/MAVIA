@@ -27,26 +27,46 @@ def _read_items(path):
     return detected_question_payloads(classify_blocks(blocks))
 
 
-def upload_questionnaire(node, upload):
-    """Save the file, add each item it holds to the topic's bank; returns counts for the teacher."""
+def _emit(on_event, event_type, message, **data):
+    if on_event:
+        on_event(event_type, message, data or None)
+
+
+def save_questionnaire(node, upload):
+    """Keep the teacher's file on the topic, refusing anything that is not a PDF."""
     name = getattr(upload, "name", "") or ""
     head = upload.read(5)
     upload.seek(0)
     if not name.lower().endswith(".pdf") or head != b"%PDF-":
         raise QuestionError(NOT_A_PDF)
-
     with transaction.atomic():
-        question_file = QuestionFile.objects.create(outline_node=node, file=upload)
+        return QuestionFile.objects.create(outline_node=node, file=upload)
+
+
+def _discard(question_file):
+    question_file.file.delete(save=False)
+    question_file.delete()
+
+
+def read_questionnaire(question_file, on_event=None):
+    """Add each item the saved file holds to the topic's bank; returns counts for the teacher."""
+    node = question_file.outline_node
+    name = question_file.file.name.rsplit("/", 1)[-1]
+    _emit(on_event, "questionnaire_reading", f"Reading {name}")
     try:
         items = _read_items(question_file.file.path)
     except Exception:
-        question_file.file.delete(save=False)
-        question_file.delete()
+        _discard(question_file)
         raise
 
     counts = {"found": len(items), "added": 0, "paired": 0, "held": 0, "already_in_topic": 0}
+    _emit(on_event, "questionnaire_found", f"Found {len(items)} question{'' if len(items) == 1 else 's'}")
     index = build_index(node) if items else None
-    for item in items:
+    for position, item in enumerate(items, start=1):
+        _emit(
+            on_event, "questionnaire_item", f"Checking question {position} of {len(items)}",
+            index=position, total=len(items),
+        )
         if duplicate_in_topic(node, question_fingerprint(item["prompt"])) is not None:
             counts["already_in_topic"] += 1
             continue
@@ -66,8 +86,7 @@ def upload_questionnaire(node, upload):
         counts["paired" if question.status == "final" else "held"] += 1
 
     if not counts["added"]:
-        question_file.file.delete(save=False)
-        question_file.delete()
+        _discard(question_file)
     logger.info(
         "[Questions] topic %s  questionnaire %s: %s found, %s added (%s paired, %s held), %s already in the topic",
         node.id, name, counts["found"], counts["added"], counts["paired"], counts["held"],

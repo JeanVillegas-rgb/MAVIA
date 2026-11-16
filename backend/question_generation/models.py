@@ -224,9 +224,10 @@ class GenerationRun(models.Model):
         QUESTIONS = "questions", "Question generation"
         PUBLISH = "publish", "Topic publish"
         VERSIONS = "versions", "Content version classification"
+        QUESTIONNAIRE = "questionnaire", "Questionnaire upload"
 
     kind = models.CharField(
-        max_length=12,
+        max_length=20,
         choices=Kind.choices,
         default=Kind.QUESTIONS,
         db_index=True,

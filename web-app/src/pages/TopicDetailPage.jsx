@@ -1670,6 +1670,7 @@ function ManualQuestionPanel({
   const [uploading, setUploading] = useState(false);
   const [lastResult, setLastResult] = useState(null);
   const [questionnaires, setQuestionnaires] = useState([]);
+  const [uploadEvents, setUploadEvents] = useState([]);
   const [questionnaireToDelete, setQuestionnaireToDelete] = useState(null);
   const [deletingQuestionnaire, setDeletingQuestionnaire] = useState(false);
 
@@ -1717,13 +1718,38 @@ function ManualQuestionPanel({
     onError("");
     onMessage("");
     setLastResult(null);
+    setUploadEvents([]);
     try {
       const formData = new FormData();
       formData.append("pdf_file", file);
-      const data = await uploadQuestionnaire(topicId, formData);
+      const started = await uploadQuestionnaire(topicId, formData);
+      await loadQuestionnaires();
+      let result;
+      let seen = 0;
+      let quietSeconds = 0;
+      // The file is read in the background; follow it until it ends, or until
+      // it has said nothing for five minutes.
+      while (quietSeconds < 300) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        result = await fetchQuestionGenerationTrace(started.run_id);
+        const events = result.events || [];
+        quietSeconds = events.length > seen ? 0 : quietSeconds + 1;
+        seen = events.length;
+        setUploadEvents(events.map((item) => ({ ...item, uid: `${started.run_id}:${item.seq}` })));
+        if (["finished", "failed"].includes(result.run.status)) break;
+      }
       onResourcesChange(await fetchLearningResources(courseId, topicId));
       await loadQuestionnaires();
-      setLastResult({ message: data.message, held: data.held > 0 });
+      if (!result || result.run.status === "running") {
+        throw new Error("The questionnaire is still being read. Refresh this page shortly.");
+      }
+      const events = result.events || [];
+      if (result.run.status === "failed") {
+        const failure = [...events].reverse().find((item) => item.event_type === "error");
+        throw new Error(failure?.message || "The questionnaire could not be read.");
+      }
+      const done = events.find((item) => item.event_type === "questionnaire_finished");
+      setLastResult({ message: done?.message || "Questionnaire read.", held: (done?.data?.held || 0) > 0 });
     } catch (err) {
       onError(err.message);
     } finally {
@@ -1923,6 +1949,17 @@ function ManualQuestionPanel({
           </form>
         </article>
       </div>
+
+      {(uploading || uploadEvents.length > 0) && (
+        <RunProgress
+          events={uploadEvents}
+          running={uploading}
+          runningLabel="Reading questionnaire"
+          doneLabel="Questionnaire added"
+          failedLabel="Questionnaire could not be read"
+          unit="question"
+        />
+      )}
 
       {questionnaireToDelete && (
         <div

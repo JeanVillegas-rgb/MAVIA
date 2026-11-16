@@ -357,6 +357,42 @@ class KeepQuestionView(APIView):
         return _teacher_question_response(keep_anyway, outline_node_id, question_id)
 
 
+def _questionnaire_run_in_progress(node):
+    """The topic's questionnaire run still reading, if any; a run silent for too long is marked failed."""
+    for run in GenerationRun.objects.filter(
+        outline_node=node, kind=GenerationRun.Kind.QUESTIONNAIRE, status="running",
+    ):
+        last_event = run.events.order_by("-seq").first()
+        last_activity = last_event.created_at if last_event else run.started_at
+        if (timezone.now() - last_activity).total_seconds() <= STALE_RUN_SECONDS:
+            return run
+        run.status = "failed"
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "finished_at"])
+    return None
+
+
+def _run_questionnaire(run_id, file_id):
+    """Thread target: read one uploaded questionnaire into the bank, traced to the DB."""
+    from .models import QuestionFile
+    from .services.questionnaire import outcome_message, read_questionnaire
+    from .services.teacher_questions import QuestionError
+
+    on_event = _event_recorder(run_id)
+    try:
+        counts = read_questionnaire(QuestionFile.objects.get(pk=file_id), on_event=on_event)
+        message = outcome_message(counts)
+        on_event("questionnaire_finished", message, {**counts, "message": message})
+        GenerationRun.objects.filter(id=run_id).update(status="finished", finished_at=timezone.now())
+    except QuestionError as error:
+        on_event("error", error.detail, None)
+        GenerationRun.objects.filter(id=run_id).update(status="failed", finished_at=timezone.now())
+    except Exception as error:
+        logger.exception("[Questions] questionnaire run %s failed: %s", run_id, error)
+        on_event("error", f"The questionnaire could not be read: {error}", None)
+        GenerationRun.objects.filter(id=run_id).update(status="failed", finished_at=timezone.now())
+
+
 class QuestionnaireUploadView(APIView):
     """GET or POST /api/generation/topics/<id>/questionnaire/: list the topic's questionnaires, or add the questions in a new one."""
     permission_classes = [IsTeacherOrAdmin]
@@ -371,7 +407,7 @@ class QuestionnaireUploadView(APIView):
         return Response(topic_questionnaires(node))
 
     def post(self, request, outline_node_id):
-        from .services.questionnaire import outcome_message, upload_questionnaire
+        from .services.questionnaire import save_questionnaire
         from .services.teacher_questions import QuestionError
 
         node = _topic(outline_node_id)
@@ -380,13 +416,22 @@ class QuestionnaireUploadView(APIView):
         upload = request.FILES.get("pdf_file")
         if upload is None:
             return Response({"detail": "Choose a PDF file to upload."}, status=status.HTTP_400_BAD_REQUEST)
+        busy = _questionnaire_run_in_progress(node)
+        if busy is not None:
+            return Response(
+                {"detail": "Another questionnaire for this topic is still being read.", "run_id": busy.id},
+                status=status.HTTP_409_CONFLICT,
+            )
         try:
-            counts = upload_questionnaire(node, upload)
+            question_file = save_questionnaire(node, upload)
         except QuestionError as error:
             return Response({"detail": error.detail}, status=error.status)
+        run = GenerationRun.objects.create(outline_node=node, kind=GenerationRun.Kind.QUESTIONNAIRE)
+        threading.Thread(
+            target=_run_questionnaire, args=(run.id, question_file.id), daemon=True,
+        ).start()
         return Response(
-            {**counts, "message": outcome_message(counts)},
-            status=status.HTTP_201_CREATED if counts["added"] else status.HTTP_200_OK,
+            {"run_id": run.id, "file_id": question_file.id}, status=status.HTTP_202_ACCEPTED,
         )
 
 
