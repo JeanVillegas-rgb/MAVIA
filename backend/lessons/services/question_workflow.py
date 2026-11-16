@@ -90,7 +90,8 @@ def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
     """Infer supported question structure without inventing missing choices/answers."""
     raw_prompt = (prompt or "").strip()
     choice_pattern = re.compile(
-        r"(?:^|\s)([A-Da-d])\s*[.)]\s*(.+?)(?=(?:\s+[A-Da-d]\s*[.)]\s)|$)",
+        r"(?:^|\s|\()([A-Da-d])\s*(?:[.)]|:|-)\s+"
+        r"(.+?)(?=(?:\s+\(?[A-Da-d]\s*(?:[.)]|:|-)\s+)|$)",
         flags=re.S,
     )
     matches = list(choice_pattern.finditer(raw_prompt))
@@ -353,6 +354,8 @@ def sync_question_to_adaptive(question: Question):
         )
     defaults = {
         "node": link.learning_object,
+        "outline_node": question.material.outline_node,
+        "source": "lesson_pdf" if question.source_type == Question.SourceType.PDF else "manual",
         "question_text": question.prompt,
         "question_format": question_format,
         "choices": choice_map,
@@ -627,9 +630,63 @@ def detected_question_payloads(classified_blocks):
     return payloads
 
 
+def _sync_extracted_question_to_bank(question: Question):
+    """Mirror one PDF extraction into the question bank without labelling it."""
+    from question_generation.models import Question as BankQuestion
+
+    question_format = {
+        Question.Type.MULTIPLE_CHOICE: "MCQ",
+        Question.Type.TRUE_FALSE: "TF",
+    }.get(question.question_type, "")
+    choices = question.choices if isinstance(question.choices, list) else []
+    choice_map = {
+        chr(65 + index): choice
+        for index, choice in enumerate(choices)
+    }
+    correct_answer = question.correct_answer or ""
+    if question_format == "MCQ":
+        correct_answer = next(
+            (
+                letter
+                for letter, choice in choice_map.items()
+                if choice == question.correct_answer
+            ),
+            "",
+        )
+    elif question_format == "TF":
+        correct_answer = correct_answer.capitalize()
+
+    bank_question, _ = BankQuestion.objects.update_or_create(
+        extracted_question=question,
+        defaults={
+            "outline_node": question.material.outline_node,
+            "node": None,
+            "question_text": question.prompt,
+            "question_format": question_format,
+            "choices": choice_map or None,
+            "correct_answer": correct_answer,
+            "explanation": "",
+            "bloom_level": "",
+            "thinking_order": "",
+            "category": "",
+            "status": "review",
+            "source": "lesson_pdf",
+            "question_file": None,
+            "paired_by": "",
+            "check_result": "",
+            "check_note": "",
+            "teacher_edited": False,
+            "content_fingerprint": question.content_fingerprint,
+            "source_text_fingerprint": "",
+            "validation_issues": question.validation_issues,
+        },
+    )
+    return bank_question
+
+
 @transaction.atomic
 def synchronize_detected_questions(material, classified_blocks):
-    """Synchronize extracted PDF questions and rebuild their concept links."""
+    """Synchronize extracted PDF questions and their unlabelled bank mirrors."""
     existing = {
         question.content_fingerprint or question_fingerprint(question.prompt): question
         for question in material.questions.all()
@@ -658,10 +715,17 @@ def synchronize_detected_questions(material, classified_blocks):
                 setattr(question, field, payload[field])
             question.order = order
             question.save(update_fields=[*fields, "order"])
+        _sync_extracted_question_to_bank(question)
         retained_ids.append(question.id)
     material.questions.filter(source_type=Question.SourceType.PDF).exclude(
         id__in=retained_ids,
     ).delete()
+    from question_generation.models import Question as BankQuestion
+
+    BankQuestion.objects.filter(
+        source="lesson_pdf",
+        extracted_question__material=material,
+    ).exclude(extracted_question_id__in=retained_ids).delete()
     from .question_linker import refresh_question_learning_object_links
 
     refresh_question_learning_object_links(material)

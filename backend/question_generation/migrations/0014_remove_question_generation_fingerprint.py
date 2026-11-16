@@ -6,12 +6,12 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('question_generation', '0010_remove_learnerresponse'),
+        ('question_generation', '0013_remove_learnerresponse'),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='generatedquestion',
+            model_name='question',
             name='generation_fingerprint',
         ),
     ]

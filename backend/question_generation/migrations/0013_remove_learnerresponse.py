@@ -6,7 +6,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('question_generation', '0009_generatedquestion_source_text_fingerprint'),
+        ('question_generation', '0012_question_content_fingerprint'),
     ]
 
     operations = [

@@ -405,7 +405,7 @@ class Question(models.Model):
     )
     validation_issues = models.JSONField(default=list, blank=True)
     adaptive_question = models.OneToOneField(
-        "question_generation.GeneratedQuestion",
+        "question_generation.Question",
         null=True,
         blank=True,
         related_name="teacher_question",

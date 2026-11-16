@@ -3,8 +3,18 @@ from django.db import models
 from lessons.models import LearningMaterial, LearningObject
 
 
-class GeneratedQuestion(models.Model):
-    """A generated question; only status="final" rows are served or shown."""
+class QuestionFile(models.Model):
+    outline_node = models.ForeignKey(
+        "lessons.OutlineNode",
+        related_name="question_files",
+        on_delete=models.CASCADE,
+    )
+    file = models.FileField(upload_to="questionnaires/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class Question(models.Model):
+    """A question in the bank; only status="final" rows are served or shown."""
     THINKING_ORDER_CHOICES = [
         ("LOT", "Lower Order Thinking"),
         ("HOT", "Higher Order Thinking"),
@@ -12,6 +22,7 @@ class GeneratedQuestion(models.Model):
 
     STATUS_CHOICES = [
         ("draft", "Draft"),
+        ("review", "Review"),
         ("final", "Final"),
     ]
 
@@ -39,13 +50,20 @@ class GeneratedQuestion(models.Model):
     node = models.ForeignKey(
         LearningObject,
         related_name="generated_questions",
+        null=True,
+        blank=True,
         on_delete=models.CASCADE,
     )
 
     question_text = models.TextField()
-    question_format = models.CharField(max_length=3, choices=FORMAT_CHOICES)
+    question_format = models.CharField(
+        max_length=3,
+        choices=FORMAT_CHOICES,
+        blank=True,
+        default="",
+    )
     choices = models.JSONField(null=True, blank=True)
-    correct_answer = models.CharField(max_length=255)
+    correct_answer = models.CharField(max_length=255, blank=True, default="")
     explanation = models.TextField(blank=True, default="")
 
     bloom_level = models.CharField(
@@ -55,18 +73,85 @@ class GeneratedQuestion(models.Model):
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, blank=True, default="")
 
     status = models.CharField(
-        max_length=5, choices=STATUS_CHOICES, default="draft", db_index=True)
+        max_length=10, choices=STATUS_CHOICES, default="draft", db_index=True)
     source_text_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    content_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    outline_node = models.ForeignKey(
+        "lessons.OutlineNode",
+        related_name="question_bank_questions",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=[
+            ("generated", "Generated"),
+            ("manual", "Manual"),
+            ("questionnaire", "Questionnaire"),
+            ("lesson_pdf", "Lesson PDF"),
+        ],
+        default="generated",
+        db_index=True,
+    )
+    extracted_question = models.ForeignKey(
+        "lessons.Question",
+        null=True,
+        blank=True,
+        related_name="question_bank_rows",
+        on_delete=models.SET_NULL,
+    )
+    question_file = models.ForeignKey(
+        QuestionFile,
+        null=True,
+        blank=True,
+        related_name="questions",
+        on_delete=models.SET_NULL,
+    )
+    paired_by = models.CharField(
+        max_length=10,
+        choices=[
+            ("", "Not paired"),
+            ("auto", "Automatically paired"),
+            ("teacher", "Teacher paired"),
+        ],
+        blank=True,
+        default="",
+    )
+    check_result = models.CharField(
+        max_length=20,
+        choices=[
+            ("", "Not checked"),
+            ("supported", "Supported"),
+            ("contradicted", "Contradicted"),
+            ("unsupported", "Unsupported"),
+            ("unverified", "Unverified"),
+        ],
+        blank=True,
+        default="",
+    )
+    check_note = models.TextField(blank=True, default="")
+    teacher_edited = models.BooleanField(default=False)
+    validation_issues = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["node", "thinking_order"]),
             models.Index(fields=["node", "status"]),
+            models.Index(fields=["outline_node", "status"]),
         ]
 
     def __str__(self):
         return f"[{self.thinking_order or 'unclassified'}] {self.question_text[:50]}"
+
+
+GeneratedQuestion = Question
 
 
 class GenerationRun(models.Model):
