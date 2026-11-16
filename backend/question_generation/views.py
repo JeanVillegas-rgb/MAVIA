@@ -347,6 +347,35 @@ class QuestionPairingView(APIView):
         return _teacher_question_response(review_pairing, outline_node_id, question_id, request.data)
 
 
+class CheckQuestionView(APIView):
+    """POST /api/generation/topics/<id>/questions/<id>/check/: run the answer check again on one question."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id, question_id):
+        from .services.teacher_questions import check_again
+
+        return _teacher_question_response(check_again, outline_node_id, question_id)
+
+
+class CheckAllQuestionsView(APIView):
+    """POST /api/generation/topics/<id>/questions/check-all/: run the answer check again on every unchecked question."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id):
+        from .services.teacher_questions import check_all_again
+
+        node = _topic(outline_node_id)
+        if node is None:
+            return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        counts = check_all_again(node)
+        parts = [f'{counts["ready"]} now ready for learners']
+        if counts["held"]:
+            parts.append(f'{counts["held"]} held by the check')
+        if counts["still_unchecked"]:
+            parts.append(f'{counts["still_unchecked"]} still could not be checked; try again later')
+        return Response({**counts, "message": f'Checked {counts["checked"]}: ' + "; ".join(parts) + "."})
+
+
 class KeepQuestionView(APIView):
     """POST /api/generation/topics/<id>/questions/<id>/keep/: keep a question the answer check held."""
     permission_classes = [IsTeacherOrAdmin]

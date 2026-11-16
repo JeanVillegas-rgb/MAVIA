@@ -30,6 +30,8 @@ import {
   fetchQuestionnaires,
   deleteQuestionnaire,
   keepTopicQuestion,
+  checkTopicQuestion,
+  checkAllTopicQuestions,
   startQuestionGeneration,
   startTopicQuestionGeneration,
   updateLearningObject,
@@ -1410,7 +1412,7 @@ function questionGroupId(question) {
   return question.learning_object_links?.[0]?.learning_object_group_id ?? null;
 }
 
-function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onReview, onKeep }) {
+function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onReview, onKeep, onCheck }) {
   const [choosing, setChoosing] = useState(false);
   const [choice, setChoice] = useState("");
   const link = question.learning_object_links?.[0];
@@ -1442,8 +1444,13 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
           Confirm concept
         </button>
       )}
+      {question.can_check_again && (
+        <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onCheck(question)}>
+          Check again
+        </button>
+      )}
       {question.can_keep && (
-        <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onKeep(question)}>
+        <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onKeep(question)}>
           Keep anyway
         </button>
       )}
@@ -1535,6 +1542,8 @@ function QuestionBankPanel({
   onDeleteQuestion,
   onReviewQuestion,
   onKeepQuestion,
+  onCheckQuestion,
+  onCheckAll,
 }) {
   const [editing, setEditing] = useState(null);
   const busy = Boolean(busyAction);
@@ -1559,6 +1568,7 @@ function QuestionBankPanel({
       onDelete={onDeleteQuestion}
       onReview={onReviewQuestion}
       onKeep={onKeepQuestion}
+      onCheck={onCheckQuestion}
     />
   );
 
@@ -1611,6 +1621,13 @@ function QuestionBankPanel({
               <h4>Questions learners do not get yet</h4>
               <p>Complete the details, or choose / confirm the concept each one belongs to.</p>
             </div>
+            {held.some((question) => question.can_check_again) && (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={onCheckAll}>
+                {busyAction === "question-check-all"
+                  ? "Checking…"
+                  : `Check all again (${held.filter((question) => question.can_check_again).length})`}
+              </button>
+            )}
           </div>
           {held.length ? (
             <div className="question-learning-object-list">
@@ -2845,6 +2862,38 @@ function LearningObjectConnections({
     }
   }
 
+  async function checkQuestion(question) {
+    setBusyAction(`question-check-${question.id}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = await checkTopicQuestion(topicId, question.id);
+      setResources(await fetchLearningResources(courseId, topicId));
+      onMessage(data.outcome.message);
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function checkAllQuestions() {
+    setBusyAction("question-check-all");
+    onError("");
+    onMessage("");
+    try {
+      const data = await checkAllTopicQuestions(topicId);
+      setResources(await fetchLearningResources(courseId, topicId));
+      onMessage(data.message);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function keepQuestion(question) {
     setBusyAction(`question-keep-${question.id}`);
     onError("");
@@ -3122,6 +3171,8 @@ function LearningObjectConnections({
               onDeleteQuestion: deleteQuestion,
               onReviewQuestion: reviewQuestion,
               onKeepQuestion: keepQuestion,
+              onCheckQuestion: checkQuestion,
+              onCheckAll: checkAllQuestions,
             }}
           />
         </>

@@ -445,7 +445,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         draft.bloom_level = bloom_level
         draft.thinking_order = thinking_order
         draft.category = classification["category"]
-        draft.status = "final"
+        draft.status = "review" if draft.check_result == "unverified" else "final"
         counts[thinking_order] += 1
         keep.append(draft)
         logger.debug(
@@ -475,7 +475,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
 
         replaced, _ = (
             (0, None) if append
-            else generated.filter(node=node, status="final").exclude(edited).delete()
+            else generated.filter(node=node, status__in=("final", "review")).exclude(edited).delete()
         )
         if reject_ids:
             GeneratedQuestion.objects.filter(id__in=reject_ids).delete()
@@ -518,7 +518,7 @@ def generate_questions_for_node(
     append=False,
     correction="",
 ):
-    """One round for one concept: draft, check, classify and save; returns (kept, the correction for a next round)."""
+    """One round for one concept: draft, check, classify and save; returns (kept, the correction for a next round, how many kept could not be checked)."""
     from question_generation.models import GeneratedQuestion
     from .grounding import correction_note, enabled
 
@@ -535,7 +535,7 @@ def generate_questions_for_node(
                 f"{concept_name(node)} already meets the minimum",
                 node_id=node.id,
             )
-            return [], ""
+            return [], "", 0
 
     GeneratedQuestion.objects.filter(node=node, status="draft").delete()
 
@@ -566,7 +566,8 @@ def generate_questions_for_node(
     kept = finalize_node_questions(
         node, classifier, on_event=on_event, stats=stats, append=append, caps=caps,
     )
-    return kept, correction_note(failures)
+    unchecked = sum(question.status == "review" for question in kept)
+    return kept, correction_note(failures), unchecked
 
 
 def is_short(node):
@@ -669,11 +670,13 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
                     f"Round {round_number} of {rounds}: {concept_name(node)} is still short",
                     round=round_number, rounds=rounds, total=1,
                 )
-            kept, correction = generate_questions_for_node(
+            kept, correction, unchecked = generate_questions_for_node(
                 node, classifier, on_event=on_event, stats=stats,
                 append=append or round_number > 1, correction=correction,
             )
             questions.extend(kept)
+            if unchecked:
+                break
         all_questions.extend(questions)
         _emit(
             on_event, "node_finished",
@@ -737,7 +740,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
     )
     stats = {"total_drafted": 0, "excluded_create": 0, "duplicates": 0, "trimmed": 0,
              "ungrounded": 0, "unverified": 0}
-    added, failed, corrections = 0, {}, {}
+    added, failed, corrections, unchecked_nodes = 0, {}, {}, set()
     if targets:
         classifier = _prepare_generation(on_event)
     for round_number in range(1, rounds + 1):
@@ -768,10 +771,12 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
                 index=position, total=len(targets), round=round_number, rounds=rounds,
             )
             try:
-                kept, corrections[node.id] = generate_questions_for_node(
+                kept, corrections[node.id], unchecked = generate_questions_for_node(
                     node, classifier, on_event=on_event, stats=stats, append=True,
                     correction=corrections.get(node.id, ""),
                 )
+                if unchecked:
+                    unchecked_nodes.add(node.id)
             except Exception as exc:
                 logger.exception("[Questions] %s  failed: %s", name(concept_name(node)), exc)
                 failed[node.id] = f"{concept_name(node)}: {exc}"
@@ -788,9 +793,12 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
                 index=position, total=len(targets), round=round_number, rounds=rounds,
                 by_thinking_order=dict(Counter(q.thinking_order for q in kept)),
             )
-        targets = [node for node in targets if node.id not in failed and is_short(node)]
+        targets = [
+            node for node in targets
+            if node.id not in failed and node.id not in unchecked_nodes and is_short(node)
+        ]
 
-    still_short = [concept_name(node) for node in targets]
+    still_short = [concept_name(node) for node in nodes if node.id not in failed and is_short(node)]
     logger.info(
         "[Questions] topic %s  done: %s questions added from %s drafts; dropped %s not grounded "
         "in the lesson, %s duplicates, %s wrong level, %s extra%s%s",
@@ -799,10 +807,22 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
         f"; still short: {', '.join(still_short)}" if still_short else "",
         f"; failed: {len(failed)}" if failed else "",
     )
+    from question_generation.models import GeneratedQuestion
+    unchecked_total = GeneratedQuestion.objects.filter(
+        node__in=nodes, status="review", check_result="unverified",
+    ).count()
+    summary = f"Added {added} questions"
+    if unchecked_total:
+        summary += (
+            f"; {unchecked_total} could not be checked because the AI service was unavailable. "
+            "They are in Needs review: use Check all again"
+        )
     _emit(
-        on_event, "topic_finished",
-        f"Added {added} questions",
+        on_event, "topic_finished", summary,
         added=added, still_short=still_short, failed=list(failed.values()),
-        drafted=stats["total_drafted"], ungrounded=stats["ungrounded"],
+        drafted=stats["total_drafted"], ungrounded=stats["ungrounded"], unchecked=unchecked_total,
     )
-    return {"added": added, "still_short": still_short, "failed": list(failed.values())}
+    return {
+        "added": added, "still_short": still_short, "failed": list(failed.values()),
+        "unchecked": unchecked_total,
+    }

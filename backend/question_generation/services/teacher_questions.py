@@ -234,6 +234,44 @@ def review_pairing(node, question_id, data):
     return question, _outcome(question, place, verb)
 
 
+def _check(question, index=None):
+    """Run the answer check again on a question it could not read, against its concept or, with none, every concept."""
+    if question.node_id:
+        target = question.node
+        members = (_members(target.group) if target.group_id else []) or [target]
+        place = _teacher_place(question, target, members)
+        place["paired_by"] = question.paired_by or "auto"
+    else:
+        place = _found_place(question, index or build_index(question.outline_node))
+    _apply(question, place)
+    return place
+
+
+def check_again(node, question_id):
+    """The teacher asks for the answer check again once the AI service is back; returns (question, outcome)."""
+    question = _question(node, question_id)
+    if question.check_result != "unverified":
+        raise QuestionError("Only a question whose answer could not be checked can be checked again.")
+    place = _check(question)
+    return question, _outcome(question, place, "checked")
+
+
+def check_all_again(node):
+    """Check again every question of the topic the answer check could not read; returns counts."""
+    pending = list(topic_questions(node).filter(check_result="unverified"))
+    index = build_index(node) if any(question.node_id is None for question in pending) else None
+    counts = {"checked": len(pending), "ready": 0, "held": 0, "still_unchecked": 0}
+    for question in pending:
+        _check(question, index)
+        if question.check_result == "unverified":
+            counts["still_unchecked"] += 1
+        elif question.status == "final":
+            counts["ready"] += 1
+        else:
+            counts["held"] += 1
+    return counts
+
+
 def keep_anyway(node, question_id):
     """The teacher keeps a question the answer check held: it becomes theirs and is given to learners."""
     question = _question(node, question_id)

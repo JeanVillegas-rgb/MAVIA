@@ -273,6 +273,16 @@ export function deleteQuestionnaire(nodeId, fileId) {
   return request(`/generation/topics/${nodeId}/questionnaire/${fileId}/`, { method: "DELETE" });
 }
 
+// Run the answer check again once the AI service is back: one question, or
+// every question of the topic it could not check.
+export function checkTopicQuestion(nodeId, questionId) {
+  return request(`/generation/topics/${nodeId}/questions/${questionId}/check/`, { method: "POST" });
+}
+
+export function checkAllTopicQuestions(nodeId) {
+  return request(`/generation/topics/${nodeId}/questions/check-all/`, { method: "POST" });
+}
+
 // The teacher keeps a question the answer check held.
 export function keepTopicQuestion(nodeId, questionId) {
   return request(`/generation/topics/${nodeId}/questions/${questionId}/keep/`, { method: "POST" });

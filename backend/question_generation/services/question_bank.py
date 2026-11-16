@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 TIERS = ("LOT", "HOT")
 FAILED_CHECKS = ("contradicted", "unsupported")
 OVERRULABLE_CHECKS = (*FAILED_CHECKS, "unverified")
-NOT_CHECKED = "The answer could not be checked right now. Edit and save the question again to retry."
+NOT_CHECKED = "The answer could not be checked because the AI service was unavailable. Use Check again."
 NO_CONCEPT = "No concept's text supports this answer. Choose a concept or revise the question."
 CONFIRMED_OBJECTS = {"material__generated_json__learning_objects_confirmed": True}
 
@@ -77,7 +77,7 @@ def issues(question):
         return [f'"{concept_name(question.node)}" does not support this answer: {question.check_note}']
     if question.check_result == "unsupported":
         return [NO_CONCEPT]
-    if question.check_result == "unverified" and question.source != "generated":
+    if question.check_result == "unverified":
         return [NOT_CHECKED]
     return []
 
@@ -209,7 +209,7 @@ def concerns(question):
         found.append(f'The answer check says "{concept}" does not support this answer: {question.check_note}')
     elif question.check_result == "unsupported":
         found.append("No concept's text supports this answer.")
-    elif question.check_result == "unverified" and question.source != "generated":
+    elif question.check_result == "unverified":
         found.append(NOT_CHECKED)
 
     if question.bloom_level and question.thinking_order not in TIERS:
@@ -238,6 +238,7 @@ def screen_row(question):
         "check_result": question.check_result,
         "check_note": question.check_note,
         "can_keep": can_keep(question),
+        "can_check_again": question.check_result == "unverified",
         "concerns": concerns(question) if question.status != "final" else [],
         "source_file": source_file(question),
         "pairing_status": pairing[0]["review_status"] if pairing else "unmatched",
