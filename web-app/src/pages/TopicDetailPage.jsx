@@ -355,10 +355,11 @@ function ReviewQueuePanel({
   // question survives switching tabs.
   const [mode, setMode] = useState("generate");
   const [bankFocus, setBankFocus] = useState(null);
-  const openBank = (groupId = null) => {
-    setMode("bank");
+  const openBank = (groupId = null, tab = "bank") => {
+    setMode(tab);
     setBankFocus({ groupId, at: Date.now() });
   };
+  const heldCount = questionPairings.filter((question) => question.status !== "final").length;
   return (
     <section className="connection-review-panel" aria-labelledby="match-suggestion-title">
       <div className="connection-review-heading">
@@ -392,7 +393,12 @@ function ReviewQueuePanel({
         </div>
       )}
       <div className="question-mode-tabs" role="tablist" aria-label="Questions">
-        {[["generate", "Generate"], ["manual", "Add questions"], ["bank", "Question bank"]].map(([key, label]) => (
+        {[
+          ["generate", "Generate"],
+          ["manual", "Add questions"],
+          ["review", `Needs review (${heldCount})`],
+          ["bank", "Question bank"],
+        ].map(([key, label]) => (
           <button
             type="button"
             role="tab"
@@ -425,22 +431,26 @@ function ReviewQueuePanel({
         aria-labelledby="question-mode-manual"
         hidden={mode !== "manual"}
       >
-        <ManualQuestionPanel {...manualProps} groups={groups} onOpenBank={() => openBank()} />
+        <ManualQuestionPanel {...manualProps} groups={groups} onOpenBank={(tab) => openBank(null, tab)} />
       </div>
-      <div
-        role="tabpanel"
-        id="question-mode-bank-panel"
-        aria-labelledby="question-mode-bank"
-        hidden={mode !== "bank"}
-      >
-        <QuestionBankPanel
-          {...bankProps}
-          questionPairings={questionPairings}
-          groups={groups}
-          busyAction={busyAction}
-          focus={bankFocus}
-        />
-      </div>
+      {["review", "bank"].map((view) => (
+        <div
+          role="tabpanel"
+          key={view}
+          id={`question-mode-${view}-panel`}
+          aria-labelledby={`question-mode-${view}`}
+          hidden={mode !== view}
+        >
+          <QuestionBankPanel
+            {...bankProps}
+            view={view}
+            questionPairings={questionPairings}
+            groups={groups}
+            busyAction={busyAction}
+            focus={view === mode ? bankFocus : null}
+          />
+        </div>
+      ))}
 
       <StepDock>
         <button
@@ -1350,10 +1360,6 @@ function QuestionGenerationTool({
                     <h5>
                       {produced.length} generated question{produced.length === 1 ? "" : "s"}
                     </h5>
-                    <div className="tier-counters">
-                      <TierCounter label="LOTS" count={item.questionCounts.LOT || 0} needed={item.questionMinimum.LOT || 0} />
-                      <TierCounter label="HOTS" count={item.questionCounts.HOT || 0} needed={item.questionMinimum.HOT || 0} />
-                    </div>
                     {Boolean(produced.length) && (
                       <button type="button" className="btn btn-secondary btn-small" onClick={() => onOpenBank(item.groupId)}>
                         Review in question bank
@@ -1455,26 +1461,31 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
   const tier = { LOT: "LOTS", HOT: "HOTS" }[question.thinking_order];
   const meta = [SOURCE_NAMES[question.source_type] || "Typed", tier, question.category].filter(Boolean);
   return (
-    <li className="question-bank-row" id={`bank-question-${question.id}`}>
-      <small className="question-bank-meta">{meta.join(" · ")}</small>
-      <strong>{question.prompt}</strong>
-      {Boolean(question.choices?.length) && (
-        <ul className="generated-question-choices">
-          {question.choices.map((text, index) => (
-            <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
-              {text}
-            </li>
-          ))}
-        </ul>
-      )}
-      {held && (
-        <>
-          <small className="question-bank-concept">Concept: {concept ? conceptTitle(concept) : "none"}</small>
-          {heldReasons(question, suggested).map((reason) => (
-            <p className="question-bank-issue" key={reason}>{reason}</p>
-          ))}
-        </>
-      )}
+    <li className={`question-bank-row${held ? " is-held" : ""}`} id={`bank-question-${question.id}`}>
+      <div className="question-bank-body">
+        <small className="question-bank-meta">{meta.join(" · ")}</small>
+        <strong className="question-bank-text">{question.prompt}</strong>
+        {Boolean(question.choices?.length) && (
+          <ul className="generated-question-choices">
+            {question.choices.map((text, index) => (
+              <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
+                {text}
+              </li>
+            ))}
+          </ul>
+        )}
+        {held && (
+          <>
+            <small className="question-bank-concept">
+              {concept ? `Concept: ${conceptTitle(concept)}` : "No concept yet"}
+            </small>
+            <div className="question-bank-reason">
+              <span>Why learners do not get it yet</span>
+              {heldReasons(question, suggested).map((reason) => <p key={reason}>{reason}</p>)}
+            </div>
+          </>
+        )}
+      </div>
       {choosing ? (
         <form
           className="question-bank-choose"
@@ -1513,7 +1524,7 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
             </button>
           )}
           <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onEdit(question)}>Edit</button>
-          <button type="button" className="btn btn-danger btn-small" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
+          <button type="button" className="btn btn-danger btn-small question-bank-delete" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
         </div>
       )}
     </li>
@@ -1521,8 +1532,10 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
 }
 
 // Every question of the topic, whatever made it, and the one place to fix
-// them: questions not given to learners first, then each concept's own.
+// them. "review" lists the ones learners do not get yet; "bank" lists the
+// ones they do, under each concept with its LOTS/HOTS counters.
 function QuestionBankPanel({
+  view,
   questionPairings,
   groups,
   busyAction,
@@ -1536,12 +1549,6 @@ function QuestionBankPanel({
   const held = questionPairings.filter((question) => question.status !== "final");
   const given = questionPairings.filter((question) => question.status === "final");
   const knownGroups = new Set(groups.map((group) => Number(group.id)));
-  const byConcept = groups.map((group) => ({
-    group,
-    questions: given
-      .filter((question) => Number(questionGroupId(question)) === Number(group.id))
-      .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id),
-  }));
   const elsewhere = given.filter((question) => !knownGroups.has(Number(questionGroupId(question))));
 
   useEffect(() => {
@@ -1564,38 +1571,58 @@ function QuestionBankPanel({
 
   return (
     <div className="question-bank-panel">
-      {!questionPairings.length && (
-        <p className="review-queue-empty">No questions yet. Generate them, or add your own in Add questions.</p>
-      )}
-      {held.length > 0 && (
-        <section className="question-bank-section" aria-labelledby="bank-held-title">
-          <h4 id="bank-held-title">Needs your review ({held.length})</h4>
-          <p className="question-bank-hint">Learners do not get these questions until you fix them.</p>
-          <ul className="question-bank-list">{held.map((question) => row(question, true))}</ul>
-        </section>
-      )}
-      {byConcept.filter(({ questions }) => questions.length).map(({ group, questions }) => (
-        <section className="question-bank-section" id={`bank-concept-${group.id}`} key={group.id} aria-labelledby={`bank-concept-title-${group.id}`}>
-          <h4 id={`bank-concept-title-${group.id}`}>{conceptTitle(group)}</h4>
-          <p className="question-bank-hint">
-            {group.question_counts?.LOT || 0} LOTS (needs {group.question_minimum?.LOT || 0})
-            {" · "}
-            {group.question_counts?.HOT || 0} HOTS (needs {group.question_minimum?.HOT || 0})
-          </p>
-          <ul className="question-bank-list">{questions.map((question) => row(question, false))}</ul>
-        </section>
-      ))}
-      {elsewhere.length > 0 && (
-        <section className="question-bank-section" aria-labelledby="bank-other-title">
-          <h4 id="bank-other-title">Other questions</h4>
-          <ul className="question-bank-list">{elsewhere.map((question) => row(question, false))}</ul>
-        </section>
+      {view === "review" ? (
+        <>
+          <div className="question-bank-intro">
+            <h4>Needs review</h4>
+            <p>Learners do not get these questions until you fix them: complete the details, or choose or confirm the concept each one belongs to.</p>
+          </div>
+          {held.length ? (
+            <ul className="question-bank-list">{held.map((question) => row(question, true))}</ul>
+          ) : (
+            <p className="review-queue-empty">Nothing to review. Every question is ready for learners.</p>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="question-bank-intro">
+            <h4>Question bank</h4>
+            <p>The questions learners get, under the concept each one belongs to, with how many LOTS and HOTS questions each concept has.</p>
+          </div>
+          {groups.map((group) => {
+            const questions = given
+              .filter((question) => Number(questionGroupId(question)) === Number(group.id))
+              .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id);
+            return (
+              <section className="question-bank-section" id={`bank-concept-${group.id}`} key={group.id} aria-labelledby={`bank-concept-title-${group.id}`}>
+                <div className="question-bank-section-head">
+                  <h5 id={`bank-concept-title-${group.id}`}>{conceptTitle(group)}</h5>
+                  <div className="tier-counters">
+                    <TierCounter label="LOTS" count={group.question_counts?.LOT || 0} needed={group.question_minimum?.LOT || 0} />
+                    <TierCounter label="HOTS" count={group.question_counts?.HOT || 0} needed={group.question_minimum?.HOT || 0} />
+                  </div>
+                </div>
+                {questions.length ? (
+                  <ul className="question-bank-list">{questions.map((question) => row(question, false))}</ul>
+                ) : (
+                  <p className="question-bank-hint">No questions for this concept yet.</p>
+                )}
+              </section>
+            );
+          })}
+          {elsewhere.length > 0 && (
+            <section className="question-bank-section" aria-labelledby="bank-other-title">
+              <div className="question-bank-section-head"><h5 id="bank-other-title">Other questions</h5></div>
+              <ul className="question-bank-list">{elsewhere.map((question) => row(question, false))}</ul>
+            </section>
+          )}
+        </>
       )}
 
       {editing && (
         <div className="question-edit-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditing(null); }}>
-          <div className="question-edit-modal" role="dialog" aria-modal="true" aria-labelledby="question-edit-title">
-            <div className="question-edit-modal-head"><h3 id="question-edit-title">Edit question</h3></div>
+          <div className="question-edit-modal" role="dialog" aria-modal="true" aria-labelledby={`question-edit-title-${view}`}>
+            <div className="question-edit-modal-head"><h3 id={`question-edit-title-${view}`}>Edit question</h3></div>
             <QuestionEditForm question={editing} groups={groups} busy={busy} onCancel={() => setEditing(null)} onSave={async (values) => {
               if (await onEditQuestion(editing, values)) setEditing(null);
             }} />
@@ -1617,7 +1644,7 @@ function ManualQuestionPanel({
   onOpenBank,
 }) {
   const [uploading, setUploading] = useState(false);
-  const [lastResult, setLastResult] = useState("");
+  const [lastResult, setLastResult] = useState(null);
   const [questionType, setQuestionType] = useState("true_false");
   const [prompt, setPrompt] = useState("");
   const [choices, setChoices] = useState(["", "", "", ""]);
@@ -1637,13 +1664,13 @@ function ManualQuestionPanel({
     setUploading(true);
     onError("");
     onMessage("");
-    setLastResult("");
+    setLastResult(null);
     try {
       const formData = new FormData();
       formData.append("pdf_file", file);
       const data = await uploadQuestionnaire(topicId, formData);
       onResourcesChange(await fetchLearningResources(courseId, topicId));
-      setLastResult(data.message);
+      setLastResult({ message: data.message, held: data.held > 0 });
     } catch (err) {
       onError(err.message);
     } finally {
@@ -1656,7 +1683,7 @@ function ManualQuestionPanel({
     setSaving(true);
     onError("");
     onMessage("");
-    setLastResult("");
+    setLastResult(null);
     try {
       const finalChoices = questionType === "true_false"
         ? ["True", "False"]
@@ -1675,7 +1702,7 @@ function ManualQuestionPanel({
       setChoices(["", "", "", ""]);
       setCorrectAnswer(questionType === "true_false" ? "True" : "");
       setConceptGroupId("");
-      setLastResult(data.outcome.message);
+      setLastResult({ message: data.outcome.message, held: data.outcome.status !== "paired" });
     } catch (err) {
       onError(err.message);
     } finally {
@@ -1695,9 +1722,13 @@ function ManualQuestionPanel({
 
       {lastResult && (
         <div className="question-bank-handoff" role="status">
-          <p>{lastResult}</p>
-          <button type="button" className="btn btn-secondary btn-small" onClick={() => onOpenBank()}>
-            Review in question bank
+          <p>{lastResult.message}</p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={() => onOpenBank(lastResult.held ? "review" : "bank")}
+          >
+            {lastResult.held ? "Open Needs review" : "Open question bank"}
           </button>
         </div>
       )}
