@@ -446,6 +446,7 @@ function ReviewQueuePanel({
             view={view}
             questionPairings={questionPairings}
             groups={groups}
+            materialById={materialById}
             busyAction={busyAction}
             focus={view === mode ? bankFocus : null}
           />
@@ -1508,14 +1509,14 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
   if (held) {
     return (
       <article className="question-learning-object-card question-review-card" id={`bank-question-${question.id}`}>
-        <small className="question-review-from">
-          <b>FROM:</b> {SOURCE_NAMES[source] || "Typed"}{question.source_file ? ` (${question.source_file})` : ""}
-          {concept && <><span aria-hidden="true"> · </span><b>CONCEPT:</b> {conceptTitle(concept)}</>}
-        </small>
         <div className="question-review-head">
-          <strong>{question.prompt}</strong>
+          <small className="question-review-from">
+            <b>FROM:</b> {SOURCE_NAMES[source] || "Typed"}{question.source_file ? ` (${question.source_file})` : ""}
+            {concept && <><span aria-hidden="true"> · </span><b>CONCEPT:</b> {conceptTitle(concept)}</>}
+          </small>
           <div className="generated-question-meta">{levelPills}</div>
         </div>
+        <strong className="question-review-text">{question.prompt}</strong>
         {choiceList}
         <div className="question-learning-object-questions">
           <div className="version-slot-stale question-review-concerns" role="note">
@@ -1530,18 +1531,20 @@ function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onRev
 
   return (
     <li id={`bank-question-${question.id}`}>
-      <div className="generated-question-row">
-        <div className="generated-question-meta">
-          <span className={`question-origin-pill is-${source}`}>{SOURCE_NAMES[source] || "Typed"}</span>
-          {levelPills}
+      <div className="question-bank-item">
+        <div className="generated-question-row">
+          <div className="generated-question-meta">
+            <span className={`question-origin-pill is-${source}`}>{SOURCE_NAMES[source] || "Typed"}</span>
+            {levelPills}
+          </div>
+          <strong>{question.prompt}</strong>
         </div>
-        <strong>{question.prompt}</strong>
+        {choiceList}
+        {question.check_result === "kept" && (
+          <small className="question-bank-kept">Kept by you. The answer check said: {question.check_note}</small>
+        )}
+        {actions}
       </div>
-      {choiceList}
-      {question.check_result === "kept" && (
-        <small className="question-bank-kept">Kept by you. The answer check said: {question.check_note}</small>
-      )}
-      {actions}
     </li>
   );
 }
@@ -1554,6 +1557,7 @@ function QuestionBankPanel({
   view,
   questionPairings,
   groups,
+  materialById,
   busyAction,
   focus,
   onEditQuestion,
@@ -1587,9 +1591,26 @@ function QuestionBankPanel({
     />
   );
 
+  const conceptText = (group) => {
+    const representative = (group.learning_objects || []).find(
+      (item) => Number(item.id) === Number(group.versions?.representative_id),
+    ) || group.learning_objects?.[0];
+    const parts = group.versions?.slots?.standard?.objects || [];
+    const material = materialById?.get(Number(representative?.material));
+    return (
+      <div className="question-learning-object-copy">
+        {parts.length > 1
+          ? <BundleParts parts={parts} className="question-learning-object-preview" />
+          : <FormattedLearningObjectContent content={group.versions?.slots?.standard?.text || representative?.content || ""} className="question-learning-object-preview" />}
+        {material && <small>Standard source: {material.filename || material.title}</small>}
+      </div>
+    );
+  };
+
   const conceptCard = (key, title, questions, group = null) => (
     <article className="question-learning-object-card" id={group ? `bank-concept-${group.id}` : undefined} key={key}>
       <div className="question-learning-object-title"><div><strong>{title}</strong></div></div>
+      {group && conceptText(group)}
       <div className="question-learning-object-questions">
         <div className="question-bank-head">
           <h5>{questions.length} question{questions.length === 1 ? "" : "s"}</h5>
@@ -1617,7 +1638,7 @@ function QuestionBankPanel({
             <div>
               <span className="connection-eyebrow">Needs review</span>
               <h4>Questions learners do not get yet</h4>
-              <p>Complete the details, or choose or confirm the concept each one belongs to.</p>
+              <p>Complete the details, or choose / confirm the concept each one belongs to.</p>
             </div>
           </div>
           {held.length ? (
@@ -1770,7 +1791,6 @@ function ManualQuestionPanel({
           <div className="question-learning-object-main">
             <div className="question-learning-object-copy">
               <div className="question-learning-object-title"><div><strong>Upload a questionnaire</strong></div></div>
-              <small>A PDF with selectable text. Its questions are added to this topic; ones already in the topic are skipped.</small>
             </div>
             <label className={`btn btn-primary question-upload-button${uploading ? " is-busy" : ""}`}>
               {uploading ? "Reading questionnaire…" : "Upload questionnaire PDF"}
