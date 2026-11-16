@@ -26,6 +26,7 @@ import {
   generateObjectVersions,
   keepVersionText,
   reviewQuestionPairing,
+  uploadQuestionnaire,
   startQuestionGeneration,
   startTopicQuestionGeneration,
   updateLearningObject,
@@ -1423,11 +1424,9 @@ function ManualQuestionPanel({
     try {
       const formData = new FormData();
       formData.append("pdf_file", file);
-      formData.append("title", file.name.replace(/\.pdf$/i, ""));
-      formData.append("outline_node_id", topicId);
-      const updatedCourse = await uploadLearningMaterial(courseId, formData);
-      onCourseChange(updatedCourse);
-      onMessage("Question PDF uploaded and matched against the confirmed concepts.");
+      const data = await uploadQuestionnaire(topicId, formData);
+      onResourcesChange(await fetchLearningResources(courseId, topicId));
+      onMessage(data.message);
     } catch (err) {
       onError(err.message);
     } finally {

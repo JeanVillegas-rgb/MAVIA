@@ -3,6 +3,7 @@ import threading
 
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -344,6 +345,31 @@ class QuestionPairingView(APIView):
         from .services.teacher_questions import review_pairing
 
         return _teacher_question_response(review_pairing, outline_node_id, question_id, request.data)
+
+
+class QuestionnaireUploadView(APIView):
+    """POST /api/generation/topics/<id>/questionnaire/: add the questions in a teacher's questionnaire PDF."""
+    permission_classes = [IsTeacherOrAdmin]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, outline_node_id):
+        from .services.questionnaire import outcome_message, upload_questionnaire
+        from .services.teacher_questions import QuestionError
+
+        node = _topic(outline_node_id)
+        if node is None:
+            return Response(TOPIC_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        upload = request.FILES.get("pdf_file")
+        if upload is None:
+            return Response({"detail": "Choose a PDF file to upload."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            counts = upload_questionnaire(node, upload)
+        except QuestionError as error:
+            return Response({"detail": error.detail}, status=error.status)
+        return Response(
+            {**counts, "message": outcome_message(counts)},
+            status=status.HTTP_201_CREATED if counts["added"] else status.HTTP_200_OK,
+        )
 
 
 class LabelQuestionsView(APIView):

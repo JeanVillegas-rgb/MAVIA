@@ -23,7 +23,7 @@ TYPE_OF_FORMAT = {
     "TF": ExtractedQuestion.Type.TRUE_FALSE,
 }
 FORMAT_OF_TYPE = {question_type: fmt for fmt, question_type in TYPE_OF_FORMAT.items()}
-SCREEN_SOURCE = {"generated": "generated", "lesson_pdf": "pdf"}
+SCREEN_SOURCE = {"generated": "generated", "lesson_pdf": "pdf", "questionnaire": "questionnaire"}
 
 
 def bank_values(question_type, choices, correct_answer):

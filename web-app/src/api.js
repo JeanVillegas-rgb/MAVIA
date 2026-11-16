@@ -264,6 +264,14 @@ export function reviewQuestionPairing(
   );
 }
 
+// A teacher's questionnaire PDF: its questions are added to the topic's bank.
+export function uploadQuestionnaire(nodeId, formData) {
+  return request(`/generation/topics/${nodeId}/questionnaire/`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
 export function createTopicQuestion(nodeId, data) {
   return request(`/generation/topics/${nodeId}/questions/`, {
     method: "POST",
