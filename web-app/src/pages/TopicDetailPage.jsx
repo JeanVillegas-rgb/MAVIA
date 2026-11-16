@@ -364,10 +364,17 @@ function ReviewQueuePanel({
       </div>
 
       {labelling.running && (
-        <p role="status" className="connection-unpublished-note">
-          Labelling {unlabelledCount} printed question{unlabelledCount === 1 ? "" : "s"} with
-          their Bloom level, LOTS/HOTS and category…
-        </p>
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="labelling-title" aria-busy="true">
+            <h3 id="labelling-title">Classifying questions from your lesson PDFs</h3>
+            <p role="status">
+              Labelling {unlabelledCount} question{unlabelledCount === 1 ? "" : "s"} printed in the
+              uploaded lesson PDFs with their Bloom level, LOTS/HOTS and category, and finding the
+              concept each one belongs to. This takes a moment.
+            </p>
+            <div className="publish-trace-bar is-indeterminate" aria-hidden="true"><span /></div>
+          </div>
+        </div>
       )}
       {labelling.error && (
         <div className="error-banner" role="alert">
