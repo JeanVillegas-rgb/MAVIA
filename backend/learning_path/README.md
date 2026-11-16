@@ -10,8 +10,8 @@ How the links and the order are decided is in `CRITERIA.md`.
 
 ```
 Groups of learning objects across a topic's PDFs
-   -> concepts, split passages joined, merged PDF order         (services/concept_units.py)
-   -> prerequisite links, per pair of concepts (v6.3):          (services/criteria.py,
+   -> concepts: one per group, in merged PDF order              (services/concept_units.py)
+   -> prerequisite links, per pair of concepts (v7.0):          (services/criteria.py,
         the text says whether: a name, two owned terms, a heading     clues.py, fusion.py)
         the PDF order says which way
         nothing contradicts it -> accepted; contradicted -> pending
@@ -56,4 +56,4 @@ python manage.py show_learning_path [topic_id] [--preview] [--links]
 The first version ordered each PDF separately, with its own strong/medium/weak
 evidence rules and a `PrerequisiteEdge` table between learning objects. It was
 removed on 2026-09-14 once the topic-level path replaced it. The criteria in
-use (v6.3) are described in `CRITERIA.md`.
+use (v7.0) are described in `CRITERIA.md`.

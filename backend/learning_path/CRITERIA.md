@@ -1,8 +1,9 @@
-# Prerequisite link criteria (v6.3)
+# Prerequisite link criteria (v7.0)
 
-**Scope:** one path per **topic**, whose steps are **concepts** (grouping's concept bundles
-across every PDF of the topic, `services/concept_units.py`). Grouping and extraction are read,
-never changed.
+**Scope:** one path per **topic**, whose steps are **concepts**. A concept is one group of
+learning objects exactly as the lesson pipeline stored it, named by the group's label
+(`services/concept_units.py`). The learning path reads the groups and their learning objects and
+nothing else: it does not join groups, rename them, or read the PDF or its extracted blocks.
 
 **The idea:** two questions, two kinds of evidence. **Whether** a link exists comes from the text
 (a name, terms one concept explains, a heading). **Which way** it points comes from the lesson's
@@ -37,22 +38,18 @@ The adaptive engine then walks the saved path and detours through the nearest pr
 
 **Part names.** The extractor stores a term in its learning object's title and the explanation in
 its content, so "Pollination" is never written in Pollination's own text. Each member's title
-(numbering and "(Part n of m)" removed, at most 6 stems, not the concept's own name) is also a name
+(numbering removed, at most 6 stems, not the concept's own name) is also a name
 of the concept, but only towards concepts sharing a PDF with it: across PDFs the direction is the
 merged order's guess, and there "The Digestive System" (members Mouth, Stomach, ...) became the
 accepted prerequisite of every concept mentioning the stomach. `records.name.parts` lists the part
 titles named; the reason reads "Everyday Examples names Pollination and Fertilization, parts of How
 Flowering Plants Reproduce."
 
-**Printed-in headings.** A concept sits under its members' own headings and, for a term printed
-inside a section ("1. Solid — A solid has..." in body text under the heading "Matter"), under that
-section's heading too. The extractor opens a section for every numbered term, and grouping reads
-"same heading in a row" as "same concept", so the stored heading cannot hold both meanings. The
-section a term is printed in is read from the stored PDF blocks with the extractor's own rules
-(`concept_text.enclosing_headings`): its heading test, smaller headings nesting under bigger ones,
-objectives and quizzes ending a section, starting at the first learning object's block. Grouping and
-the stored data are not changed. The heading and `parallel` clues and the cross-section flag read
-these headings; Matter -> Solid becomes a heading link and Solid, Liquid and Gas become parallel.
+**Headings.** A concept sits under the headings stored on its own learning objects
+(`section_title`) and no others. A learning object does not record the bigger section it is printed
+inside, so "Solid", stored under its own heading "Solid", is not seen as sitting under "Matter".
+Until the lesson pipeline stores that enclosing heading, the heading clue cannot link Matter to
+Solid, and Solid, Liquid and Gas are not seen as `parallel`.
 
 ## The verdict
 
@@ -72,7 +69,7 @@ PDFs does not block a link: a figure pair is accepted in PDF order, a cross-PDF 
 order. A suggestion's direction: a figure after the text its description refers to, else the order;
 across PDFs the name clue's direction if it has one, else the merged order; otherwise the order.
 
-Each stored link's `evidence` holds `rule: "reference-order"`, `version: "6.3"`, `direction_from`
+Each stored link's `evidence` holds `rule: "reference-order"`, `version: "7.0"`, `direction_from`
 (`heading`, `pdf_order`, `figure`, `name`, `merged_order`, `pdf_agreement`), `contradictions`, the
 clue votes (oriented prerequisite-first), each clue's numbers, `relatedness`, `confidence` (share of
 the deciding clues that agree; used to break loops) and `semantic`. `reasons.link_reason` turns
@@ -105,3 +102,11 @@ concept is also named by its parts' titles within a shared PDF.
 v6.3 (2026-10-21): v6.2 plus printed-in headings: a term printed inside a section also sits under
 that section's heading, so the heading and `parallel` clues see the lesson's nesting. A link the
 heading clue accepts no longer adds "names ... more than the reverse" to its reason.
+
+v7.0 (2026-11-12): the learning path reads only the lesson pipeline's groups and learning objects.
+Removed: printed-in headings (they were read from the stored PDF blocks), the join of
+"(Part n of m)" pieces, and the join of same-name groups. A concept is named by its group's label.
+The clues and the verdict table are unchanged from v6.2. Measured on the three sample topics, the
+step order did not change, but heading links such as Matter -> Solid dropped to suggestions,
+sibling concepts are linked in PDF order (Solid -> Liquid -> Gas), and "Everyday Examples" in
+Solid, Liquid and Gas is two concepts, one per PDF.
