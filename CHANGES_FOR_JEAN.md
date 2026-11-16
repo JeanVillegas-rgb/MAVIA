@@ -98,6 +98,7 @@ Your rename to `question_generation.Question` (alias `GeneratedQuestion`), the n
    - run on a non-lesson file without creating learning objects,
    - read .docx,
    - read an end-of-file answer key.
+   - Your reader is already used for questionnaires: the "Upload question PDF" button in the Questions step (`question_generation/services/questionnaire.py`) runs `extract_lesson_pdf_blocks` → `classify_blocks` → `detected_question_payloads` on the file. No learning objects are created. Whatever your reader returns gets better there automatically. One small thing: prompts keep their printed number ("2. Which state of matter…"), so please strip it in `parse_question_structure`.
 4. **Learning objects for the learning path:**
    - Store each object's enclosing heading (e.g. "Matter" above "Solid", "Liquid", "Gas").
    - Group same-name concepts across PDFs (topic 2 had two "Everyday Examples").
