@@ -779,113 +779,28 @@ body {
   line-height: 1.5;
 }
 
-/* Needs review and Question bank tabs: plain full-width rows. Held rows get
-   room to breathe, with the reason in its own soft block. */
-.question-bank-panel {
+/* Add questions, Needs review and Question bank follow the Generate tab:
+   the same board, white cards, numbered rows and pills. Only what that tab
+   has no part for is added here. */
+.question-origin-pill.is-pdf { background: #e7f4ff; color: #245d91; }
+.question-origin-pill.is-questionnaire { background: #ffe9e0; color: #a1441d; }
+
+.question-generation-board li:has(> .question-bank-actions),
+.question-generation-board li:has(> .question-bank-choose) {
   display: grid;
-  gap: 1.75rem;
-  background: var(--mv-surface);
-  border-radius: var(--mv-radius);
-  padding: 1.75rem;
+  gap: 0.45rem;
+  padding-bottom: 0.6rem;
 }
 
-.question-bank-intro h4 {
-  margin: 0;
-  font-size: 1.15rem;
-}
-
-.question-bank-intro p,
-.question-bank-hint {
-  margin: 0.35rem 0 0;
-  color: var(--mv-muted);
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-
-.question-bank-section {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.question-bank-section-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem 1.5rem;
-}
-
-.question-bank-section-head h5 {
-  margin: 0;
-  font-size: 1.02rem;
-}
-
-.question-bank-list {
+.question-bank-single {
   list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--mv-border);
-}
-
-.question-bank-row {
-  display: grid;
-  gap: 0.9rem;
-  padding: 1.1rem 0;
-  border-bottom: 1px solid var(--mv-border);
-}
-
-.question-bank-row.is-held {
-  gap: 1.1rem;
-  padding: 1.5rem 0;
-}
-
-.question-bank-body {
-  display: grid;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.question-bank-text {
-  font-size: 1.02rem;
-  line-height: 1.45;
-}
-
-.question-bank-meta,
-.question-bank-concept {
-  color: var(--mv-muted);
-  font-size: 0.85rem;
+  padding-left: 0 !important;
 }
 
 .question-bank-reason {
-  display: grid;
-  gap: 0.3rem;
-  margin-top: 0.25rem;
-  padding: 0.85rem 1rem;
-  border-radius: 12px;
-  background: #fff7e6;
-  color: #7a4f00;
+  margin: 0.15rem 0 0;
 }
 
-.question-bank-reason span {
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-.question-bank-reason p {
-  margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-
-.question-bank-actions,
-.question-bank-choose {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-/* Kept apart from the fixing actions so it is not hit while reaching for them. */
 .question-bank-actions .question-bank-delete {
   margin-left: auto;
 }
@@ -894,22 +809,25 @@ body {
   min-width: 16rem;
 }
 
-.question-bank-handoff {
+.question-bank-kept {
+  color: var(--mv-muted);
+  font-size: 0.82rem;
+}
+
+.question-add-result {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid var(--mv-border);
 }
 
-.question-bank-handoff p {
-  margin: 0;
-  flex: 1 1 16rem;
+.question-upload-button {
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-/* The Add questions tab is the tools column alone: it takes the whole width. */
-.question-tools-panel > .qt-col--tools:only-child {
-  flex: 1 1 100%;
-  max-width: none;
+.question-upload-button.is-busy {
+  opacity: 0.7;
+  pointer-events: none;
 }

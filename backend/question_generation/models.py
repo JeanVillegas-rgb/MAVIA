@@ -131,6 +131,7 @@ class Question(models.Model):
             ("contradicted", "Contradicted"),
             ("unsupported", "Unsupported"),
             ("unverified", "Unverified"),
+            ("kept", "Kept by the teacher"),
         ],
         blank=True,
         default="",

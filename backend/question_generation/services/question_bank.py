@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 TIERS = ("LOT", "HOT")
 FAILED_CHECKS = ("contradicted", "unsupported")
+OVERRULABLE_CHECKS = (*FAILED_CHECKS, "unverified")
 NOT_CHECKED = "The answer could not be checked right now. Edit and save the question again to retry."
 NO_CONCEPT = "No concept's text supports this answer. Choose a concept or revise the question."
 CONFIRMED_OBJECTS = {"material__generated_json__learning_objects_confirmed": True}
@@ -92,6 +93,16 @@ def settle(question):
     question.status = "final" if ready else "review"
     question.content_fingerprint = question_fingerprint(question.question_text)
     question.save()
+
+
+def can_keep(question):
+    """True when only the answer check holds the question back, so the teacher may keep it anyway."""
+    return bool(
+        question.node_id
+        and question.check_result in OVERRULABLE_CHECKS
+        and question.thinking_order in TIERS
+        and not structure_issues(question)
+    )
 
 
 def fills_minimum(question):
@@ -177,6 +188,7 @@ def screen_row(question):
         "validation_issues": problems,
         "check_result": question.check_result,
         "check_note": question.check_note,
+        "can_keep": can_keep(question),
         "pairing_status": pairing[0]["review_status"] if pairing else "unmatched",
         "learning_object_links": pairing,
     }

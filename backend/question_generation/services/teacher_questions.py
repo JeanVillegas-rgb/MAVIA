@@ -11,6 +11,7 @@ from .pairing import KEY_CONFLICT, PAIRED, UNVERIFIED, pair_question
 from .pipeline import _get_classifier, _is_concept_source, concept_name, concept_source_text
 from .question_bank import (
     CONFIRMED_OBJECTS,
+    can_keep,
     bank_values,
     duplicate_in_topic,
     issues,
@@ -235,6 +236,17 @@ def review_pairing(node, question_id, data):
 
     _apply(question, place)
     return question, _outcome(question, place, verb)
+
+
+def keep_anyway(node, question_id):
+    """The teacher keeps a question the answer check held: it becomes theirs and is given to learners."""
+    question = _question(node, question_id)
+    if not can_keep(question):
+        raise QuestionError("Only a question held by the answer check, with its concept and details complete, can be kept.")
+    question.paired_by = "teacher"
+    question.check_result = "kept"
+    settle(question)
+    return question, {"status": "paired", "message": "Question kept. Learners will get it."}
 
 
 def delete_question(node, question_id):

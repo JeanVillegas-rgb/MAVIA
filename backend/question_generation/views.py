@@ -347,6 +347,16 @@ class QuestionPairingView(APIView):
         return _teacher_question_response(review_pairing, outline_node_id, question_id, request.data)
 
 
+class KeepQuestionView(APIView):
+    """POST /api/generation/topics/<id>/questions/<id>/keep/: keep a question the answer check held."""
+    permission_classes = [IsTeacherOrAdmin]
+
+    def post(self, request, outline_node_id, question_id):
+        from .services.teacher_questions import keep_anyway
+
+        return _teacher_question_response(keep_anyway, outline_node_id, question_id)
+
+
 class QuestionnaireUploadView(APIView):
     """POST /api/generation/topics/<id>/questionnaire/: add the questions in a teacher's questionnaire PDF."""
     permission_classes = [IsTeacherOrAdmin]

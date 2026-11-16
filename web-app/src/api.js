@@ -264,6 +264,11 @@ export function reviewQuestionPairing(
   );
 }
 
+// The teacher keeps a question the answer check held.
+export function keepTopicQuestion(nodeId, questionId) {
+  return request(`/generation/topics/${nodeId}/questions/${questionId}/keep/`, { method: "POST" });
+}
+
 // A teacher's questionnaire PDF: its questions are added to the topic's bank.
 export function uploadQuestionnaire(nodeId, formData) {
   return request(`/generation/topics/${nodeId}/questionnaire/`, {

@@ -27,6 +27,7 @@ import {
   keepVersionText,
   reviewQuestionPairing,
   uploadQuestionnaire,
+  keepTopicQuestion,
   startQuestionGeneration,
   startTopicQuestionGeneration,
   updateLearningObject,
@@ -1451,89 +1452,98 @@ function heldReasons(question, suggested) {
   return reasons;
 }
 
-function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onReview }) {
+function BankQuestionRow({ question, groups, held, busy, onEdit, onDelete, onReview, onKeep }) {
   const [choosing, setChoosing] = useState(false);
   const [choice, setChoice] = useState("");
   const link = question.learning_object_links?.[0];
   const groupId = questionGroupId(question);
   const concept = groups.find((group) => Number(group.id) === Number(groupId));
   const suggested = link?.review_status === "pending_review" ? concept : null;
-  const tier = { LOT: "LOTS", HOT: "HOTS" }[question.thinking_order];
-  const meta = [SOURCE_NAMES[question.source_type] || "Typed", tier, question.category].filter(Boolean);
+  const source = question.source_type || "manual";
+  const actions = choosing ? (
+    <form
+      className="version-slot-actions question-bank-choose"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (await onReview(question, "change", choice)) setChoosing(false);
+      }}
+    >
+      <select required value={choice} onChange={(event) => setChoice(event.target.value)}>
+        <option value="">Choose a concept</option>
+        {groups.map((group) => (
+          <option value={group.id} key={group.id}>{conceptTitle(group)}</option>
+        ))}
+      </select>
+      <button type="submit" className="btn btn-primary btn-small" disabled={busy || !choice}>Save</button>
+      <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => setChoosing(false)}>Cancel</button>
+    </form>
+  ) : (
+    <div className="version-slot-actions question-bank-actions">
+      {suggested && (
+        <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onReview(question, "confirm")}>
+          Confirm concept
+        </button>
+      )}
+      {question.can_keep && (
+        <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onKeep(question)}>
+          Keep anyway
+        </button>
+      )}
+      <button
+        type="button"
+        className="btn btn-secondary btn-small"
+        disabled={busy}
+        onClick={() => { setChoice(groupId ? String(groupId) : ""); setChoosing(true); }}
+      >
+        {concept ? "Change concept" : "Choose concept"}
+      </button>
+      {concept && link?.review_status !== "teacher_unpaired" && (
+        <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onReview(question, "unpair")}>
+          Leave unpaired
+        </button>
+      )}
+      <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onEdit(question)}>Edit</button>
+      <button type="button" className="btn btn-danger btn-small question-bank-delete" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
+    </div>
+  );
   return (
-    <li className={`question-bank-row${held ? " is-held" : ""}`} id={`bank-question-${question.id}`}>
-      <div className="question-bank-body">
-        <small className="question-bank-meta">{meta.join(" · ")}</small>
-        <strong className="question-bank-text">{question.prompt}</strong>
-        {Boolean(question.choices?.length) && (
-          <ul className="generated-question-choices">
-            {question.choices.map((text, index) => (
-              <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
-                {text}
-              </li>
-            ))}
-          </ul>
-        )}
-        {held && (
-          <>
-            <small className="question-bank-concept">
-              {concept ? `Concept: ${conceptTitle(concept)}` : "No concept yet"}
-            </small>
-            <div className="question-bank-reason">
-              <span>Why learners do not get it yet</span>
-              {heldReasons(question, suggested).map((reason) => <p key={reason}>{reason}</p>)}
-            </div>
-          </>
-        )}
+    <li id={`bank-question-${question.id}`}>
+      <div className="generated-question-row">
+        <div className="generated-question-meta">
+          <span className={`question-origin-pill is-${source}`}>{SOURCE_NAMES[source] || "Typed"}</span>
+          {question.thinking_order && <span className="question-thinking-pill">{question.thinking_order}</span>}
+          {question.category && (
+            <span className={`question-category-pill ${categoryPillClass(question.category)}`}>{question.category}</span>
+          )}
+        </div>
+        <strong>{question.prompt}</strong>
       </div>
-      {choosing ? (
-        <form
-          className="question-bank-choose"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            if (await onReview(question, "change", choice)) setChoosing(false);
-          }}
-        >
-          <select required value={choice} onChange={(event) => setChoice(event.target.value)}>
-            <option value="">Choose a concept</option>
-            {groups.map((group) => (
-              <option value={group.id} key={group.id}>{conceptTitle(group)}</option>
-            ))}
-          </select>
-          <button type="submit" className="btn btn-primary btn-small" disabled={busy || !choice}>Save</button>
-          <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => setChoosing(false)}>Cancel</button>
-        </form>
-      ) : (
-        <div className="question-bank-actions">
-          {suggested && (
-            <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onReview(question, "confirm")}>
-              Confirm concept
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-secondary btn-small"
-            disabled={busy}
-            onClick={() => { setChoice(groupId ? String(groupId) : ""); setChoosing(true); }}
-          >
-            {concept ? "Change concept" : "Choose concept"}
-          </button>
-          {concept && link?.review_status !== "teacher_unpaired" && (
-            <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onReview(question, "unpair")}>
-              Leave unpaired
-            </button>
-          )}
-          <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => onEdit(question)}>Edit</button>
-          <button type="button" className="btn btn-danger btn-small question-bank-delete" disabled={busy} onClick={() => onDelete(question)}>Delete</button>
+      {Boolean(question.choices?.length) && (
+        <ul className="generated-question-choices">
+          {question.choices.map((text, index) => (
+            <li className={text === question.correct_answer ? "is-correct" : ""} key={`${question.id}-${index}`}>
+              {text}
+            </li>
+          ))}
+        </ul>
+      )}
+      {question.check_result === "kept" && (
+        <small className="question-bank-kept">Kept by you. The answer check said: {question.check_note}</small>
+      )}
+      {held && (
+        <div className="version-slot-stale question-bank-reason" role="note">
+          {heldReasons(question, suggested).map((reason) => <p key={reason}>{reason}</p>)}
         </div>
       )}
+      {actions}
     </li>
   );
 }
 
 // Every question of the topic, whatever made it, and the one place to fix
-// them. "review" lists the ones learners do not get yet; "bank" lists the
-// ones they do, under each concept with its LOTS/HOTS counters.
+// them. "review" lists the ones learners do not get yet, one card per
+// question; "bank" lists the ones they do, one card per concept with its
+// LOTS/HOTS counters. Both follow the Generate tab's board.
 function QuestionBankPanel({
   view,
   questionPairings,
@@ -1543,6 +1553,7 @@ function QuestionBankPanel({
   onEditQuestion,
   onDeleteQuestion,
   onReviewQuestion,
+  onKeepQuestion,
 }) {
   const [editing, setEditing] = useState(null);
   const busy = Boolean(busyAction);
@@ -1566,56 +1577,86 @@ function QuestionBankPanel({
       onEdit={setEditing}
       onDelete={onDeleteQuestion}
       onReview={onReviewQuestion}
+      onKeep={onKeepQuestion}
     />
   );
 
+  const conceptCard = (key, title, questions, group = null) => (
+    <article className="question-learning-object-card" id={group ? `bank-concept-${group.id}` : undefined} key={key}>
+      <div className="question-learning-object-title"><div><strong>{title}</strong></div></div>
+      <div className="question-learning-object-questions">
+        <div className="question-bank-head">
+          <h5>{questions.length} question{questions.length === 1 ? "" : "s"}</h5>
+          {group && (
+            <div className="tier-counters">
+              <TierCounter label="LOTS" count={group.question_counts?.LOT || 0} needed={group.question_minimum?.LOT || 0} />
+              <TierCounter label="HOTS" count={group.question_counts?.HOT || 0} needed={group.question_minimum?.HOT || 0} />
+            </div>
+          )}
+        </div>
+        {questions.length ? (
+          <ol>{questions.map((question) => row(question, false))}</ol>
+        ) : (
+          <p className="question-learning-object-empty">No questions for this concept yet.</p>
+        )}
+      </div>
+    </article>
+  );
+
   return (
-    <div className="question-bank-panel">
+    <div className="question-generation-board">
       {view === "review" ? (
         <>
-          <div className="question-bank-intro">
-            <h4>Needs review</h4>
-            <p>Learners do not get these questions until you fix them: complete the details, or choose or confirm the concept each one belongs to.</p>
+          <div className="question-generation-board-heading">
+            <div>
+              <span className="connection-eyebrow">Needs review</span>
+              <h4>Questions learners do not get yet</h4>
+              <p>Complete the details, or choose or confirm the concept each one belongs to.</p>
+            </div>
           </div>
           {held.length ? (
-            <ul className="question-bank-list">{held.map((question) => row(question, true))}</ul>
+            <div className="question-learning-object-list">
+              {held.map((question) => {
+                const concept = groups.find((group) => Number(group.id) === Number(questionGroupId(question)));
+                return (
+                  <article className="question-learning-object-card" key={question.id}>
+                    <div className="question-learning-object-title">
+                      <div>
+                        <strong>{concept ? conceptTitle(concept) : "No concept yet"}</strong>
+                        <small>{concept ? "Concept" : "Choose the concept this question belongs to"}</small>
+                      </div>
+                    </div>
+                    <div className="question-learning-object-questions">
+                      <ol className="question-bank-single">{row(question, true)}</ol>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           ) : (
-            <p className="review-queue-empty">Nothing to review. Every question is ready for learners.</p>
+            <div className="review-queue-empty">Nothing to review. Every question is ready for learners.</div>
           )}
         </>
       ) : (
         <>
-          <div className="question-bank-intro">
-            <h4>Question bank</h4>
-            <p>The questions learners get, under the concept each one belongs to, with how many LOTS and HOTS questions each concept has.</p>
+          <div className="question-generation-board-heading">
+            <div>
+              <span className="connection-eyebrow">Question bank</span>
+              <h4>Questions learners get</h4>
+              <p>Every concept with its questions and how many LOTS and HOTS it has.</p>
+            </div>
           </div>
-          {groups.map((group) => {
-            const questions = given
-              .filter((question) => Number(questionGroupId(question)) === Number(group.id))
-              .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id);
-            return (
-              <section className="question-bank-section" id={`bank-concept-${group.id}`} key={group.id} aria-labelledby={`bank-concept-title-${group.id}`}>
-                <div className="question-bank-section-head">
-                  <h5 id={`bank-concept-title-${group.id}`}>{conceptTitle(group)}</h5>
-                  <div className="tier-counters">
-                    <TierCounter label="LOTS" count={group.question_counts?.LOT || 0} needed={group.question_minimum?.LOT || 0} />
-                    <TierCounter label="HOTS" count={group.question_counts?.HOT || 0} needed={group.question_minimum?.HOT || 0} />
-                  </div>
-                </div>
-                {questions.length ? (
-                  <ul className="question-bank-list">{questions.map((question) => row(question, false))}</ul>
-                ) : (
-                  <p className="question-bank-hint">No questions for this concept yet.</p>
-                )}
-              </section>
-            );
-          })}
-          {elsewhere.length > 0 && (
-            <section className="question-bank-section" aria-labelledby="bank-other-title">
-              <div className="question-bank-section-head"><h5 id="bank-other-title">Other questions</h5></div>
-              <ul className="question-bank-list">{elsewhere.map((question) => row(question, false))}</ul>
-            </section>
-          )}
+          <div className="question-learning-object-list">
+            {groups.map((group) => conceptCard(
+              group.id,
+              conceptTitle(group),
+              given
+                .filter((question) => Number(questionGroupId(question)) === Number(group.id))
+                .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id),
+              group,
+            ))}
+            {elsewhere.length > 0 && conceptCard("elsewhere", "Other questions", elsewhere)}
+          </div>
         </>
       )}
 
@@ -1711,18 +1752,18 @@ function ManualQuestionPanel({
   }
 
   return (
-    <aside className="match-suggestion-panel panel-aside question-tools-panel" aria-labelledby="manual-question-panel-title">
-      <div className="qt-col qt-col--tools">
-      <div className="match-suggestion-heading">
+    <div className="question-generation-board">
+      <div className="question-generation-board-heading">
         <div>
-          <span className="connection-eyebrow">Question tools</span>
-          <h4 id="manual-question-panel-title">Add questions</h4>
+          <span className="connection-eyebrow">Your own questions</span>
+          <h4>Add questions</h4>
+          <p>Upload a questionnaire you already have, or type a question. Each one is checked against the lesson and paired to a concept.</p>
         </div>
       </div>
 
       {lastResult && (
-        <div className="question-bank-handoff" role="status">
-          <p>{lastResult.message}</p>
+        <div className="question-generation-progress question-add-result" role="status">
+          <span>{lastResult.message}</span>
           <button
             type="button"
             className="btn btn-secondary btn-small"
@@ -1733,125 +1774,122 @@ function ManualQuestionPanel({
         </div>
       )}
 
-      <div className="question-source-upload">
-        <p className="question-source-prompt">Did you prepare your questions in a PDF?</p>
-        <label className="question-sidebar-action question-sidebar-upload">
-          <span aria-hidden="true">PDF</span>
-          <strong>{uploading ? "Processing question PDF..." : "Upload question PDF"}</strong>
-          <input
-            type="file"
-            accept=".pdf,application/pdf"
-            hidden
-            disabled={uploading}
-            onChange={handleUpload}
-          />
-        </label>
-      </div>
-
-      <div className="question-source-divider" role="separator">
-        <span>OR</span>
-      </div>
-
-      <form className="question-manual-form" onSubmit={handleSubmit}>
-        <div className="question-type-toggle" role="tablist" aria-label="Question type">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={questionType === "true_false"}
-            className={questionType === "true_false" ? "is-active" : ""}
-            onClick={() => switchType("true_false")}
-          >
-            True/False
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={questionType === "multiple_choice"}
-            className={questionType === "multiple_choice" ? "is-active" : ""}
-            onClick={() => switchType("multiple_choice")}
-          >
-            Multiple choice
-          </button>
-        </div>
-
-        <label className="question-manual-field">
-          Question
-          <textarea
-            required
-            rows="3"
-            value={prompt}
-            placeholder="Enter the question"
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-        </label>
-
-        <label className="question-manual-field">
-          Concept to tie to
-          <select
-            value={conceptGroupId}
-            onChange={(event) => setConceptGroupId(event.target.value)}
-          >
-            <option value="">Best available match</option>
-            {groups.map((group) => (
-              <option value={group.id} key={group.id}>
-                {group.display_title || group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {questionType === "multiple_choice" && (
-          <div className="question-manual-choice-list">
-            <span>Answer choices</span>
-            {choices.map((choice, index) => (
-              <label key={index}>
-                <span>{String.fromCharCode(65 + index)}</span>
-                <input
-                  required={index < 2}
-                  value={choice}
-                  placeholder={`Choice ${String.fromCharCode(65 + index)}`}
-                  onChange={(event) => {
-                    const next = [...choices];
-                    next[index] = event.target.value;
-                    setChoices(next);
-                    if (correctAnswer === choice) setCorrectAnswer(event.target.value);
-                  }}
-                />
-              </label>
-            ))}
+      <div className="question-learning-object-list">
+        <article className="question-learning-object-card">
+          <div className="question-learning-object-main">
+            <div className="question-learning-object-copy">
+              <div className="question-learning-object-title"><div><strong>Upload a questionnaire</strong></div></div>
+              <small>A PDF with selectable text. Its questions are added to this topic; ones already in the topic are skipped.</small>
+            </div>
+            <label className={`btn btn-primary question-upload-button${uploading ? " is-busy" : ""}`}>
+              {uploading ? "Reading questionnaire…" : "Upload questionnaire PDF"}
+              <input type="file" accept=".pdf,application/pdf" hidden disabled={uploading} onChange={handleUpload} />
+            </label>
           </div>
-        )}
+        </article>
 
-        <label className="question-manual-field">
-          Correct answer
-          <select
-            required
-            value={correctAnswer}
-            onChange={(event) => setCorrectAnswer(event.target.value)}
-          >
-            {questionType === "true_false" ? (
-              <>
-                <option value="True">True</option>
-                <option value="False">False</option>
-              </>
-            ) : (
-              <>
-                <option value="">Select the correct answer</option>
-                {choices.map((choice, index) => (
-                  choice.trim() ? <option value={choice.trim()} key={index}>{String.fromCharCode(65 + index)}. {choice}</option> : null
+        <article className="question-learning-object-card">
+          <div className="question-learning-object-title"><div><strong>Type a question</strong></div></div>
+          <form className="question-manual-form" onSubmit={handleSubmit}>
+            <div className="question-type-toggle" role="tablist" aria-label="Question type">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={questionType === "true_false"}
+                className={questionType === "true_false" ? "is-active" : ""}
+                onClick={() => switchType("true_false")}
+              >
+                True/False
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={questionType === "multiple_choice"}
+                className={questionType === "multiple_choice" ? "is-active" : ""}
+                onClick={() => switchType("multiple_choice")}
+              >
+                Multiple choice
+              </button>
+            </div>
+
+            <label className="question-manual-field">
+              Question
+              <textarea
+                required
+                rows="3"
+                value={prompt}
+                placeholder="Enter the question"
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+            </label>
+
+            <label className="question-manual-field">
+              Concept to tie to
+              <select
+                value={conceptGroupId}
+                onChange={(event) => setConceptGroupId(event.target.value)}
+              >
+                <option value="">Best available match</option>
+                {groups.map((group) => (
+                  <option value={group.id} key={group.id}>
+                    {group.display_title || group.label || group.learning_objects?.[0]?.title || "Untitled concept"}
+                  </option>
                 ))}
-              </>
+              </select>
+            </label>
+
+            {questionType === "multiple_choice" && (
+              <div className="question-manual-choice-list">
+                <span>Answer choices</span>
+                {choices.map((choice, index) => (
+                  <label key={index}>
+                    <span>{String.fromCharCode(65 + index)}</span>
+                    <input
+                      required={index < 2}
+                      value={choice}
+                      placeholder={`Choice ${String.fromCharCode(65 + index)}`}
+                      onChange={(event) => {
+                        const next = [...choices];
+                        next[index] = event.target.value;
+                        setChoices(next);
+                        if (correctAnswer === choice) setCorrectAnswer(event.target.value);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
             )}
-          </select>
-        </label>
 
-        <button type="submit" className="btn btn-primary question-manual-submit" disabled={saving}>
-          {saving ? "Adding question..." : "Add question"}
-        </button>
-      </form>
+            <label className="question-manual-field">
+              Correct answer
+              <select
+                required
+                value={correctAnswer}
+                onChange={(event) => setCorrectAnswer(event.target.value)}
+              >
+                {questionType === "true_false" ? (
+                  <>
+                    <option value="True">True</option>
+                    <option value="False">False</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="">Select the correct answer</option>
+                    {choices.map((choice, index) => (
+                      choice.trim() ? <option value={choice.trim()} key={index}>{String.fromCharCode(65 + index)}. {choice}</option> : null
+                    ))}
+                  </>
+                )}
+              </select>
+            </label>
 
+            <button type="submit" className="btn btn-primary question-manual-submit" disabled={saving}>
+              {saving ? "Adding question..." : "Add question"}
+            </button>
+          </form>
+        </article>
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -2692,6 +2730,23 @@ function LearningObjectConnections({
     }
   }
 
+  async function keepQuestion(question) {
+    setBusyAction(`question-keep-${question.id}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = await keepTopicQuestion(topicId, question.id);
+      setResources(await fetchLearningResources(courseId, topicId));
+      onMessage(data.outcome.message);
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function deleteQuestion(question) {
     if (!window.confirm(`Delete this question permanently?\n\n${question.prompt}`)) return false;
     setBusyAction(`question-delete-${question.id}`);
@@ -2951,6 +3006,7 @@ function LearningObjectConnections({
               onEditQuestion: editQuestion,
               onDeleteQuestion: deleteQuestion,
               onReviewQuestion: reviewQuestion,
+              onKeepQuestion: keepQuestion,
             }}
           />
         </>
