@@ -143,3 +143,48 @@ class QuestionLabellingTests(TestCase):
             result["choices"],
             ["Solid", "Liquid", "Gas", "Plasma"],
         )
+
+    def test_extracts_choices_from_adjacent_pdf_blocks_without_answer_key(self):
+        blocks = [
+            {
+                "category": "assessment",
+                "text": "Which state of matter has a fixed volume?",
+                "page": 1,
+                "block_id": 1,
+            },
+            {"category": "assessment", "text": "A. Solid", "page": 1, "block_id": 2},
+            {"category": "assessment", "text": "B. Liquid", "page": 1, "block_id": 3},
+            {"category": "assessment", "text": "C. Gas", "page": 1, "block_id": 4},
+            {"category": "assessment", "text": "D. Plasma", "page": 1, "block_id": 5},
+        ]
+
+        payload = detected_question_payloads(blocks)[0]
+
+        self.assertEqual(payload["question_type"], Question.Type.MULTIPLE_CHOICE)
+        self.assertEqual(payload["choices"], ["Solid", "Liquid", "Gas", "Plasma"])
+        self.assertEqual(payload["correct_answer"], "")
+
+    def test_extracts_adjacent_choices_and_answer_key(self):
+        blocks = [
+            {"category": "assessment", "text": "Which state has fixed volume?", "page": 1},
+            {"category": "assessment", "text": "A. Solid", "page": 1},
+            {"category": "assessment", "text": "B. Liquid", "page": 1},
+            {"category": "assessment", "text": "Answer: A", "page": 1},
+        ]
+
+        payload = detected_question_payloads(blocks)[0]
+
+        self.assertEqual(payload["choices"], ["Solid", "Liquid"])
+        self.assertEqual(payload["correct_answer"], "Solid")
+
+    def test_extracts_adjacent_true_false_choices(self):
+        blocks = [
+            {"category": "assessment", "text": "Is water a solid at room temperature?", "page": 1},
+            {"category": "assessment", "text": "True", "page": 1},
+            {"category": "assessment", "text": "False", "page": 1},
+        ]
+
+        payload = detected_question_payloads(blocks)[0]
+
+        self.assertEqual(payload["question_type"], Question.Type.TRUE_FALSE)
+        self.assertEqual(payload["choices"], ["True", "False"])

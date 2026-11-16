@@ -91,8 +91,9 @@ def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
     raw_prompt = (prompt or "").strip()
     choice_pattern = re.compile(
         r"(?:^|\s|\()([A-Da-d])\s*(?:[.)]|:|-)\s+"
-        r"(.+?)(?=(?:\s+\(?[A-Da-d]\s*(?:[.)]|:|-)\s+)|$)",
-        flags=re.S,
+        r"(.+?)(?=(?:\s+\(?[A-Da-d]\s*(?:[.)]|:|-)\s+)|"
+        r"(?:\s+(?:answer|correct\s+answer)\s*[:.-])|$)",
+        flags=re.I | re.S,
     )
     matches = list(choice_pattern.finditer(raw_prompt))
     choice_rows = [
@@ -110,7 +111,14 @@ def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
     true_false_context = bool(
         re.search(r"\b(?:true\s*(?:or|/)\s*false|write\s+true|write\s+t\s+if)\b", lowered_excerpt)
     )
-    if {choice.casefold() for choice in choices} == {"true", "false"}:
+    standalone_values = {
+        line.strip().casefold()
+        for line in raw_prompt.splitlines()
+        if line.strip()
+    }
+    if {choice.casefold() for choice in choices} == {"true", "false"} or (
+        {"true", "false"} <= standalone_values
+    ):
         question_type = Question.Type.TRUE_FALSE
         choices = ["True", "False"]
     elif len(choices) >= 2:
@@ -554,6 +562,36 @@ def _starts_new_question(text):
     ))
 
 
+_SEPARATE_CHOICE_LINE = re.compile(
+    r"^\s*\(?([A-Da-d])\s*(?:[.)]|:|-)\s+(.+?)\s*$",
+)
+
+
+def _is_choice_block(text):
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    return bool(lines) and all(_SEPARATE_CHOICE_LINE.match(line) for line in lines)
+
+
+def _is_true_false_choice_block(text):
+    return (text or "").strip().casefold() in {"true", "false"}
+
+
+def _following_choice_text(blocks, index):
+    """Collect choice and answer-key blocks immediately after a question."""
+    supporting = []
+    cursor = index + 1
+    while cursor < len(blocks):
+        text = (blocks[cursor].get("text") or "").strip()
+        if _is_choice_block(text) or _is_true_false_choice_block(text):
+            supporting.append(text)
+            cursor += 1
+            continue
+        if supporting and _is_answer_line(text):
+            supporting.append(text)
+        break
+    return "\n".join(supporting)
+
+
 def _question_prompts_from_block(text, *, allow_numbered_statements=False):
     """Extract authored questions without headings or supplied answers."""
     lines = [_clean_question_line(line) for line in (text or "").splitlines()]
@@ -601,7 +639,8 @@ def detected_question_payloads(classified_blocks):
     payloads = []
     is_assessment = detect_instructional_document_role(classified_blocks or []) == "assessment"
     seen = set()
-    for block in classified_blocks or []:
+    blocks = classified_blocks or []
+    for index, block in enumerate(blocks):
         category = block.get("category")
         contextual = is_assessment and category in {"lesson_content", "needs_review"}
         if category != "assessment" and not contextual:
@@ -611,8 +650,12 @@ def detected_question_payloads(classified_blocks):
             allow_numbered_statements=contextual,
         ):
             excerpt = block.get("text") or prompt
+            supporting_text = _following_choice_text(blocks, index)
+            parse_text = "\n".join(
+                part for part in (prompt, supporting_text) if part
+            )
             values = enriched_question_values(
-                **parse_question_structure(prompt, excerpt),
+                **parse_question_structure(parse_text, f"{excerpt}\n{supporting_text}"),
                 classify=False,
             )
             fingerprint = values["content_fingerprint"]
