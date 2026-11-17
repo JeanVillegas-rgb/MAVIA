@@ -307,10 +307,14 @@ QUESTION_TEMPERATURE = float(os.getenv("QUESTION_TEMPERATURE", "0.7"))
 QUESTION_NUM_PREDICT = int(os.getenv("QUESTION_NUM_PREDICT", "3072"))
 QUESTION_MAX_UNUSABLE_REPLIES = int(os.getenv("QUESTION_MAX_UNUSABLE_REPLIES", "2"))
 
-# Learning path criteria (learning_path/CRITERIA.md). A sentence needs this many
-# words and a term this many letters; a title longer than MAX_NAME_TERMS stems
-# is a sentence, not a name; a passage refers to another concept when it uses
-# MIN_SHARED_TERMS of its owned terms.
+# Learning path criteria (learning_path/CRITERIA.md). The name and owned-term
+# clues follow RefD (Liang et al., EMNLP 2015): A is a prerequisite of B when B
+# refers to A more than A refers to B. The four values below are defaults, not
+# values from a study: a sentence needs MIN_SENTENCE_WORDS words; a term needs
+# MIN_TERM_LETTERS letters (3 keeps names like "Gas"); a title of more than
+# MAX_NAME_TERMS stems is a sentence, not a name; a passage refers to another
+# concept when it uses MIN_SHARED_TERMS of its owned terms (1 would accept
+# links resting on one shared word without the teacher).
 LEARNING_PATH_MIN_SENTENCE_WORDS = int(os.getenv("LEARNING_PATH_MIN_SENTENCE_WORDS", "4"))
 LEARNING_PATH_MIN_TERM_LETTERS = int(os.getenv("LEARNING_PATH_MIN_TERM_LETTERS", "3"))
 LEARNING_PATH_MAX_NAME_TERMS = int(os.getenv("LEARNING_PATH_MAX_NAME_TERMS", "6"))
