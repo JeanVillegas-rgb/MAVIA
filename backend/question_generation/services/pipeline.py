@@ -2,7 +2,6 @@ import logging
 import sys
 import textwrap
 from collections import Counter
-from math import ceil
 
 from django.conf import settings
 from django.db import transaction
@@ -23,18 +22,12 @@ for _stream in (sys.stdout, sys.stderr):
 
 def thinking_order_counts():
     """Target questions per thinking order, read from settings at call time."""
-    return {
-        "LOT": int(getattr(settings, "QUESTION_COUNT_LOT", 3)),
-        "HOT": int(getattr(settings, "QUESTION_COUNT_HOT", 3)),
-    }
+    return {"LOT": settings.QUESTION_COUNT_LOT, "HOT": settings.QUESTION_COUNT_HOT}
 
 
 def question_minimum():
     """LOT and HOT counts every concept needs before the Questions step is done."""
-    return {
-        "LOT": int(getattr(settings, "QUESTION_MIN_LOT", 4)),
-        "HOT": int(getattr(settings, "QUESTION_MIN_HOT", 2)),
-    }
+    return {"LOT": settings.QUESTION_MIN_LOT, "HOT": settings.QUESTION_MIN_HOT}
 
 
 def _split(count, weights):
@@ -58,11 +51,6 @@ QUESTION_DISTRIBUTION = {
         "format_split": _split(_COUNTS["HOT"], _FORMAT_WEIGHTS),
     },
 }
-
-OVERGENERATION_FACTOR = max(
-    1.0,
-    float(getattr(settings, "QUESTION_OVERGENERATION_FACTOR", 1.0)),
-)
 
 UNASSESSABLE_BLOOM_LEVELS = {"create"}
 
@@ -229,10 +217,7 @@ def _draft_questions_for_node(
     for thinking_order, config in QUESTION_DISTRIBUTION.items():
         if orders is not None and thinking_order not in orders:
             continue
-        targets = {
-            fmt: max(1, ceil(n * OVERGENERATION_FACTOR))
-            for fmt, n in config["format_split"].items()
-        }
+        targets = config["format_split"]
         padded = {
             fmt: target - resumed_counts.get((thinking_order, fmt), 0)
             for fmt, target in targets.items()
@@ -660,7 +645,7 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
             index=position, total=total_nodes,
         )
         questions, correction = [], ""
-        rounds = int(getattr(settings, "QUESTION_GENERATION_ROUNDS", 3))
+        rounds = settings.QUESTION_GENERATION_ROUNDS
         for round_number in range(1, rounds + 1):
             if round_number > 1:
                 if not is_short(node):
@@ -724,7 +709,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
     """Top up every concept of a topic to its minimum, in rounds."""
     from .question_bank import tier_counts
 
-    rounds = rounds or int(getattr(settings, "QUESTION_GENERATION_ROUNDS", 3))
+    rounds = rounds or settings.QUESTION_GENERATION_ROUNDS
     minimum = question_minimum()
     goal = " + ".join(f"{minimum[order]} {order}" for order in QUESTION_DISTRIBUTION)
 

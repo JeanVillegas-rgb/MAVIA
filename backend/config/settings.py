@@ -285,9 +285,9 @@ OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 # Questions generated per learning object, per thinking order. Lower these
 # while iterating: each thinking order is one LLM call, and the count drives
 # how much that call has to write.
-# Questions asked for per tier on each run. Above the teacher's minimum of 3
-# per tier, so a run that loses a few (malformed, not grounded in the lesson,
-# or relabelled into the other tier) still usually reaches it.
+# Questions drafted per tier in one call. Above the minimum below, so a call
+# that loses a few (malformed, not supported by the concept's text, or
+# relabelled into the other tier) still usually reaches it.
 QUESTION_COUNT_LOT = int(os.getenv("QUESTION_COUNT_LOT", "5"))
 QUESTION_COUNT_HOT = int(os.getenv("QUESTION_COUNT_HOT", "5"))
 # What every concept needs before the teacher moves past the Questions step.
@@ -298,11 +298,16 @@ QUESTION_MIN_HOT = int(os.getenv("QUESTION_MIN_HOT", "2"))
 # first runs only while the concept is still short of the minimum, and carries
 # the previous round's rejection reasons into the prompt.
 QUESTION_GENERATION_ROUNDS = int(os.getenv("QUESTION_GENERATION_ROUNDS", "3"))
+# How many of a round's rejected drafts, each with its reason, the next round's
+# prompt lists. A round drafts at most 10 per concept (5 per tier); 6 keeps the
+# prompt short while still covering most of them.
+QUESTION_CORRECTION_LIMIT = int(os.getenv("QUESTION_CORRECTION_LIMIT", "6"))
 # How each tier's drafts are split between multiple choice and true/false.
 QUESTION_FORMAT_WEIGHT_MCQ = int(os.getenv("QUESTION_FORMAT_WEIGHT_MCQ", "2"))
 QUESTION_FORMAT_WEIGHT_TF = int(os.getenv("QUESTION_FORMAT_WEIGHT_TF", "1"))
 # Sampling temperature and output budget of one question-writing call, and how
-# many unusable replies in a row end the attempt.
+# many tries that call gets: a try fails when the reply is not valid JSON or
+# holds no well-formed question.
 QUESTION_TEMPERATURE = float(os.getenv("QUESTION_TEMPERATURE", "0.7"))
 QUESTION_NUM_PREDICT = int(os.getenv("QUESTION_NUM_PREDICT", "3072"))
 QUESTION_MAX_UNUSABLE_REPLIES = int(os.getenv("QUESTION_MAX_UNUSABLE_REPLIES", "2"))
@@ -361,9 +366,6 @@ QUESTION_LLM_MODEL = (
     else os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
 )
 QUESTION_LLM_KEEP_ALIVE = os.getenv("QUESTION_LLM_KEEP_ALIVE", "30m")
-QUESTION_OVERGENERATION_FACTOR = float(
-    os.getenv("QUESTION_OVERGENERATION_FACTOR", "1.0")
-)
 
 # The answer check (question_generation/services/grounding.py): every draft's
 # answer is checked against the text of the concept it was written from before

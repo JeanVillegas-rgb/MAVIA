@@ -507,7 +507,6 @@ def generate_questions(
     content,
     thinking_order,
     format_split,
-    max_retries=3,
     on_metrics=None,
     on_error=None,
     on_rate_limit_wait=None,
@@ -521,8 +520,7 @@ def generate_questions(
         thinking_order, " + ".join(f"{n} {fmt}" for fmt, n in format_split.items()), prompt,
     )
 
-    unusable_replies = 0
-    for attempt in range(max_retries):
+    for attempt in range(MAX_UNUSABLE_REPLIES):
         try:
             raw_text = _ollama_generate(
                 prompt, schema=schema, on_metrics=on_metrics, format_split=format_split,
@@ -543,15 +541,12 @@ def generate_questions(
             if validated:
                 return validated
 
-            unusable_replies += 1
             logger.warning(
                 "[Questions] model reply had no usable questions (attempt %s of %s)",
-                attempt + 1, max_retries,
+                attempt + 1, MAX_UNUSABLE_REPLIES,
             )
             if on_error:
                 on_error(attempt + 1, "The model returned no structurally usable questions.")
-            if unusable_replies >= MAX_UNUSABLE_REPLIES:
-                break
 
         except GroqRateLimitError as e:
             logger.warning("[Questions] stopped this batch, Groq rate limit: %s", e)
@@ -561,8 +556,7 @@ def generate_questions(
         except (json.JSONDecodeError, ValueError) as e:
             if on_error:
                 on_error(attempt + 1, str(e))
-            logger.warning("[Questions] model reply unusable (attempt %s of %s): %s", attempt + 1, max_retries, e)
-            continue
+            logger.warning("[Questions] model reply unusable (attempt %s of %s): %s", attempt + 1, MAX_UNUSABLE_REPLIES, e)
 
-    logger.warning("[Questions] gave up: no usable questions after %s attempts", max_retries)
+    logger.warning("[Questions] gave up: no usable questions after %s attempts", MAX_UNUSABLE_REPLIES)
     return []

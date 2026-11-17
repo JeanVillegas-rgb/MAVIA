@@ -297,7 +297,10 @@ def correction_note(failures):
     """The feedback added to the next round's generation prompt: the rejected drafts and why."""
     if not failures:
         return ""
-    lines = [f'- "{text}" was rejected: {reason}' for text, reason in failures[:6]]
+    lines = [
+        f'- "{text}" was rejected: {reason}'
+        for text, reason in failures[:settings.QUESTION_CORRECTION_LIMIT]
+    ]
     return (
         "A previous attempt produced questions that were rejected. "
         "Do not repeat these mistakes:\n"
