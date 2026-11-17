@@ -16,6 +16,8 @@ const TIER_PAD = 18;
 // Links that skip a tier run down lanes to the right of the bands, so they
 // never pass through a tier they do not belong to.
 const LANE_GAP = 26;
+const RANK_SEP = 110;
+const ROOT = "__start__";
 const EDGE_COLOR = "#6b7a8c";
 
 const byPosition = (steps) => [...steps].sort((a, b) => a.position - b.position);
@@ -71,31 +73,40 @@ export function buildGraph(steps, selectedId = null) {
   let laneStart = 0;
   let bottom = 0;
   if (linked.length) {
+    // A concept's tier is its level from the learning path: tier 1 needs
+    // nothing, and every other tier sits right below its deepest prerequisite.
+    // dagre only decides the left-to-right order; each link's minimum length
+    // and a hidden root keep its rows equal to those levels.
+    const levelOf = new Map(linked.map((step) => [step.concept_id, step.dag_depth ?? 0]));
     const graph = new dagre.graphlib.Graph();
-    graph.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 110, marginx: MARGIN, marginy: MARGIN });
+    graph.setGraph({ rankdir: "TB", nodesep: 50, ranksep: RANK_SEP, marginx: MARGIN, marginy: MARGIN });
     graph.setDefaultEdgeLabel(() => ({}));
     for (const step of linked) graph.setNode(String(step.concept_id), { width: NODE_WIDTH, height: NODE_HEIGHT });
-    for (const edge of edges) graph.setEdge(String(edge.from), String(edge.to));
-    dagre.layout(graph);
-    const rows = new Set();
+    graph.setNode(ROOT, { width: 0, height: 0 });
     for (const step of linked) {
-      const { x, y } = graph.node(String(step.concept_id));
-      positions.set(step.concept_id, { x: TIER_GUTTER + x - NODE_WIDTH / 2, y: y - NODE_HEIGHT / 2 });
-      rows.add(y);
-      bottom = Math.max(bottom, y + NODE_HEIGHT / 2);
+      if (levelOf.get(step.concept_id) === 0) graph.setEdge(ROOT, String(step.concept_id), { minlen: 1 });
     }
-    // dagre puts every concept of one rank on the same row, so a tier is
-    // simply a row: everything in it can be taught once the rows above are.
+    for (const edge of edges) {
+      const minlen = Math.max(1, levelOf.get(edge.to) - levelOf.get(edge.from));
+      graph.setEdge(String(edge.from), String(edge.to), { minlen });
+    }
+    dagre.layout(graph);
+    for (const step of linked) {
+      const level = levelOf.get(step.concept_id);
+      const y = MARGIN + level * (NODE_HEIGHT + RANK_SEP);
+      positions.set(step.concept_id, { x: TIER_GUTTER + graph.node(String(step.concept_id)).x - NODE_WIDTH / 2, y });
+      tierOf.set(step.concept_id, level + 1);
+      bottom = Math.max(bottom, y + NODE_HEIGHT);
+    }
     const width = TIER_GUTTER + graph.graph().width;
     laneStart = width;
-    const rowNumber = new Map([...rows].sort((a, b) => a - b).map((y, index) => [y, index + 1]));
-    for (const step of linked) tierOf.set(step.concept_id, rowNumber.get(graph.node(String(step.concept_id)).y));
-    [...rows].sort((a, b) => a - b).forEach((y, index) => {
+    const levels = [...new Set(levelOf.values())].sort((a, b) => a - b);
+    levels.forEach((level) => {
       tiers.push({
-        id: `tier-${index + 1}`,
+        id: `tier-${level + 1}`,
         type: "tier",
-        position: { x: 0, y: y - NODE_HEIGHT / 2 - TIER_PAD },
-        data: { number: index + 1, width, height: NODE_HEIGHT + TIER_PAD * 2 },
+        position: { x: 0, y: MARGIN + level * (NODE_HEIGHT + RANK_SEP) - TIER_PAD },
+        data: { number: level + 1, width, height: NODE_HEIGHT + TIER_PAD * 2 },
         draggable: false,
         selectable: false,
         // Behind the concepts, and clicks pass through to the canvas so a
