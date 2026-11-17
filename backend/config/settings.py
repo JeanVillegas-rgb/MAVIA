@@ -365,16 +365,16 @@ QUESTION_OVERGENERATION_FACTOR = float(
     os.getenv("QUESTION_OVERGENERATION_FACTOR", "1.0")
 )
 
-# Corrective-RAG grounding gate for generated questions
-# (question_generation/services/grounding.py). Every draft is checked against
-# the topic's own learning objects before it can become a final question.
+# The answer check (question_generation/services/grounding.py): every draft's
+# answer is checked against the text of the concept it was written from before
+# it can become a final question.
 QUESTION_VALIDATION_ENABLED = os.getenv(
     "QUESTION_VALIDATION_ENABLED", "True"
 ).lower() in {"1", "true", "yes"}
-# The judging model. Deliberately separate from QUESTION_LLM_MODEL so the
-# judge can be a different (or larger) model than the generator.
+# The checking model: a different, larger model than the one that writes the
+# drafts (openai/gpt-oss-20b), so a draft is not checked by its own writer.
 QUESTION_JUDGE_MODEL = (
-    os.getenv("GROQ_JUDGE_MODEL", GROQ_TEXT_MODEL) if LLM_PROVIDER == "groq"
+    os.getenv("GROQ_JUDGE_MODEL", "openai/gpt-oss-120b") if LLM_PROVIDER == "groq"
     else os.getenv("QUESTION_JUDGE_MODEL", QUESTION_LLM_MODEL)
 )
 QUESTION_JUDGE_TIMEOUT = int(
