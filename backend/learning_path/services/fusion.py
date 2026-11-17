@@ -2,8 +2,6 @@
 
 from dataclasses import dataclass
 
-DECIDING_CLUES = ("name", "terms", "heading", "order")
-
 ACCEPTED = "accepted"
 PENDING = "pending"
 PARALLEL = "parallel"
@@ -88,11 +86,3 @@ def reference_verdict(facts):
         return Decision(ACCEPTED, 1, in_order)
     direction, source = _suggested_direction(facts)
     return Decision(PENDING, direction, source, contradictions)
-
-
-def confidence(votes, direction, clues=DECIDING_CLUES):
-    """Share of the clues that voted and agree with direction."""
-    voting = [clue for clue in clues if votes.get(clue)]
-    if not voting or not direction:
-        return 0.0
-    return sum(1 for clue in voting if votes[clue] == direction) / len(voting)

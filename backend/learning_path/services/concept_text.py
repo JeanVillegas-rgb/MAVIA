@@ -1,9 +1,8 @@
-"""What the clues read from a concept: sentences, terms, vectors and PDF positions."""
+"""What the clues read from a concept: sentences, terms and PDF positions."""
 
 import re
 from dataclasses import dataclass, field
 
-import numpy as np
 from django.conf import settings
 from nltk.stem import PorterStemmer
 
@@ -68,7 +67,6 @@ class ConceptText:
     passages: list
     name: tuple
     spelling: dict = field(default_factory=dict)
-    vectors: object = None
     part_names: tuple = ()
     materials: frozenset = frozenset()
     headings: frozenset = frozenset()
@@ -103,8 +101,8 @@ def _member_headings(concept):
     ]
 
 
-def prepare(concepts, embed=None):
-    """One ConceptText per concept; embed is called once for every sentence."""
+def prepare(concepts):
+    """One ConceptText per concept."""
     concepts = list(concepts)
     texts = []
     for concept in concepts:
@@ -132,13 +130,6 @@ def prepare(concepts, embed=None):
             headings=frozenset(frozenset(terms(heading)) for heading in headings) - {frozenset()},
             sections=frozenset(heading.strip().casefold() for heading in headings if heading.strip()),
         ))
-    if embed is not None:
-        vectors = np.asarray(embed([sentence for text in texts for sentence in text.sentences]))
-        start = 0
-        for text in texts:
-            count = len(text.sentences)
-            text.vectors = vectors[start:start + count] if count else np.zeros((0, vectors.shape[1] if vectors.ndim == 2 else 0))
-            start += count
     return texts
 
 

@@ -1,17 +1,15 @@
 """Prerequisite links inside one topic (criteria v7.0). Writes nothing."""
 
-from . import embeddings, tracing
-from .calibration import load_calibration
+from . import tracing
 from .clues import (
     MIN_SHARED_TERMS, find_term_owners, heading_vote, order_vote,
     presented_in_parallel, read_clues, reference_uses, shared_pdf_order,
 )
 from .concept_text import material_positions, prepare
 from .fusion import (
-    ACCEPTED, DECIDING_CLUES, DISAGREE, NONE_SHARED, PENDING, SHARED,
-    PairFacts, confidence, reference_verdict,
+    ACCEPTED, DISAGREE, NONE_SHARED, PENDING, SHARED,
+    PairFacts, reference_verdict,
 )
-from .relatedness import relatedness
 
 RULE = "reference-order"
 VERSION = "7.0"
@@ -44,21 +42,15 @@ def _facts(first, second, owners, positions):
     return facts, earlier, later
 
 
-def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
+def decide_pairs(concepts):
     """Every pair the text links: accepted, or pending when something contradicts it."""
     concepts = list(concepts)
     if len(concepts) < 2:
         return []
-    calibration = calibration or load_calibration()
-    semantic = True
-    try:
-        texts = prepare(concepts, embed=embed or embeddings.embed)
-    except embeddings.EncoderUnavailable:
-        texts, semantic = prepare(concepts), False
+    texts = prepare(concepts)
     owners = find_term_owners(texts)
     tracing.log_concepts(texts, owners)
     positions = material_positions(concepts)
-    meaning_cutoff = calibration["meaning_cutoff"]
 
     decisions = []
     for index, first in enumerate(texts):
@@ -71,9 +63,7 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
             if decision.verdict not in (ACCEPTED, PENDING):
                 continue
             prerequisite, dependent = (earlier, later) if decision.direction > 0 else (later, earlier)
-            votes, records = read_clues(
-                prerequisite, dependent, owners, positions, meaning_cutoff, semantic, min_terms=MIN_SHARED_TERMS,
-            )
+            votes, records = read_clues(prerequisite, dependent, owners, positions, min_terms=MIN_SHARED_TERMS)
             decisions.append({
                 "prerequisite": prerequisite.concept,
                 "dependent": dependent.concept,
@@ -84,9 +74,6 @@ def decide_pairs(concepts, runtime_instance=None, calibration=None, embed=None):
                     "contradictions": list(decision.contradictions),
                     "votes": votes,
                     "records": records,
-                    "relatedness": round(relatedness(first, second), 3) if semantic else None,
-                    "confidence": round(confidence(votes, 1, DECIDING_CLUES), 3),
-                    "semantic": semantic,
                     "version": VERSION,
                 },
                 "cross_section": crosses_sections(prerequisite, dependent),

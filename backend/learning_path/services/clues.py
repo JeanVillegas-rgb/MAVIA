@@ -3,11 +3,9 @@
 import math
 from collections import Counter
 
-import numpy as np
 from django.conf import settings
 
 SIGNIFICANT_G2 = 3.84
-MEANING_MATCHES = settings.LEARNING_PATH_MEANING_MATCHES
 MIN_SHARED_TERMS = settings.LEARNING_PATH_MIN_SHARED_TERMS
 
 
@@ -123,22 +121,6 @@ def term_vote(prerequisite, dependent, term_owners, min_terms=1):
     return _sign(use - use_back), record
 
 
-def meaning_use(holder, target, meaning_cutoff):
-    """Share of the holder's sentences whose closest match in the target clears the cutoff."""
-    if holder.vectors is None or target.vectors is None or not len(holder.vectors) or not len(target.vectors):
-        return 0.0
-    similarity = holder.vectors @ target.vectors.T
-    matches = min(MEANING_MATCHES, similarity.shape[1])
-    closest = np.sort(similarity, axis=1)[:, -matches:].mean(axis=1)
-    return float((closest > meaning_cutoff).mean())
-
-
-def meaning_vote(prerequisite, dependent, meaning_cutoff):
-    use = meaning_use(dependent, prerequisite, meaning_cutoff)
-    use_back = meaning_use(prerequisite, dependent, meaning_cutoff)
-    return _sign(use - use_back), {"use": round(use, 3), "use_back": round(use_back, 3)}
-
-
 def order_vote(prerequisite, dependent, positions):
     """PDF order, only when two or more PDFs teach both and all agree."""
     shared = [spots for spots in positions.values() if prerequisite.id in spots and dependent.id in spots]
@@ -203,21 +185,17 @@ def presented_in_parallel(first, second):
     )
 
 
-def read_clues(prerequisite, dependent, term_owners, positions, meaning_cutoff, semantic=True, min_terms=1):
+def read_clues(prerequisite, dependent, term_owners, positions, min_terms=1):
     """(votes, records): each clue's vote and the numbers behind it, each clue read once."""
     name = name_vote(prerequisite, dependent)
     shared_terms = term_vote(prerequisite, dependent, term_owners, min_terms)
-    meaning = meaning_vote(prerequisite, dependent, meaning_cutoff) if semantic else (0, None)
     heading = heading_vote(prerequisite, dependent)
     order = order_vote(prerequisite, dependent, positions)
     votes = {
         "name": name[0],
         "terms": shared_terms[0],
-        "meaning": meaning[0],
         "heading": heading[0],
         "order": order[0],
     }
     records = {"name": name[1], "terms": shared_terms[1], "heading": heading[1], "order": order[1]}
-    if semantic:
-        records["meaning"] = meaning[1]
     return votes, records

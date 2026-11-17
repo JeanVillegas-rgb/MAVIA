@@ -310,13 +310,11 @@ QUESTION_MAX_UNUSABLE_REPLIES = int(os.getenv("QUESTION_MAX_UNUSABLE_REPLIES", "
 # Learning path criteria (learning_path/CRITERIA.md). A sentence needs this many
 # words and a term this many letters; a title longer than MAX_NAME_TERMS stems
 # is a sentence, not a name; a passage refers to another concept when it uses
-# MIN_SHARED_TERMS of its owned terms; the meaning clue averages a sentence's
-# MEANING_MATCHES closest matches.
+# MIN_SHARED_TERMS of its owned terms.
 LEARNING_PATH_MIN_SENTENCE_WORDS = int(os.getenv("LEARNING_PATH_MIN_SENTENCE_WORDS", "4"))
 LEARNING_PATH_MIN_TERM_LETTERS = int(os.getenv("LEARNING_PATH_MIN_TERM_LETTERS", "3"))
 LEARNING_PATH_MAX_NAME_TERMS = int(os.getenv("LEARNING_PATH_MAX_NAME_TERMS", "6"))
 LEARNING_PATH_MIN_SHARED_TERMS = int(os.getenv("LEARNING_PATH_MIN_SHARED_TERMS", "2"))
-LEARNING_PATH_MEANING_MATCHES = int(os.getenv("LEARNING_PATH_MEANING_MATCHES", "1"))
 # Questions each published step carries per thinking order.
 LEARNING_PATH_QUESTIONS_LOT = int(os.getenv("LEARNING_PATH_QUESTIONS_LOT", "2"))
 LEARNING_PATH_QUESTIONS_HOT = int(os.getenv("LEARNING_PATH_QUESTIONS_HOT", "1"))

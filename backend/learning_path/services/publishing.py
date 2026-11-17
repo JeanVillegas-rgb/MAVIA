@@ -65,10 +65,10 @@ def _stored_links(node):
     }
 
 
-def refresh_prerequisites(node, concepts=None, runtime_instance=None):
+def refresh_prerequisites(node, concepts=None):
     """Re-derive this topic's links, keeping every teacher decision."""
     concepts = list(concepts if concepts is not None else concepts_for_topic(node))
-    decisions = criteria.decide_pairs(concepts, runtime_instance)
+    decisions = criteria.decide_pairs(concepts)
 
     fresh = {}
     for decision in decisions:
@@ -248,10 +248,10 @@ def save_learning_path(node, concepts=None):
     }
 
 
-def publish_learning_path(node, runtime_instance=None):
+def publish_learning_path(node):
     """Derive the links, then save the path. The publish pipeline's single entry."""
     concepts = concepts_for_topic(node)
-    link_counts = refresh_prerequisites(node, concepts, runtime_instance)
+    link_counts = refresh_prerequisites(node, concepts)
     saved = save_learning_path(node, concepts)
     logger.info(
         "[Publish] topic %s  learning path saved: %s steps, %s prerequisite links "
