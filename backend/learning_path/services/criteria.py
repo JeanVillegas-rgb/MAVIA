@@ -27,7 +27,7 @@ def _is_figure(text):
 
 
 def _facts(first, second, owners, positions):
-    """(facts, earlier, later) for a pair, in the topic's merged order."""
+    """(facts, earlier, later) for a pair, in the topic's document order."""
     order, _ = shared_pdf_order(first, second, positions)
     earlier, later = (second, first) if order == -1 else (first, second)
     facts = PairFacts(

@@ -36,7 +36,7 @@ def _reference_order_reason(evidence, a, b):
     if source == "pdf_order":
         parts.append(f"{a} comes first in the lesson.")
     elif source == "merged_order":
-        parts.append(f"{a} comes first in the topic's combined order.")
+        parts.append(f"{a} comes first in the topic's document order.")
     elif source == "figure":
         parts.append(f"The figure's description refers to {a}.")
     elif source == "name":

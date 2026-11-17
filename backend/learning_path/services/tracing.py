@@ -19,7 +19,7 @@ HELD_BACK = {
 
 DIRECTION_FROM = {
     "pdf_order": "the order the PDFs teach them in",
-    "merged_order": "the merged order of the PDFs",
+    "merged_order": "the topic's document order",
     "figure": "the figure, which refers to the other concept and so comes after it",
     "name": "the names clue",
 }
@@ -118,7 +118,7 @@ def _order_line(earlier, later, facts):
     first = name(earlier.concept.title)
     both = len(earlier.materials & later.materials)
     if facts.pdf_order == NONE_SHARED:
-        return f"no PDF teaches both; {first} comes first only in the merged order of all PDFs"
+        return f"no PDF teaches both; {first} comes first only in the topic's document order"
     if facts.pdf_order == DISAGREE:
         return f"the {both} PDFs that teach both disagree on which comes first"
     if both == 1:
@@ -157,7 +157,7 @@ def log_pair(earlier, later, facts, decision):
     if not logger.isEnabledFor(logging.DEBUG):
         return
     first, second = name(earlier.concept.title), name(later.concept.title)
-    placed = "the merged order" if facts.pdf_order in (NONE_SHARED, DISAGREE) else "the PDFs"
+    placed = "the document order" if facts.pdf_order in (NONE_SHARED, DISAGREE) else "the PDFs"
     lines = ["", f"  {first} and {second}   ({first} comes first in {placed})"]
     if facts.parallel:
         _say(
