@@ -17,11 +17,6 @@ VERSION = "7.0"
 _PDF_ORDER = {1: SHARED, -1: SHARED, 0: DISAGREE, None: NONE_SHARED}
 
 
-def crosses_sections(first, second):
-    """True when both concepts sit under headings and share none."""
-    return bool(first.sections and second.sections and not (first.sections & second.sections))
-
-
 def _is_figure(text):
     return getattr(text.concept, "kind", "text") == "image"
 
@@ -76,6 +71,5 @@ def decide_pairs(concepts):
                     "records": records,
                     "version": VERSION,
                 },
-                "cross_section": crosses_sections(prerequisite, dependent),
             })
     return decisions

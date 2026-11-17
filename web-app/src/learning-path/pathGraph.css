@@ -90,16 +90,6 @@
 .pg-details-list small { display: block; color: var(--muted, #5c6b7c); }
 
 
-.pg-flag {
-  justify-self: start;
-  padding: 0 0.4rem;
-  border-radius: 999px;
-  background: #fdf1dc;
-  color: var(--warning, #9a5b00);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
 .pg-dialog-backdrop {
   position: fixed;
   inset: 0;

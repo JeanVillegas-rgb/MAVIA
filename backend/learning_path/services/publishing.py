@@ -98,22 +98,18 @@ def refresh_prerequisites(node, concepts=None):
                         "outline_node": node,
                         "status": decision["verdict"],
                         "source": ConceptPrerequisite.Source.DERIVED,
-                        "cross_section": decision["cross_section"],
                         "evidence": decision["evidence"],
                     },
                 )
                 if created:
                     written["new"] += 1
                     continue
-            same_evidence = (
-                row.evidence == decision["evidence"] and row.cross_section == decision["cross_section"]
-            )
+            same_evidence = row.evidence == decision["evidence"]
             if row.status in ConceptPrerequisite.TEACHER_DECIDED:
                 written["unchanged" if same_evidence else "updated"] += 1
                 if not same_evidence:
                     row.evidence = decision["evidence"]
-                    row.cross_section = decision["cross_section"]
-                    row.save(update_fields=["evidence", "cross_section", "updated_at"])
+                    row.save(update_fields=["evidence", "updated_at"])
                 continue
             if (
                 same_evidence
@@ -127,7 +123,6 @@ def refresh_prerequisites(node, concepts=None):
             ).update(
                 status=decision["verdict"],
                 source=ConceptPrerequisite.Source.DERIVED,
-                cross_section=decision["cross_section"],
                 evidence=decision["evidence"],
                 updated_at=timezone.now(),
             )

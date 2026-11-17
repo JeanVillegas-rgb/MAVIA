@@ -72,7 +72,4 @@ class Command(BaseCommand):
             for row in rows:
                 before = titles.get(row.prerequisite_id, row.prerequisite.label)
                 after = titles.get(row.dependent_id, row.dependent.label)
-                self.stdout.write(
-                    f"  [{row.status:>8}] {before[:34]} -> {after[:34]}"
-                    + ("  (cross-section)" if row.cross_section else "")
-                )
+                self.stdout.write(f"  [{row.status:>8}] {before[:34]} -> {after[:34]}")

@@ -36,7 +36,6 @@ class ConceptPrerequisite(models.Model):
     )
     status = models.CharField(max_length=10, choices=Status.choices, db_index=True)
     source = models.CharField(max_length=10, choices=Source.choices, default=Source.DERIVED)
-    cross_section = models.BooleanField(default=False)
     evidence = models.JSONField(default=dict, blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

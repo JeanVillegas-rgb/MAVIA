@@ -62,14 +62,6 @@ export default function ConceptDetails({ step, dependents = [], editable = false
             <li key={link.link_id} className="pg-pending">
               <div className="pg-pending-head">
                 <strong>{link.title}</strong>
-                {link.cross_section && (
-                  <span
-                    className="pg-flag"
-                    title="The two concepts are under different lesson headings. In a hand-check, such suggestions were usually wrong."
-                  >
-                    different section
-                  </span>
-                )}
               </div>
               {link.reason && <small>{link.reason}</small>}
               <div className="pg-pending-actions">

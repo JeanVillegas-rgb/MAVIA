@@ -39,7 +39,6 @@ def build_topic_path(node_id):
             "concept_id": row.prerequisite_id,
             "title": title[row.prerequisite_id],
             "status": row.status,
-            "cross_section": row.cross_section,
             "reason": link_reason(row.evidence, title[row.prerequisite_id], title[row.dependent_id]),
             "redundant": (row.prerequisite_id, row.dependent_id) in redundant,
         }
