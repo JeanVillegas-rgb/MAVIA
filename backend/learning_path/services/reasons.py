@@ -39,8 +39,6 @@ def _reference_order_reason(evidence, a, b):
         parts.append(f"{a} comes first in the topic's document order.")
     elif source == "figure":
         parts.append(f"The figure's description refers to {a}.")
-    elif source == "name":
-        parts.append(f"The names put {a} first; the files do not settle the order.")
     elif source == "pdf_agreement":
         order = records.get("order") or {}
         parts.append(f"{order.get('agree')} of {order.get('pdfs')} files teach {a} first; the text says nothing either way.")

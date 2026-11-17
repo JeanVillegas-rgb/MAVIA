@@ -21,7 +21,6 @@ DIRECTION_FROM = {
     "pdf_order": "the order the PDFs teach them in",
     "merged_order": "the topic's document order",
     "figure": "the figure, which refers to the other concept and so comes after it",
-    "name": "the names clue",
 }
 
 

@@ -40,10 +40,6 @@ class Decision:
 NO_LINK = Decision(PARALLEL, 0)
 
 
-def _sign(difference):
-    return (difference > 0) - (difference < 0)
-
-
 def _suggested_direction(facts):
     """(direction, source) for a contradicted link."""
     if facts.earlier_is_figure != facts.later_is_figure:
@@ -55,10 +51,6 @@ def _suggested_direction(facts):
             figure_refers = facts.earlier_names_later > 0 or facts.earlier_uses_later_terms > 0
             if figure_refers:
                 return -1, "figure"
-    elif facts.pdf_order != SHARED:
-        name_direction = _sign(facts.later_names_earlier - facts.earlier_names_later)
-        if name_direction:
-            return name_direction, "name"
     return 1, "pdf_order" if facts.pdf_order == SHARED else "merged_order"
 
 
