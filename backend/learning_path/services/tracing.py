@@ -184,7 +184,7 @@ def log_pair(earlier, later, facts, decision):
     )
 
 
-def log_order(ordered, depth, ignored, links=()):
+def log_order(ordered, depth, links=()):
     """Step 4: Kahn's order, with what each concept needs first and its level."""
     if not logger.isEnabledFor(logging.DEBUG):
         return
@@ -204,9 +204,4 @@ def log_order(ordered, depth, ignored, links=()):
         _say(
             f"  {index}. {name(concept.title, 40):<44} level {depth[concept.id]}   needs: "
             + (", ".join(name(titles[before], 34) for before in first) or "nothing")
-        )
-    if ignored:
-        _say(
-            "  links dropped to break a loop (the weakest link of each loop): "
-            + ", ".join(f"{name(titles[before], 34)} -> {name(titles[after], 34)}" for before, after in ignored)
         )

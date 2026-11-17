@@ -3,6 +3,7 @@
 
 _CONTRADICTION_SENTENCES = {
     "pdfs_disagree": "The files put them in different orders.",
+    "loop": "Accepting it would make a loop with the links already in the path, so it waits for you.",
 }
 
 

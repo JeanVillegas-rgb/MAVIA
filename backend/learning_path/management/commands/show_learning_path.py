@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 from learning_path.models import ConceptPrerequisite
 from learning_path.services import build_topic_path, criteria, get_published_path
 from learning_path.services.concept_units import concepts_for_topic
-from learning_path.services.publishing import order_with_links
+from learning_path.services.publishing import hold_loop_links, order_with_links
 from lessons.models import OutlineNode
 
 
@@ -39,10 +39,12 @@ class Command(BaseCommand):
             logging.getLogger("learning_path").setLevel(logging.DEBUG)
             concepts = concepts_for_topic(node)
             decisions = criteria.decide_pairs(concepts)
+            held = hold_loop_links(decisions)
             accepted = [(d["prerequisite"].id, d["dependent"].id) for d in decisions if d["verdict"] == "accepted"]
             order_with_links(concepts, accepted)
             self.stdout.write(
-                f"{node.title}: {len(accepted)} accepted, {len(decisions) - len(accepted)} pending; "
+                f"{node.title}: {len(accepted)} accepted, {len(decisions) - len(accepted)} pending "
+                f"({len(held)} held because they would close a loop); "
                 "the order above is the criteria's own, without teacher decisions. Nothing was saved."
             )
             return

@@ -2,7 +2,6 @@
 
 import heapq
 import logging
-import math
 from collections import Counter, defaultdict
 
 from django.db import transaction
@@ -11,8 +10,51 @@ from django.utils import timezone
 from ..models import ConceptPrerequisite, LearningPathStep
 from . import criteria, tracing
 from .concept_units import concepts_for_topic
+from .fusion import ACCEPTED, PENDING
 
 logger = logging.getLogger(__name__)
+
+
+class LoopError(ValueError):
+    """The links form a loop, which saving and approving links never allow."""
+
+
+def _reaches(successors, start, goal):
+    """True when goal can be reached from start by following links."""
+    seen, waiting = set(), [start]
+    while waiting:
+        current = waiting.pop()
+        if current == goal:
+            return True
+        if current not in seen:
+            seen.add(current)
+            waiting.extend(successors[current])
+    return False
+
+
+def hold_loop_links(decisions, fixed_links=()):
+    """Make each accepted link that would close a loop pending; links against the document order are held first."""
+    successors = defaultdict(set)
+    for before, after in fixed_links:
+        successors[before].add(after)
+    accepted = sorted(
+        (decision for decision in decisions if decision["verdict"] == ACCEPTED),
+        key=lambda decision: (
+            decision["prerequisite"].order > decision["dependent"].order,
+            decision["prerequisite"].order,
+            decision["dependent"].order,
+        ),
+    )
+    held = []
+    for decision in accepted:
+        before, after = decision["prerequisite"].id, decision["dependent"].id
+        if _reaches(successors, after, before):
+            decision["verdict"] = PENDING
+            decision["evidence"]["contradictions"].append("loop")
+            held.append(decision)
+        else:
+            successors[before].add(after)
+    return held
 
 
 def _stored_links(node):
@@ -40,6 +82,11 @@ def refresh_prerequisites(node, concepts=None, runtime_instance=None):
             pair for pair, row in existing.items()
             if row.status in ConceptPrerequisite.TEACHER_DECIDED
         }
+        approved = [
+            pair for pair, row in existing.items()
+            if row.status == ConceptPrerequisite.Status.APPROVED
+        ]
+        hold_loop_links([decision for pair, decision in fresh.items() if pair not in decided_pairs], approved)
 
         for pair, decision in fresh.items():
             row = existing.get(pair)
@@ -120,49 +167,6 @@ def path_links(node, concept_ids):
     ]
 
 
-def _find_cycle(links):
-    """The links of one loop, or None when there is no loop."""
-    successors = defaultdict(list)
-    for before, after in links:
-        successors[before].append(after)
-    state, stack = {}, []
-
-    def visit(concept_id):
-        state[concept_id] = "open"
-        stack.append(concept_id)
-        for following in sorted(successors[concept_id]):
-            if state.get(following) == "open":
-                loop = stack[stack.index(following):] + [following]
-                return list(zip(loop, loop[1:]))
-            if following not in state:
-                found = visit(following)
-                if found:
-                    return found
-        state[concept_id] = "done"
-        stack.pop()
-        return None
-
-    for concept_id in sorted(successors):
-        if concept_id not in state:
-            found = visit(concept_id)
-            if found:
-                return found
-    return None
-
-
-def break_cycles(links, confidence=None):
-    """Drop the least confident derived link of each loop until none is left."""
-    confidence = confidence or {}
-    kept, ignored = set(links), []
-    while True:
-        loop = _find_cycle(kept)
-        if not loop:
-            return kept, ignored
-        weakest = min(loop, key=lambda link: (confidence.get(link, math.inf), link))
-        kept.discard(weakest)
-        ignored.append(weakest)
-
-
 def redundant_links(links):
     """Links a longer chain already implies: A->C when A->B->C exists."""
     links = set(links)
@@ -183,13 +187,10 @@ def redundant_links(links):
     return redundant
 
 
-def order_with_links(concepts, links, confidence=None):
-    """Kahn's sort over the links; returns (ordered, depth by id, ignored links)."""
+def order_with_links(concepts, links):
+    """Kahn's sort over the links; returns (learning path, depth by id)."""
     position = {concept.id: index for index, concept in enumerate(concepts)}
-    kept, ignored = break_cycles(
-        {(before, after) for before, after in links if before in position and after in position},
-        confidence,
-    )
+    kept = {(before, after) for before, after in links if before in position and after in position}
     successors = {concept.id: set() for concept in concepts}
     in_degree = {concept.id: 0 for concept in concepts}
     for before, after in kept:
@@ -208,24 +209,15 @@ def order_with_links(concepts, links, confidence=None):
             in_degree[following] -= 1
             if in_degree[following] == 0:
                 heapq.heappush(queue, (position[following], following))
+    if len(learning_path) < len(concepts):
+        raise LoopError("The topic's prerequisite links form a loop.")
 
     depth = {concept.id: 0 for concept in learning_path}
     for concept in learning_path:
         for following in successors[concept.id]:
             depth[following] = max(depth[following], depth[concept.id] + 1)
-    tracing.log_order(learning_path, depth, ignored, kept)
-    return learning_path, depth, ignored
-
-
-def path_link_confidence(node, concept_ids):
-    """Confidence of each derived link; approved links are absent, so never broken first."""
-    return {
-        (row.prerequisite_id, row.dependent_id): float((row.evidence or {}).get("confidence", 0.0))
-        for row in ConceptPrerequisite.objects.filter(
-            outline_node=node, status=ConceptPrerequisite.Status.ACCEPTED,
-        )
-        if row.prerequisite_id in concept_ids and row.dependent_id in concept_ids
-    }
+    tracing.log_order(learning_path, depth, kept)
+    return learning_path, depth
 
 
 @transaction.atomic
@@ -234,7 +226,7 @@ def save_learning_path(node, concepts=None):
     concepts = list(concepts if concepts is not None else concepts_for_topic(node))
     concept_ids = {concept.id for concept in concepts}
     links = path_links(node, concept_ids)
-    ordered, depth, ignored = order_with_links(concepts, links, path_link_confidence(node, concept_ids))
+    ordered, depth = order_with_links(concepts, links)
 
     now = timezone.now()
     LearningPathStep.objects.filter(outline_node=node).delete()
@@ -252,7 +244,6 @@ def save_learning_path(node, concepts=None):
         "steps": len(ordered),
         "links": len(links),
         "moved": sum(1 for index, concept in enumerate(ordered) if concepts[index].id != concept.id),
-        "ignored_links": ignored,
         "published_at": now.isoformat(),
     }
 

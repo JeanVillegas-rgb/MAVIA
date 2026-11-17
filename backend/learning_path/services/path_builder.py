@@ -6,7 +6,7 @@ from lessons.services.concept_bundles import bundle_text
 
 from ..models import ConceptPrerequisite, LearningPathStep
 from .concept_units import concepts_for_topic
-from .publishing import order_with_links, path_link_confidence, path_links, redundant_links
+from .publishing import order_with_links, path_links, redundant_links
 from .reasons import link_reason
 from .teacher_links import changed_since_publish
 
@@ -17,8 +17,8 @@ def build_topic_path(node_id):
     concepts = concepts_for_topic(node)
     concept_ids = {concept.id for concept in concepts}
     links = path_links(node, concept_ids)
-    ordered, depth, ignored = order_with_links(concepts, links, path_link_confidence(node, concept_ids))
-    redundant = redundant_links(set(links) - set(ignored))
+    ordered, depth = order_with_links(concepts, links)
+    redundant = redundant_links(links)
 
     document_index = {concept.id: index for index, concept in enumerate(concepts)}
     object_id = {concept.id: concept.representative.id for concept in concepts}
@@ -132,7 +132,6 @@ def build_topic_path(node_id):
             "displaced_object_count": sum(
                 1 for index, concept in enumerate(ordered) if concepts[index].id != concept.id
             ),
-            "ignored_links": [[title[a], title[b]] for a, b in ignored],
             "published_at": (
                 LearningPathStep.objects.filter(outline_node=node)
                 .order_by("-published_at").values_list("published_at", flat=True).first()
