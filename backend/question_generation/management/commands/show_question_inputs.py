@@ -5,7 +5,7 @@ import textwrap
 from django.core.management.base import BaseCommand, CommandError
 
 from lessons.models import LearningObjectGroup, OutlineNode
-from lessons.services.question_workflow import concept_tier_counts
+from question_generation.services.question_bank import tier_counts
 from question_generation.services.pipeline import (
     QUESTION_DISTRIBUTION, concept_name, concept_source_text, question_minimum,
 )
@@ -42,11 +42,11 @@ class Command(BaseCommand):
                 continue
             sources.append(standard)
 
-        short = [node for node in sources if any(concept_tier_counts(node)[order] < minimum[order] for order in QUESTION_DISTRIBUTION)]
+        short = [node for node in sources if any(tier_counts(node)[order] < minimum[order] for order in QUESTION_DISTRIBUTION)]
         self.stdout.write(f"TOPIC: {topic.title}  ({len(sources)} concepts)")
         self.stdout.write(f"CONCEPTS SHORT OF {goal}: {', '.join(concept_name(node) for node in short) or 'none'}")
         for position, node in enumerate(sources, start=1):
-            have = concept_tier_counts(node)
+            have = tier_counts(node)
             wanted = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
             content = concept_source_text(node)
             self.stdout.write("")
