@@ -74,54 +74,28 @@ def _reference_ranking(positions, material_rank):
 
 
 def _order_records(records, material_rank):
-    """Merge every file's concept order into one: majority, then the reference file."""
+    """Follow the reference file; a concept it lacks goes right after the one its own file puts before it."""
     positions = _material_positions(records)
     reference = _reference_ranking(positions, material_rank)
-    count = len(records)
-
-    successors = defaultdict(set)
-    indegree = [0] * count
-    for first in range(count):
-        for second in range(first + 1, count):
-            shared = [m for m in positions if first in positions[m] and second in positions[m]]
-            if not shared:
+    order = []
+    for material_id in sorted(positions, key=reference.get):
+        sequence = sorted(positions[material_id], key=positions[material_id].get)
+        for place, index in enumerate(sequence):
+            if index in order:
                 continue
-            first_leads = sum(1 for m in shared if positions[m][first] < positions[m][second])
-            second_leads = len(shared) - first_leads
-            if first_leads == second_leads:
-                lead = min(shared, key=reference.get)
-                first_wins = positions[lead][first] < positions[lead][second]
+            before = next((sequence[back] for back in range(place - 1, -1, -1) if sequence[back] in order), None)
+            after = next((later for later in sequence[place + 1:] if later in order), None)
+            if before is not None:
+                order.insert(order.index(before) + 1, index)
+            elif after is not None:
+                order.insert(order.index(after), index)
             else:
-                first_wins = first_leads > second_leads
-            before, after = (first, second) if first_wins else (second, first)
-            successors[before].add(after)
-            indegree[after] += 1
-
-    def tie_key(index):
-        spots = [
-            positions[m][index] / max(1, len(positions[m]) - 1)
-            for m in positions if index in positions[m]
-        ]
-        return (
-            sum(spots) / len(spots),
-            min(reference[m] for m in positions if index in positions[m]),
-            records[index]["earliest"],
-        )
-
-    keys = {index: tie_key(index) for index in range(count)}
-    order, remaining = [], set(range(count))
-    while remaining:
-        ready = [index for index in remaining if indegree[index] == 0]
-        chosen = min(ready or remaining, key=keys.get)
-        order.append(records[chosen])
-        remaining.discard(chosen)
-        for following in successors[chosen]:
-            indegree[following] -= 1
-    return order
+                order.append(index)
+    return [records[index] for index in order]
 
 
 def concepts_for_topic(node):
-    """The topic's concepts, in merged document order."""
+    """The topic's concepts, in document order."""
     material_rank = _material_rank(node)
 
     records = []
@@ -131,11 +105,7 @@ def concepts_for_topic(node):
         members = ordered_members(group, ranked=material_rank)
         if not members:
             continue
-        records.append({
-            "group": group,
-            "members": members,
-            "earliest": min(_member_scan_key(item, material_rank) for item in members),
-        })
+        records.append({"group": group, "members": members})
 
     records = _order_records(records, material_rank)
 
