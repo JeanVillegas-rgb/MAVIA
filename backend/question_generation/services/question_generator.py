@@ -30,85 +30,64 @@ _GROUNDING_RULE = (
     "terms, examples, numbers, causes or categories the content does not "
     "state, even if you know them to be true. If the content does not "
     "settle something, do not ask about it.\n"
-    "Every choice must use words and ideas from the content. A wrong choice "
-    "must be wrong because the content says otherwise, not because it names "
-    "something the lesson never mentions.\n"
-    "Write the question and the correct answer using only words that appear in "
-    "the content below, plus simple question words (what, which, who, why, how, "
-    "when, where). Do not frame the question with phrases the content does not "
-    "use, such as 'according to', 'mentioned' or 'which statement best describes'; "
-    "ask about the content directly.\n"
-    "Do not ask about the visual layout of a figure or table, such as rows, "
-    "columns, positions or labels. Ask about what it teaches.\n"
+    "The correct answer must be stated in the content or follow directly "
+    "from it. Every wrong choice must be wrong because the content says "
+    "otherwise.\n"
 )
 
-PROMPT_TEMPLATES = {
-    "LOT": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        + _GROUNDING_RULE +
-        "Each question must be answerable DIRECTLY from the content. Ask the learner to "
-        "recall a stated fact, show they understand what a concept means, or use a stated "
-        "rule in a straightforward case.\n"
-        "Do NOT ask the learner to compare two things, weigh trade-offs, judge which "
-        "option is better, or justify a choice.\n\n"
-        "{examples}\n\n"
-        "{format_request}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Every question object must\n"
-        "carry a \"format\" field saying which kind it is. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
+THINKING_LEVELS = {
+    "remember": "Remember: recognize or recall a fact, term or definition the content states (identify, name, define, list).",
+    "understand": (
+        "Understand: show the meaning of what the content states by explaining it, giving or "
+        "recognizing an example, classifying, summarizing, inferring, or comparing two things it describes."
     ),
-    "HOT": (
-        "You are a quiz maker. Given the content below, generate {count} questions.\n"
-        + _GROUNDING_RULE +
-        "Each question must require reasoning BEYOND recall or direct application. Build "
-        "it by asking the learner to combine two or more facts the content states: "
-        "compare two things it describes, work out a cause and effect it implies, or "
-        "judge which of two stated options fits a situation.\n"
-        "The answer must follow from the stated facts. Do not ask about a cause, "
-        "comparison or consequence the content gives you no facts for.\n"
-        "The question must still have ONE defensible correct answer.\n\n"
-        "{examples}\n\n"
-        "{format_request}\n\n"
-        "Content:\n{content}\n\n"
-        "{format_instructions}\n\n"
-        "Respond ONLY with valid JSON, no other text. Every question object must\n"
-        "carry a \"format\" field saying which kind it is. Use this exact structure:\n"
-        '{{"questions": [{question_schema}]}}'
+    "apply": "Apply: use a rule or procedure the content states in a given situation (carry out, use).",
+    "analyze": (
+        "Analyze: break what the content describes into its parts and work out how the parts "
+        "relate to one another or to the whole (differentiate, organize, find the cause)."
+    ),
+    "evaluate": (
+        "Evaluate: judge, against a standard the content states, which option fits or which "
+        "claim is correct (check, critique)."
     ),
 }
 
-FEW_SHOT_EXAMPLES = {
-    "LOT": (
-        "Examples of the style (patterns only -- fill the brackets with the content's own words):\n"
-        "- What is [a term the content defines]?\n"
-        "- Which [kind of thing the content lists] has [a property the content states]?\n"
-        "- What does [something the content describes] do when [a situation the content states]?"
-    ),
-    "HOT": (
-        "Examples of the style (patterns only -- fill the brackets with the content's own words):\n"
-        "- Why does [something the content describes] [an action the content states] "
-        "when [a condition the content states]?\n"
-        "- Which is more [a quality the content states]: [one thing the content describes] "
-        "or [another thing it describes]? Why?\n"
-        "- If [a condition the content states] were true, what would [something the "
-        "content describes] do?"
-    ),
+TIER_LEVELS = {
+    "LOT": ("remember", "understand", "apply"),
+    "HOT": ("analyze", "evaluate"),
 }
+
+ITEM_RULES = (
+    "- Test one idea per question, and state that idea in the question itself.\n"
+    "- Use the simple words of the content; leave out wording the question does not need.\n"
+    "- Word each question positively; avoid NOT and EXCEPT."
+)
+
+PROMPT_TEMPLATE = (
+    "You are a quiz maker. Given the content below, write {count} questions.\n"
+    + _GROUNDING_RULE +
+    "Write each question at one of these thinking levels, spread across them:\n{levels}\n\n"
+    "Item-writing rules:\n{item_rules}\n\n"
+    "{format_request}\n\n"
+    "Content:\n{content}\n\n"
+    "{format_instructions}\n\n"
+    "Respond ONLY with valid JSON, no other text. Every question object must\n"
+    "carry a \"format\" field saying which kind it is. Use this exact structure:\n"
+    '{{"questions": [{question_schema}]}}'
+)
 
 FORMAT_INSTRUCTIONS = {
     "MCQ": (
-        "Each question must have exactly 4 choices (A, B, C, D). "
-        "Only one choice is correct. Each wrong choice must name a specific "
-        "misconception a learner could hold about THIS content -- something "
-        "the content shows to be wrong. Do not invent an option the lesson "
-        "never mentions: an unfamiliar word is not a distractor, it is a "
-        "giveaway."
+        "Each multiple-choice question has exactly 4 choices (A, B, C, D) and only one "
+        "correct answer. Make every wrong choice plausible: a mistake a learner could make "
+        "about this content. Keep the choices alike in length and grammar, and do not let "
+        "them overlap. Do not use 'all of the above' or 'none of the above'. Do not give the "
+        "answer away with words such as 'always' or 'never', or by repeating words from the question."
     ),
     "TF": (
-        "Each question must be a clear statement that is either True or False. "
-        "Do not make it obvious. Include a brief explanation for the correct answer."
+        "Each true/false item is one statement that the content makes clearly true or clearly "
+        "false. Test one idea per statement, avoid negatives, and avoid words such as 'always', "
+        "'never' or 'all' that give the answer away. Include a brief explanation for the correct answer."
     ),
 }
 
@@ -251,13 +230,14 @@ def _format_request(format_split):
 def _build_prompt(content, thinking_order, format_split, correction=""):
     """The generation prompt, with a retry's correction when given."""
     formats = [fmt for fmt in SUPPORTED_FORMATS if format_split.get(fmt)]
-    prompt = PROMPT_TEMPLATES[thinking_order].format(
+    prompt = PROMPT_TEMPLATE.format(
         count=sum(format_split.values()),
         content=content,
+        levels="\n".join(f"- {THINKING_LEVELS[level]}" for level in TIER_LEVELS[thinking_order]),
+        item_rules=ITEM_RULES,
         format_request=_format_request(format_split),
         format_instructions="\n".join(FORMAT_INSTRUCTIONS[fmt] for fmt in formats),
         question_schema=", ".join(QUESTION_SCHEMA[fmt] for fmt in formats),
-        examples=FEW_SHOT_EXAMPLES[thinking_order],
     )
     if correction:
         marker = "\n\nRespond ONLY with valid JSON"
