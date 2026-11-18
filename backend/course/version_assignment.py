@@ -39,7 +39,7 @@ _LEADING_NUMBER = re.compile(
 def clean_group_label(title):
     original = (title or "").strip()
     cleaned = _PART_SUFFIX.sub("", _LEADING_NUMBER.sub("", original))
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -–—:;,.()[]")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -–—:;,.")
     return cleaned or original
 
 

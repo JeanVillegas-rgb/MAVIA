@@ -175,6 +175,8 @@ class PipelineBlockBoundaryTests(SimpleTestCase):
         import numpy as np
         model = Mock()
         model.predict.return_value = ["assessment"]
+        model.classes_ = ["assessment", "lesson_content", "other"]
+        model.decision_function.return_value = [[1.0, -0.5, -0.5]]
         encoder = Mock()
         encoder.encode.return_value = np.ones((1, 2))
         with patch("lessons.services.block_classifier._load_classifier", return_value=({"model": model}, encoder)):

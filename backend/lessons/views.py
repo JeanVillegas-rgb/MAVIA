@@ -65,6 +65,7 @@ from .features.pdf_processing.use_cases import (
     upload_learning_material,
 )
 from .serializers import (
+    BlockReviewSerializer,
     CourseCreateSerializer,
     CourseDetailSerializer,
     CourseListSerializer,
@@ -82,6 +83,7 @@ from .services.audio_generator import (
     generate_material_audio_playlist,
 )
 from .services.block_classifier import is_structural_metadata_label
+from .services.block_review import pending_block_reviews, review_block
 from .services.concept_grouper import (
     learning_objects_are_confirmed,
     refresh_material_learning_relationships,
@@ -576,6 +578,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         except OutlineNode.DoesNotExist:
             return Response({"detail": "Outline node not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if any(pending_block_reviews(material) for material in node.materials.all()):
+            return Response(
+                {"detail": "Review the flagged PDF blocks before finalizing lesson sources."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         lesson_materials = list(
             node.materials.filter(learning_objects__isnull=False).distinct()
         )
@@ -598,11 +605,12 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/connect-learning-objects",
     )
+    @transaction.atomic
     def connect_learning_objects(self, request, pk=None, node_id=None):
         """Connect equivalent objects without assigning a difficulty label."""
         course = self.get_object()
         try:
-            node = course.nodes.get(pk=node_id)
+            node = course.nodes.select_for_update().get(pk=node_id)
         except OutlineNode.DoesNotExist:
             return Response(
                 {"detail": "Outline node not found."},
@@ -612,9 +620,10 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             return locked
 
         raw_ids = request.data.get("learning_object_ids")
-        if not isinstance(raw_ids, list) or len(set(raw_ids)) < 2:
+        explicit_target = request.data.get("target_group_id") is not None
+        if not isinstance(raw_ids, list):
             return Response(
-                {"detail": "Provide at least two learning_object_ids."},
+                {"detail": "Provide a list of learning_object_ids."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
@@ -622,6 +631,11 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         except (TypeError, ValueError):
             return Response(
                 {"detail": "Every learning_object_id must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(object_ids) < (1 if explicit_target else 2):
+            return Response(
+                {"detail": "Select an object and destination, or at least two objects to connect."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -647,7 +661,20 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        target_group = next(
+        target_group = None
+        if explicit_target:
+            try:
+                target_group = node.learning_object_groups.get(pk=int(request.data["target_group_id"]))
+            except (TypeError, ValueError, LearningObjectGroup.DoesNotExist):
+                return Response(
+                    {"detail": "Destination concept was not found in this outline node."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if any(not learning_objects_are_confirmed(item.material)
+                   for item in target_group.learning_objects.select_related("material")):
+                return Response({"detail": "Confirm the destination concept's sources first."},
+                                status=status.HTTP_400_BAD_REQUEST)
+        target_group = target_group or next(
             (
                 item.group
                 for item in learning_objects
@@ -675,6 +702,12 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             for item in learning_objects
             if item.group_id and item.group_id != target_group.id
         }
+        affected_materials = {item.material for item in learning_objects}
+        affected_materials.update(
+            item.material for item in LearningObject.objects.filter(
+                group_id__in=old_group_ids | {target_group.id}
+            ).select_related("material")
+        )
         # An object pulled out of another group leaves its companions there;
         # undo its version links with them before it moves.
         for item in learning_objects:
@@ -696,7 +729,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
                 learning_objects__isnull=True,
             ).delete()
         self._refresh_relationship_snapshots(
-            {item.material for item in learning_objects}
+            affected_materials,
+            recompute=False,
         )
         return Response(self._learning_resources_payload(node, request))
 
@@ -705,11 +739,12 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         methods=["post"],
         url_path=r"outline-nodes/(?P<node_id>[^/.]+)/separate-learning-object",
     )
+    @transaction.atomic
     def separate_learning_object(self, request, pk=None, node_id=None):
         """Move one object into its own neutral group without classifying it."""
         course = self.get_object()
         try:
-            node = course.nodes.get(pk=node_id)
+            node = course.nodes.select_for_update().get(pk=node_id)
         except OutlineNode.DoesNotExist:
             return Response(
                 {"detail": "Outline node not found."},
@@ -747,10 +782,15 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
             )
 
         old_group = learning_object.group
+        requested_label = str(request.data.get("label") or "").strip()[:255]
         old_group_members = list(
             old_group.learning_objects.exclude(pk=learning_object.id).select_related("material")
         ) if old_group else []
         if old_group and old_group.learning_objects.count() == 1:
+            if requested_label:
+                old_group.label = requested_label
+                old_group.version_selection = {**(old_group.version_selection or {}), "label_locked": True}
+                old_group.save(update_fields=["label", "version_selection"])
             return Response(self._learning_resources_payload(node, request))
 
         # Undo the old group's version links first, or the object stays "taught
@@ -758,7 +798,8 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         release_from_group(learning_object, old_group_members)
         new_group = LearningObjectGroup.objects.create(
             outline_node=node,
-            label=learning_object.title[:255],
+            label=requested_label or learning_object.title[:255],
+            version_selection={"label_locked": True} if requested_label else {},
         )
         learning_object.group = new_group
         learning_object.mark_grouping_current()
@@ -1585,6 +1626,9 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         ]
 
     def _set_learning_objects_confirmed(self, material, confirmed):
+        if confirmed and pending_block_reviews(material):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "Review the flagged PDF blocks before confirming learning objects."})
         stale_ids = [
             item.id
             for item in material.learning_objects.all()
@@ -1635,6 +1679,20 @@ class CourseGroupViewSet(viewsets.ModelViewSet):
         generated_json["lesson_audio_generated"] = False
         material.generated_json = generated_json
         material.save(update_fields=["generated_json"])
+
+    @action(detail=True, methods=["post"],
+            url_path=r"materials/(?P<material_id>[^/.]+)/review-block")
+    @transaction.atomic
+    def review_material_block(self, request, pk=None, material_id=None):
+        course = self.get_object()
+        material = self._get_course_material(course, material_id)
+        if material is None:
+            return Response({"detail": "Learning material not found for this course."}, status=404)
+        serializer = BlockReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        material = review_block(material, user=request.user, **serializer.validated_data)
+        self._set_learning_objects_confirmed(material, False)
+        return self._serialize_course_detail(course, request)
 
     @action(
         detail=True,

@@ -43,4 +43,14 @@ describe("lesson-file content review", () => {
     expect(html).toContain("/media/diagram.png");
     expect(html).not.toContain("<audio");
   });
+
+  it("blocks confirmation while flagged blocks await a teacher decision", () => {
+    const draft = { ...material, generated_json: { learning_objects_confirmed: false, classified_blocks: [
+      { block_id: 1, text: "Excluded Picking introduction", category: "other", review_required: true },
+    ] } };
+    const html = renderToStaticMarkup(<MaterialCard material={draft} courseId={1} />);
+    expect(html).toContain("Excluded Picking introduction");
+    expect(html).toContain("Review 1 flagged PDF block(s) before confirming.");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm learning objects/);
+  });
 });

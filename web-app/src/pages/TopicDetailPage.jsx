@@ -4,6 +4,8 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { uploadedMaterialFromResponse } from "../uploadNavigation";
 import {
   confirmLearningObjects,
+  moveConceptObject,
+  separateConceptObject,
   createLearningObject,
   createTopicQuestion,
   deleteLearningMaterial,
@@ -44,6 +46,9 @@ import BundleParts from "../learning-path/BundleParts";
 import { objectHeadings } from "../learning-path/objectHeadings";
 import PublishedDialog from "../learning-path/PublishedDialog";
 import FormattedLearningObjectContent from "../components/FormattedLearningObjectContent";
+import BlockClassificationReview, { pendingBlockReviewCount } from "../components/BlockClassificationReview";
+import ConceptGroupingControls from "../components/ConceptGroupingControls";
+import { reviewMaterialBlock } from "../api";
 
 export { FormattedLearningObjectContent };
 
@@ -2338,6 +2343,24 @@ function LearningObjectConnections({
   const automaticClassificationRef = useRef("");
   const sourcesFinalized = Boolean(topic?.source_review?.finalized);
 
+  async function correctConcept(objectId, { targetGroupId, label }) {
+    if (sourcesFinalized || busyAction) return;
+    setBusyAction(`concept-correction-${objectId}`);
+    onError("");
+    onMessage("");
+    try {
+      const data = targetGroupId
+        ? await moveConceptObject(courseId, topicId, objectId, targetGroupId)
+        : await separateConceptObject(courseId, topicId, objectId, label);
+      setResources(data);
+      onMessage("Concept correction saved. The object's text and source PDF were preserved.");
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function finalizeSources() {
     setBusyAction("finalize-sources");
     onError("");
@@ -3043,13 +3066,18 @@ function LearningObjectConnections({
                             </header>
                             <div className="connection-object-list">
                               {bundle.learning_objects.map((item, itemIndex) => (
-                                <ConceptObjectPreview
-                                  key={item.id}
-                                  item={item}
-                                  previousItem={bundle.learning_objects[itemIndex - 1]}
-                                  conceptTitle={group.display_title || group.label || group.learning_objects[0]?.title}
-                                  number={`${groupNumber}.${bundleIndex + 1}.${itemIndex + 1}`}
-                                />
+                                <Fragment key={item.id}>
+                                  <ConceptObjectPreview
+                                    item={item}
+                                    previousItem={bundle.learning_objects[itemIndex - 1]}
+                                    conceptTitle={group.display_title || group.label || group.learning_objects[0]?.title}
+                                    number={`${groupNumber}.${bundleIndex + 1}.${itemIndex + 1}`}
+                                  />
+                                  {!sourcesFinalized && (
+                                    <ConceptGroupingControls item={item} group={group} groups={groups}
+                                      busy={Boolean(busyAction)} onCorrect={correctConcept} />
+                                  )}
+                                </Fragment>
                               ))}
                             </div>
                           </section>
@@ -3564,6 +3592,8 @@ export function MaterialCard({ material, courseId, sourceFinalized, onCourseChan
   // silently return to an editable draft after approval.
   const canEditLearningObjects =
     !learningObjectsConfirmed && !sourceFinalized;  const selectedObject = material.learning_objects.find((item) => item.id === selectedId);
+  const sourceBlocks = generatedJson.classified_blocks || [];
+  const pendingBlocks = pendingBlockReviewCount(sourceBlocks);
   const imagesMissingDescription = material.learning_objects.filter(
     (item) => isImageLearningObject(item) && !item.content?.trim(),
   );
@@ -3664,6 +3694,25 @@ export function MaterialCard({ material, courseId, sourceFinalized, onCourseChan
     }
   }
 
+  async function saveBlockReview(blockId, category) {
+    setBusyAction(`review-block-${blockId}`);
+    onError("");
+    onMessage("");
+    try {
+      const updatedCourse = await reviewMaterialBlock(courseId, material.id, blockId, category);
+      onCourseChange(updatedCourse);
+      onMessage("Block review saved. Check the learning objects and questions before confirming.");
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  const blockReview = <BlockClassificationReview blocks={sourceBlocks} materialId={material.id}
+    editable={canEditLearningObjects && material.status === "completed"}
+    busy={Boolean(busyAction)} onSave={saveBlockReview} />;
+
   async function removeMaterial() {
     setBusyAction("delete-material");
     onError("");
@@ -3695,6 +3744,7 @@ export function MaterialCard({ material, courseId, sourceFinalized, onCourseChan
           <strong>Question document detected</strong>
           <span>Questions are matched against learning objects from lesson PDFs in this topic.</span>
         </div>
+        {blockReview}
         <div className="question-document-actions">
           <button type="button" className="btn btn-primary btn-small" onClick={onReviewConnections}>
             Review question assignments
@@ -3755,6 +3805,7 @@ export function MaterialCard({ material, courseId, sourceFinalized, onCourseChan
         </button>
       </div>}
 
+        {blockReview}
         <section className="generated-result-panel">
           <div className="generated-section-header">
             <div>
@@ -3930,11 +3981,12 @@ export function MaterialCard({ material, courseId, sourceFinalized, onCourseChan
                   <button
                     className="btn btn-primary"
                     type="button"
-                    disabled={!material.learning_objects.length || Boolean(busyAction)}
+                    disabled={!material.learning_objects.length || Boolean(busyAction) || pendingBlocks > 0}
                     onClick={() => confirmObjects()}
                   >
                     {busyAction === "confirm" ? "Confirming..." : "Confirm learning objects"}
                   </button>
+                  {pendingBlocks > 0 && <p role="status">Review {pendingBlocks} flagged PDF block(s) before confirming.</p>}
                 </div>
               )}
             </>

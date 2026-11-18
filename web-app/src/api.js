@@ -176,6 +176,14 @@ export function createLearningObject(courseId, materialId, data) {
   });
 }
 
+export function reviewMaterialBlock(courseId, materialId, blockId, category) {
+  return request(`/courses/${courseId}/materials/${materialId}/review-block/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ block_id: blockId, category }),
+  });
+}
+
 export function updateLearningObject(courseId, materialId, objectId, data) {
   return request(
     `/courses/${courseId}/materials/${materialId}/learning-objects/${objectId}/`,
@@ -240,6 +248,22 @@ export function fetchLearningResources(courseId, nodeId) {
 export function finalizeTopicSources(courseId, nodeId) {
   return request(`/courses/${courseId}/outline-nodes/${nodeId}/finalize-sources/`, {
     method: "POST",
+  });
+}
+
+export function moveConceptObject(courseId, nodeId, objectId, targetGroupId) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/connect-learning-objects/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learning_object_ids: [objectId], target_group_id: Number(targetGroupId) }),
+  });
+}
+
+export function separateConceptObject(courseId, nodeId, objectId, label) {
+  return request(`/courses/${courseId}/outline-nodes/${nodeId}/separate-learning-object/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learning_object_id: objectId, label }),
   });
 }
 

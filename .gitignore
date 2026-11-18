@@ -144,3 +144,6 @@ backend/scripts/show_evidence.py
 /backend/lessons/training/splits/
 /backend/lessons/training/artifacts/training_results.json
 /backend/lessons/training/test_training.py
+
+# Private PDF samples and real-database object dumps shared for diagnosis
+/backend/lessons/MAVIA-for-Jean-*/

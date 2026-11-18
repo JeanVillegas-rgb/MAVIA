@@ -49,6 +49,9 @@ def parse_outline_lines(lines):
 
 
 def parse_outline_file(file_path, extension=".pdf"):
+    print("FILE PATH: ", file_path)
+    print("EXTENSION: ", extension)
+    
     if extension.lower().lstrip(".") != "pdf":
         raise ValueError("Only PDF course outlines are supported.")
     return parse_outline_blocks(extract_pdf_blocks(file_path))

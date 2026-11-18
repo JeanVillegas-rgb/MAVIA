@@ -381,3 +381,17 @@ def synchronize_detected_questions(material, classified_blocks):
         _sync_extracted_question_to_bank(question)
         retained_ids.append(question.id)
     material.questions.exclude(id__in=retained_ids).delete()
+
+
+def add_reviewed_block_questions(material, classified_blocks, block_id):
+    """Add only this corrected block's questions; retain all existing reviews."""
+    for payload in detected_question_payloads(classified_blocks):
+        if payload.get("source_block_id") != block_id:
+            continue
+        if duplicate_in_topic(material, question_fingerprint(payload["prompt"])):
+            continue
+        last = material.questions.order_by("-order").first()
+        question = ExtractedQuestion.objects.create(
+            material=material, order=last.order + 1 if last else 0, **payload,
+        )
+        _sync_extracted_question_to_bank(question)
