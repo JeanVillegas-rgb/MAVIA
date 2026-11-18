@@ -1546,16 +1546,42 @@ function QuestionBankPanel({
   onCheckAll,
 }) {
   const [editing, setEditing] = useState(null);
+  const [conceptIndex, setConceptIndex] = useState(0);
   const busy = Boolean(busyAction);
   const held = questionPairings.filter((question) => question.status !== "final");
   const given = questionPairings.filter((question) => question.status === "final");
   const knownGroups = new Set(groups.map((group) => Number(group.id)));
   const elsewhere = given.filter((question) => !knownGroups.has(Number(questionGroupId(question))));
+  // The bank shows one concept at a time; "Other questions" is the last page.
+  const pages = [
+    ...groups.map((group) => ({
+      key: String(group.id),
+      title: conceptTitle(group),
+      group,
+      questions: given
+        .filter((question) => Number(questionGroupId(question)) === Number(group.id))
+        .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id),
+    })),
+    ...(elsewhere.length ? [{ key: "elsewhere", title: "Other questions", group: null, questions: elsewhere }] : []),
+  ];
+  const pageIndex = Math.min(conceptIndex, Math.max(pages.length - 1, 0));
+  const page = pages[pageIndex];
 
   useEffect(() => {
     if (!focus?.groupId) return;
-    document.getElementById(`bank-concept-${focus.groupId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const index = pages.findIndex((entry) => entry.key === String(focus.groupId));
+    if (index >= 0) setConceptIndex(index);
+    // Only a new request to open a concept moves the page, not every reload of the bank.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
+
+  const pageLabel = (entry) => {
+    if (!entry.group) return `${entry.title} (${entry.questions.length})`;
+    const counts = entry.group.question_counts || {};
+    const minimum = entry.group.question_minimum || {};
+    const short = (counts.LOT || 0) < (minimum.LOT || 0) || (counts.HOT || 0) < (minimum.HOT || 0);
+    return `${entry.title}${short ? " (short)" : ""}`;
+  };
 
   const row = (question, isHeld) => (
     <BankQuestionRow
@@ -1643,20 +1669,37 @@ function QuestionBankPanel({
             <div>
               <span className="connection-eyebrow">Question bank</span>
               <h4>Questions learners get</h4>
-              <p>Every concept with its questions and how many LOTS and HOTS it has.</p>
+              <p>One concept at a time, with its questions and how many LOTS and HOTS it has.</p>
             </div>
           </div>
-          <div className="question-learning-object-list">
-            {groups.map((group) => conceptCard(
-              group.id,
-              conceptTitle(group),
-              given
-                .filter((question) => Number(questionGroupId(question)) === Number(group.id))
-                .sort((a, b) => (a.thinking_order || "").localeCompare(b.thinking_order || "") || a.id - b.id),
-              group,
-            ))}
-            {elsewhere.length > 0 && conceptCard("elsewhere", "Other questions", elsewhere)}
-          </div>
+          {page ? (
+            <>
+              <div className="question-bank-picker">
+                <label>
+                  <span>Concept</span>
+                  <select
+                    value={page.key}
+                    disabled={busy}
+                    onChange={(event) => setConceptIndex(pages.findIndex((entry) => entry.key === event.target.value))}
+                  >
+                    {pages.map((entry) => <option value={entry.key} key={entry.key}>{pageLabel(entry)}</option>)}
+                  </select>
+                </label>
+                <ReviewQueueNavigator
+                  index={pageIndex}
+                  count={pages.length}
+                  onChange={setConceptIndex}
+                  disabled={busy}
+                  itemLabel="Concept"
+                />
+              </div>
+              <div className="question-learning-object-list">
+                {conceptCard(page.key, page.title, page.questions, page.group)}
+              </div>
+            </>
+          ) : (
+            <div className="review-queue-empty">No concepts in this topic yet.</div>
+          )}
         </>
       )}
 

@@ -2926,6 +2926,39 @@ button {
   white-space: nowrap;
 }
 
+/* The question bank's concept switcher: jump to a concept, or step through them. */
+.question-bank-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 22rem);
+  align-items: end;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.question-bank-picker label {
+  display: grid;
+  gap: 0.25rem;
+  color: #6a5840;
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.question-bank-picker select {
+  min-height: 2.15rem;
+  border: 1px solid #dfd5bd;
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  color: #3d4b57;
+  background: #ffffff;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 720px) {
+  .question-bank-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Keep the editor's own controls obvious and reachable. */
 .question-inline-editor-actions {
   display: flex;
