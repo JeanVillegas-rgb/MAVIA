@@ -116,6 +116,7 @@ def _run_topic_pipeline(run_id, node_ids):
 
 class StartTopicGenerationView(APIView):
     """POST /api/generation/topics/<id>/start/: top up every short concept in the background."""
+    permission_classes = [IsTeacherOrAdmin]
     def post(self, request, outline_node_id):
         from lessons.models import LearningObjectGroup, OutlineNode
 
@@ -159,6 +160,7 @@ class StartTopicGenerationView(APIView):
 
 class StartGenerationView(APIView):
     """POST /api/generation/materials/<id>/nodes/<id>/start/: generate for one concept."""
+    permission_classes = [IsTeacherOrAdmin]
     def post(self, request, material_id, node_id):
         try:
             material = LearningMaterial.objects.get(id=material_id)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+from django.conf import settings
 from sentence_transformers import SentenceTransformer
 
 
@@ -80,6 +81,8 @@ def _contexts(blocks):
 
 
 def classify_blocks(blocks):
+    if not blocks:
+        return []
     artifact, encoder = _load_classifier()
     feature_mode = artifact.get("feature_mode", "Target + context")
     texts = [block.get("text", "") for block in blocks]
@@ -97,13 +100,41 @@ def classify_blocks(blocks):
     else:
         features = target_vectors
 
-    predictions = artifact["model"].predict(features)
+    model = artifact["model"]
+    predictions = model.predict(features)
+    scores = np.asarray(model.decision_function(features), dtype=float)
+    classes = [str(label) for label in model.classes_]
+    threshold = getattr(settings, "BLOCK_CLASSIFIER_REVIEW_MARGIN", None)
+    if threshold is not None:
+        threshold = float(threshold)
+        if not np.isfinite(threshold) or threshold < 0:
+            raise ValueError("BLOCK_CLASSIFIER_REVIEW_MARGIN must be finite and nonnegative.")
+    if (
+        set(classes) != VALID_MODEL_LABELS
+        or len(classes) != len(VALID_MODEL_LABELS)
+        or len(predictions) != len(blocks)
+        or any(str(label) not in VALID_MODEL_LABELS for label in predictions)
+        or scores.shape != (len(blocks), len(classes))
+        or not np.isfinite(scores).all()
+    ):
+        raise LessonClassificationPending("Classifier returned invalid decision scores.")
     classified = []
-    for block, prediction in zip(blocks, predictions):
+    for block, prediction, row_scores in zip(blocks, predictions, scores):
         category = str(prediction)
+        ranked = np.sort(row_scores)
+        margin = float(ranked[-1] - ranked[-2])
         classified_block = dict(block)
         classified_block["category"] = category
         classified_block["include_in_narration"] = category == "lesson_content"
+        # LinearSVC margins are NOT calibrated confidence probabilities.
+        # Keep the prediction intact; teacher overrides are stored separately.
+        classified_block.update(
+            predicted_category=category,
+            decision_scores=dict(zip(classes, map(float, row_scores))),
+            decision_margin=margin,
+            review_margin_threshold=threshold,
+            review_required=threshold is not None and margin < threshold,
+        )
         classified.append(classified_block)
 
     return classified

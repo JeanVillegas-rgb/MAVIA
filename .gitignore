@@ -115,3 +115,35 @@ backend/scripts/passage_map.py
 backend/scripts/reference_examples.py
 backend/scripts/retrieval_figure.py
 backend/scripts/show_evidence.py
+
+# Local staging copies, presentation renders and personal working files
+/.deck_review/
+/.doc_build/
+/.ppt_build/
+/.ui_stage/
+/.worktrees/
+/jean_stage/
+/outputs/
+/*.pptx
+/topic-matching-diagram.png
+*.code-workspace
+
+# Local lesson/debug exports and one-off topic metadata backups
+/backend/classifier-run.txt
+/backend/lesson_extraction_debug.json
+/backend/topic-*-before-reopen-*.json
+/backend/lessons/image.png
+/backend/training_data/
+/backend/lessons/.labelstudio-data/
+/backend/lessons/.labelstudio-venv/
+
+# Keep the trained classifier, but not private source PDFs or annotations
+/backend/lessons/training/labeled_data/
+/backend/lessons/training/labeling_tasks/
+/backend/lessons/training/pdf_samples/
+/backend/lessons/training/splits/
+/backend/lessons/training/artifacts/training_results.json
+/backend/lessons/training/test_training.py
+
+# Private PDF samples and real-database object dumps shared for diagnosis
+/backend/lessons/MAVIA-for-Jean-*/

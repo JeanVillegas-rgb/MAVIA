@@ -20,6 +20,15 @@ _QUESTION_CONTAINER_LABELS = {
     "question", "questions", "quiz", "review questions", "teacher check",
     "test", "true false", "true or false", "worksheet",
 }
+_NUMBERED_PREFIX = re.compile(r"^\d+[.)]\s*")
+_LETTERED_CHOICES = re.compile(
+    r"(?:^|\s|\()([A-Da-d])\s*(?:[.)]|:|-)\s+"
+    r"(.+?)(?=(?:\s+\(?[A-Da-d]\s*(?:[.)]|:|-)\s+)|"
+    r"(?:\s+(?:answer|correct\s+answer)\s*[:.-])|$)",
+    flags=re.I | re.S,
+)
+# Boolean line check only; unlike _LETTERED_CHOICES, no captures are needed.
+_SEPARATE_CHOICE_LINE = re.compile(r"^\s*\(?[A-Da-d]\s*(?:[.)]|:|-)\s+.+?\s*$")
 
 
 def question_snapshots(material: LearningMaterial) -> list[dict]:
@@ -53,19 +62,13 @@ def question_fingerprint(text: str) -> str:
 def parse_question_structure(prompt: str, source_excerpt: str = "") -> dict:
     """Infer supported question structure without inventing missing choices/answers."""
     raw_prompt = (prompt or "").strip()
-    choice_pattern = re.compile(
-        r"(?:^|\s|\()([A-Da-d])\s*(?:[.)]|:|-)\s+"
-        r"(.+?)(?=(?:\s+\(?[A-Da-d]\s*(?:[.)]|:|-)\s+)|"
-        r"(?:\s+(?:answer|correct\s+answer)\s*[:.-])|$)",
-        flags=re.I | re.S,
-    )
-    matches = list(choice_pattern.finditer(raw_prompt))
+    matches = list(_LETTERED_CHOICES.finditer(raw_prompt))
     choice_rows = [
         (match.group(1).upper(), " ".join(match.group(2).split()))
         for match in matches
         if match.group(2).strip()
     ]
-    choices = [text for _, text in choice_rows if text]
+    choices = [text for _, text in choice_rows]
     cleaned_prompt = (
         " ".join(raw_prompt[:matches[0].start()].split())
         if matches
@@ -181,7 +184,7 @@ def _is_question_line(text, *, allow_numbered_statement=False):
         return True
     if re.match(r"^(?:q\s*:|q\d+\b|question\s+\d+\b)", stripped, re.I):
         return True
-    numbered = re.sub(r"^\d+[.)]\s*", "", stripped)
+    numbered = _NUMBERED_PREFIX.sub("", stripped)
     if allow_numbered_statement and numbered != stripped:
         return True
     if numbered != stripped and re.match(
@@ -200,7 +203,7 @@ def _is_question_line(text, *, allow_numbered_statement=False):
 
 
 def _starts_new_question(text):
-    cleaned = re.sub(r"^\d+[.)]\s*", "", _clean_question_line(text))
+    cleaned = _NUMBERED_PREFIX.sub("", _clean_question_line(text))
     return bool(re.match(
         r"^(?:q\s*:|question\s+\d+\b|who|what|when|where|why|how|which|whose|"
         r"whom|is|are|am|do|does|did|can|could|will|would|should|has|have|had|"
@@ -210,11 +213,6 @@ def _starts_new_question(text):
         cleaned,
         re.I,
     ))
-
-
-_SEPARATE_CHOICE_LINE = re.compile(
-    r"^\s*\(?([A-Da-d])\s*(?:[.)]|:|-)\s+(.+?)\s*$",
-)
 
 
 def _is_choice_block(text):
@@ -270,7 +268,7 @@ def _question_prompts_from_block(text, *, allow_numbered_statements=False):
             allow_numbered_statement=allow_numbered_statements,
         )
         phrase = _starts_new_question(question_only)
-        numbered = bool(re.match(r"^\d+[.)]\s*", question_only))
+        numbered = bool(_NUMBERED_PREFIX.match(question_only))
         choice = bool(re.match(r"^[A-Da-d][.)]\s+", question_only))
         if numbered and current:
             flush()
@@ -383,3 +381,17 @@ def synchronize_detected_questions(material, classified_blocks):
         _sync_extracted_question_to_bank(question)
         retained_ids.append(question.id)
     material.questions.exclude(id__in=retained_ids).delete()
+
+
+def add_reviewed_block_questions(material, classified_blocks, block_id):
+    """Add only this corrected block's questions; retain all existing reviews."""
+    for payload in detected_question_payloads(classified_blocks):
+        if payload.get("source_block_id") != block_id:
+            continue
+        if duplicate_in_topic(material, question_fingerprint(payload["prompt"])):
+            continue
+        last = material.questions.order_by("-order").first()
+        question = ExtractedQuestion.objects.create(
+            material=material, order=last.order + 1 if last else 0, **payload,
+        )
+        _sync_extracted_question_to_bank(question)

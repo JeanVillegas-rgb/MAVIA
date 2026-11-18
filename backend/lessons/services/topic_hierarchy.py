@@ -41,7 +41,7 @@ def identify_outline_item(text):
     return None
 
 
-def build_topic_hierarchy(extracted_blocks):
+def     build_topic_hierarchy(extracted_blocks):
     hierarchy = []
     current_parent = None
     recognized_parents = {}
@@ -75,5 +75,4 @@ def build_topic_hierarchy(extracted_blocks):
             item["order"] = child_order
             child_orders[parent_key] = child_order + 1
         hierarchy.append(item)
-
     return hierarchy

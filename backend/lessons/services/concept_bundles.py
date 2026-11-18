@@ -19,13 +19,7 @@ def material_order(node):
 
 
 def bundles_for_group(group):
-    """``{material_id: [objects in document order]}`` for one concept.
-
-    A caller that already prefetched ``learning_objects`` (with or without
-    their materials) gets its cache used rather than re-queried: asking for
-    ``select_related("material")`` unconditionally issued a fresh query per
-    concept and quietly undid the prefetch.
-    """
+    
     prefetched = "learning_objects" in getattr(group, "_prefetched_objects_cache", {})
     manager = group.learning_objects
     items = manager.all() if prefetched else manager.select_related("material").all()

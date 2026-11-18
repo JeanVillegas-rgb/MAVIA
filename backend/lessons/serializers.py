@@ -189,6 +189,11 @@ class ExtractedQuestionSerializer(serializers.ModelSerializer):
         )
 
 
+class BlockReviewSerializer(serializers.Serializer):
+    block_id = serializers.IntegerField(min_value=0)
+    category = serializers.ChoiceField(choices=["lesson_content", "assessment", "other"])
+
+
 class LearningObjectMutationSerializer(serializers.ModelSerializer):
     class Meta:
         model = LearningObject

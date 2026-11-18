@@ -88,15 +88,11 @@ def _find_existing_outline(
     course: CourseGroup,
     fingerprint: str,
 ) -> CourseOutline | None:
-    # An outline defines a course. Reusing the exact same outline to create a
-    # second course is still a duplicate, even though the course IDs differ.
+
     existing = CourseOutline.objects.filter(file_sha256=fingerprint).first()
     if existing:
         return existing
 
-    # Files saved before outline fingerprints were introduced are checked once
-    # and backfilled lazily. This lets duplicate detection work immediately
-    # without requiring teachers to upload their existing outlines again.
     for outline in CourseOutline.objects.filter(file_sha256="").exclude(outline_file=""):
         try:
             outline.outline_file.open("rb")
@@ -121,6 +117,17 @@ def _find_existing_outline(
     return None
 
 
+# print(f"UPLOADED PDF: {fingerprint}")
+
+# for outline_id, saved_hash in CourseOutline.objects.values_list(
+#     "id", "file_sha256"
+# ):
+#     print(
+#         f"Outline {outline_id}: {saved_hash} "
+#         f"| MATCH: {saved_hash == fingerprint}"
+#     )
+
+#course
 @transaction.atomic
 def upload_course_outline(
     *,
@@ -129,6 +136,7 @@ def upload_course_outline(
 ) -> tuple[CourseGroup, bool]:
     """Store an outline source and merge its hierarchy into the course."""
     fingerprint = _file_sha256(outline_file)
+    print(f"PDF Fingerprint: {fingerprint}")
     existing_outline = _find_existing_outline(course, fingerprint)
     existing_material = _find_existing_material(course, outline_file, fingerprint)
     if existing_outline is not None or existing_material is not None:
@@ -152,6 +160,7 @@ def upload_course_outline(
     try:
         save_outline_hierarchy(course, parsed_nodes, replace=False)
         cache_subtopic_embeddings(course)
+        
     except Exception as exc:
         outline.outline_file.delete(save=False)
         outline.delete()
@@ -324,7 +333,6 @@ def upload_learning_material(
     outline_node_id: int | None = None,
     module_node_id: int | None = None,
 ) -> tuple[LearningMaterial, bool]:
-    """Create a lesson material, resolve its placement, and generate its outputs."""
     outline_node = _selected_outline_node(course, outline_node_id)
     module_node = _selected_module_node(course, module_node_id, outline_node)
 

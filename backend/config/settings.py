@@ -387,6 +387,13 @@ QUESTION_JUDGE_TIMEOUT = int(
 # the standard Python logging system instead. INFO reports each step of every
 # pipeline; DEBUG adds the per-item detail (each drafted question, each
 # duplicate or surplus dropped) that would otherwise bury it.
+# Optional LinearSVC top-two score margin cutoff. Disabled until a cutoff has
+# been evaluated on held-out labelled data; this is not a probability.
+BLOCK_CLASSIFIER_REVIEW_MARGIN = (
+    float(os.environ["BLOCK_CLASSIFIER_REVIEW_MARGIN"])
+    if os.getenv("BLOCK_CLASSIFIER_REVIEW_MARGIN", "").strip() else None
+)
+
 MAVIA_LOG_LEVEL = os.getenv("MAVIA_LOG_LEVEL", "INFO").upper()
 # The same switch for question generation and the learning path alone: DEBUG
 # prints their full trace (each prompt sent to the LLM, each drafted question,

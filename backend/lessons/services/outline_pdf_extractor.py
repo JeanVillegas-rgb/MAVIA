@@ -1,5 +1,3 @@
-"""Jean's ordered PDF-block extractor for course outlines."""
-
 import fitz
 
 from .topic_hierarchy import identify_outline_item
@@ -36,6 +34,13 @@ def _continues_previous(previous, current):
         return False
     px0, py0, _px1, py1 = previous["bbox"]
     cx0, cy0, _cx1, _cy1 = current["bbox"]
+
+    #px0 — previous left.
+    # py0 — previous top.
+    # py1 — previous bottom.
+    # cx0 — current left.
+    # cy0 — current top.
+
     previous_height = max(1.0, py1 - py0)
     return (
         abs(cx0 - px0) <= 12.0
@@ -57,9 +62,9 @@ def rows_from_page_blocks(page_number, page_blocks):
                 "bbox": [x0, y0, x1, y1],
             }
             if rows and _continues_previous(rows[-1], row):
-                rows[-1]["text"] = f"{rows[-1]['text']} {text_row}"
-                rows[-1]["bbox"][2] = max(rows[-1]["bbox"][2], x1)
-                rows[-1]["bbox"][3] = max(rows[-1]["bbox"][3], y1)
+                rows[-1]["text"] = f"{rows[-1]['text']} {text_row}"  #isumpay
+                rows[-1]["bbox"][2] = max(rows[-1]["bbox"][2], x1) #update right boundary
+                rows[-1]["bbox"][3] = max(rows[-1]["bbox"][3], y1) #update bottom boundary
             else:
                 rows.append(row)
 
@@ -72,15 +77,17 @@ def extract_pdf_blocks(pdf_path):
     try:
         for page_index, page in enumerate(document):
             page_number = page_index + 1
+            raw_blocks = page.get_text("blocks", sort=True)
 
             page_rows = rows_from_page_blocks(
                 page_number,
-                page.get_text("blocks", sort=True),
+                raw_blocks,
             )
-
+            print(page_rows)
             for row in page_rows:
                 row["block_id"] = len(extracted_blocks)
                 extracted_blocks.append(row)
+    
     finally:
         document.close()
     return extracted_blocks
