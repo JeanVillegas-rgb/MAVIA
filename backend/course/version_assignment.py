@@ -234,13 +234,27 @@ def _bundle_proxy(objects):
     )
 
 
+def _trace_excerpt(value, limit=160):
+    text = " ".join((value or "").split())
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
 def assign_group_versions(group, *, use_llm=False):
-    """Select Standard, classify other uploaded bundles, and report gaps."""
+
     bundles = _eligible_bundles(group)
     ordered = _ordered_ids(group, bundles)
     selection = dict(group.version_selection or {})
     replacement = _replacement_needed(group, bundles)
     standard_id = _standard_id(group, bundles)
+    if use_llm:
+        print(f"\n=== CLASSIFICATION | Group {group.id}: {group.label} ===")
+        print(f"INPUT: {len(ordered)} PDF bundle(s) with nonempty content")
+        for mid in ordered:
+            objects = bundles[mid]
+            print(
+                f"  PDF {mid} ({bundle_lead(objects).material.title}): "
+                f"{len(objects)} object(s), {len(bundle_text(objects))} text characters"
+            )
 
     if standard_id is not None and selection.get("standard_material_id") is None:
         selection.update({
@@ -253,6 +267,9 @@ def assign_group_versions(group, *, use_llm=False):
     representative = bundle_lead(standard)
     _sync_label(group, standard)
     if representative is None or replacement:
+        if use_llm:
+            reason = "replacement Standard required" if replacement else "no eligible Standard text"
+            print(f"OUTPUT: classification not run ({reason})")
         return {
             "representative_id": None, "standard_material_id": standard_id,
             "bundle_roles": {}, "original_selected": False,
@@ -265,6 +282,13 @@ def assign_group_versions(group, *, use_llm=False):
     candidates = [mid for mid in ordered if mid != standard_id]
     signature = _signature(bundles, ordered)
     complete = selection.get("roles_signature") == signature
+    if use_llm:
+        print(f"PROCESS: PDF {standard_id} is the fixed Standard baseline")
+        print(f"  Standard excerpt: {_trace_excerpt(bundle_text(standard))}")
+        if not candidates:
+            print("PROCESS: no later PDF bundle to classify; no LLM call")
+        elif complete:
+            print("PROCESS: stored classification matches current bundle text; no new LLM call")
     roles = {
         mid: role for mid, role in _stored_roles(selection).items()
         if mid in candidates and role in ROLES
@@ -287,6 +311,13 @@ def assign_group_versions(group, *, use_llm=False):
                 mid for mid in candidates
                 if sources.get(mid) != LessonVariant.AssignedBy.TEACHER
             ]
+            print(f"PROCESS: {len(unresolved)} later bundle(s) sent to LLM against Standard")
+            for mid in unresolved:
+                print(
+                    f"  PDF {mid}: Standard {len(bundle_text(standard))} chars "
+                    f"vs. candidate {len(bundle_text(bundles[mid]))} chars"
+                )
+                print(f"  Candidate excerpt: {_trace_excerpt(bundle_text(bundles[mid]))}")
             by_lead = {
                 bundle_lead(bundles[mid]).id: mid for mid in unresolved
             }
@@ -300,12 +331,17 @@ def assign_group_versions(group, *, use_llm=False):
                     continue
                 assignments[mid] = result
                 sources[mid] = LessonVariant.AssignedBy.LLM_VALIDATED
+                print(
+                    f"  LLM OUTPUT | PDF {mid}: {result['slot']} "
+                    f"| reason: {result.get('reason', '')}"
+                )
                 if result["slot"] in ROLES:
                     roles[mid] = result["slot"]
                 else:
                     roles.pop(mid, None)
         except VersionClassificationError as exc:
             error = str(exc)
+            print(f"OUTPUT: classification failed; {error}")
         else:
             selection.update({
                 "roles_signature": signature,
@@ -319,6 +355,7 @@ def assign_group_versions(group, *, use_llm=False):
             })
             _save(group, selection)
             complete = True
+            print("PROCESS: validated assignments saved; no missing text generated here")
 
     assigned, pending = [], []
     for mid in candidates:
@@ -334,6 +371,10 @@ def assign_group_versions(group, *, use_llm=False):
             pending.append(_pending(mid, bundles[mid], {
                 "reason": "This PDF has not been classified yet.",
             }))
+    if use_llm:
+        print(f"OUTPUT: Standard=PDF {standard_id}; {len(assigned)} adaptive role(s) assigned")
+        if pending:
+            print(f"OUTPUT: {len(pending)} bundle(s) still need classification")
     return {
         "representative_id": representative.id,
         "standard_material_id": standard_id,

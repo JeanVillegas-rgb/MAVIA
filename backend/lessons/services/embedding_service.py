@@ -6,7 +6,7 @@ from functools import lru_cache
 
 from django.db import transaction
 
-from lessons.models import LearningObject, OutlineNode, grouping_fingerprint
+from lessons.models import LearningObject, LearningObjectGroup, OutlineNode, grouping_fingerprint
 
 
 SBERT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -124,7 +124,9 @@ def embed_learning_objects(draft_objects):
         section = draft.get("section_title") or ""
         heading = f"{section} > {title}" if section and section != title else title
         texts.append(f"{heading}. {body}")
-    return dict(zip(object_ids, embed_texts(texts)))
+    vectors = embed_texts(texts)
+
+    return dict(zip(object_ids, vectors))
 
 
 @transaction.atomic
@@ -167,7 +169,16 @@ def save_learning_objects(material, draft_objects):
             ),
         ))
 
+    previous_group_ids = list(
+        material.learning_objects.exclude(group_id=None)
+        .values_list("group_id", flat=True)
+        .distinct()
+    )
     material.learning_objects.all().delete()
+    LearningObjectGroup.objects.filter(
+        pk__in=previous_group_ids,
+        learning_objects__isnull=True,
+    ).delete()
     rows = LearningObject.objects.bulk_create(learning_objects)
     material.draft_learning_objects = draft_objects
     material.object_embeddings = embeddings

@@ -134,12 +134,18 @@ def audio_clip_for(learning_object):
         sources.append(generated_json.get("version_bundle_playlist", []))
 
     for playlist in sources:
-        for entry in playlist:
-            if entry.get("learning_object_id") == learning_object.id:
-                return {
-                    "narration": entry.get("narration") or entry.get("text", ""),
-                    "audio_url": entry.get("audio_url") or entry.get("audio", ""),
-                }
+        entry = next((item for item in playlist
+                      if item.get("learning_object_id") == learning_object.id), None)
+        # Old playlists used one-based narration order, before object IDs.
+        # Never guess by position when the playlist already names objects.
+        if entry is None and not any(item.get("learning_object_id") for item in playlist):
+            entry = next((item for item in playlist
+                          if item.get("narration_item_order") == learning_object.order + 1), None)
+        if entry is not None:
+            return {
+                "narration": entry.get("narration") or entry.get("text", ""),
+                "audio_url": entry.get("audio_url") or entry.get("audio", ""),
+            }
     return None
 
 

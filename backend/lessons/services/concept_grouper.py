@@ -70,7 +70,7 @@ def cosine_similarity(first_vector, second_vector):
         return None
     return sum(a * b for a, b in zip(first_vector, second_vector))
 
-
+#1
 def section_bundles(objects):
     bundles = []
     for obj in objects:
@@ -80,7 +80,6 @@ def section_bundles(objects):
         else:
             bundles.append([obj])
     return bundles
-
 
 def bundle_embedding(objects):
     vectors = [obj.embedding for obj in objects if obj.embedding]
@@ -100,12 +99,12 @@ def score_section_bundle(bundle, members, engine=None):
     has_section_context = bool(normalize_section(section)) and all(
         normalize_section(value) for value in member_sections
     )
+
     by_material = defaultdict(list)
     for member in members:
         if member.material_id == bundle[0].material_id:
             return None
         by_material[member.material_id].append(member)
-
     vector = bundle_embedding(bundle)
     scores = [
         cosine_similarity(vector, bundle_embedding(objects))
@@ -132,6 +131,7 @@ def group_material_learning_objects(material, *, runtime_instance=None):
     )
     members = {group.pk: list(group.learning_objects.all()) for group in groups}
     objects = list(material.learning_objects.order_by("order", "id"))
+
     created_count = joined_count = 0
     for bundle in section_bundles(objects):
         if any(obj.group_id is not None for obj in bundle):
@@ -166,7 +166,6 @@ def group_material_learning_objects(material, *, runtime_instance=None):
     }
 
 
-# Jean's original public name.
 group_learning_objects = group_material_learning_objects
 
 

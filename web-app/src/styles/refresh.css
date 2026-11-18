@@ -613,7 +613,7 @@ body {
   font-weight: 700;
 }
 
-/* A concept's Standard version, one numbered, titled entry per learning object.
+/* A concept's Standard version, keeping authored titles and source list markers.
    Shared by the learning path card, Content versions and the Questions step. */
 .bundle-parts {
   display: grid;
@@ -623,7 +623,7 @@ body {
   list-style: none;
 }
 
-.bundle-parts strong {
+.bundle-parts .bundle-part-title {
   display: block;
   font-size: 0.9rem;
 }

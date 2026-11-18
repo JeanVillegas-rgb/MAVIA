@@ -35,24 +35,27 @@ def _mark_failed(material, exc):
     material.error_message = str(exc)
     material.save(update_fields=["status", "error_message"])
 
-
-def _store_visuals(material, visuals):
+def _store_visuals(material, items):
     stored, images_by_url = [], {}
-    for visual in visuals:
-        suffix = str(visual["block_index"]).replace("/", "_")
-        filename = (
-            f"lesson_images/material_{material.pk}/"
-            f"page_{visual['page']}_block_{suffix}.png"
+    for item in items:
+        record = dict(item)
+        png = record.pop("png_bytes", b"")
+        record["block_index"] = record.get(
+            "block_index", f"table_{record.get('table_id')}"
         )
-        image_bytes = visual.pop("png_bytes", b"")
-        stored_name = default_storage.save(filename, ContentFile(image_bytes))
-        image_url = default_storage.url(stored_name)
-        images_by_url[image_url] = image_bytes
-        stored.append({**visual, "image_url": image_url})
+        record["image_url"] = ""
+        if png:
+            suffix = str(record["block_index"]).replace("/", "_")
+            path = f"lesson_images/material_{material.pk}/page_{record['page']}_block_{suffix}.png"
+            saved = default_storage.save(path, ContentFile(png))
+            record["image_url"] = default_storage.url(saved)
+            images_by_url[record["image_url"]] = png
+        stored.append(record)
     return stored, images_by_url
 
 
 def _module_for(node):
+
     current = node
     while current and current.parent_id is not None:
         current = current.parent
@@ -96,8 +99,9 @@ def generate_material_outputs(material, *, propagate_validation_error=False):
         extraction = extract_lesson_pdf_blocks(material.pdf_file.path)
         if len(extraction) == 2:
             blocks, visuals = extraction
+            tables = []
         elif len(extraction) == 3:
-            blocks, visuals, _ = extraction
+            blocks, visuals, tables = extraction
         else:
             raise LessonPipelineUnavailableError(
                 "Lesson PDF extractor returned an unsupported result shape."
@@ -110,8 +114,13 @@ def generate_material_outputs(material, *, propagate_validation_error=False):
         classified = classify_blocks(blocks)
 
         extracted_text = "\n\n".join(block["text"] for block in blocks)
-        stored_visuals, images_by_url = _store_visuals(material, visuals)
-        drafts = build_learning_objects(_teaching_blocks(classified), stored_visuals)
+        stored_items, images_by_url = _store_visuals(material, [*visuals, *tables])
+        stored_visuals = [item for item in stored_items if "table_id" not in item]
+        stored_tables = [item for item in stored_items if "table_id" in item]
+
+        drafts = build_learning_objects(
+            _teaching_blocks(classified), stored_visuals, tables=stored_tables
+        )
 
         role = detect_instructional_document_role(classified)
         matching_drafts = drafts
@@ -179,7 +188,7 @@ def generate_material_outputs(material, *, propagate_validation_error=False):
         material.extracted_blocks = classified
         material.page_count = max(
             [block["page"] for block in blocks]
-            + [visual["page"] for visual in stored_visuals]
+            + [item["page"] for item in stored_items]
             + [0]
         )
         material.generated_json = {

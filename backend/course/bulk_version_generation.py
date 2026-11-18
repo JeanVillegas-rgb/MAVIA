@@ -16,6 +16,11 @@ def classify_all_source_versions(outline_node, on_event=None):
         for group in groups
         if group.learning_objects.exclude(content="").count() > 1
     }
+    print(
+        f"\n=== CLASSIFICATION RUN | {outline_node.title} ===\n"
+        f"INPUT: {len(groups)} concept group(s); "
+        f"{len(connected_group_ids)} with multiple learning objects"
+    )
     emit(
         "versions_classification_started",
         f"Classifying sources for {len(connected_group_ids)} concept(s)",
@@ -92,6 +97,10 @@ def classify_all_source_versions(outline_node, on_event=None):
         "skipped_count": 0,
         "errors": errors,
     }
+    print(
+        f"CLASSIFICATION OUTPUT: {classified_groups} group(s) classified; "
+        f"{len(errors)} error(s); 0 generated version(s)"
+    )
     emit(
         "versions_bulk_finished",
         f"Sorting PDF versions finished: {classified_groups} of {len(connected_group_ids)} concept(s) sorted"

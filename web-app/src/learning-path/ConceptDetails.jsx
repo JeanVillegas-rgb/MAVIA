@@ -29,7 +29,7 @@ export default function ConceptDetails({ step, dependents = [], editable = false
           Close
         </button>
       </header>
-      <BundleParts parts={step.parts} fallback={step.content} className="pg-details-text" />
+      <BundleParts parts={step.parts} fallback={step.content} parentTitle={step.title} className="pg-details-text" />
       {sources.length > 0 && (
         <p className="pg-details-sources">From: {sources.map((source) => source.title).join(", ")}</p>
       )}
