@@ -1,11 +1,11 @@
 """The clues: each looks at one pair and votes +1, -1 or 0."""
 
-import math
 from collections import Counter
 
 from django.conf import settings
+from scipy.stats import chi2_contingency
 
-SIGNIFICANT_G2 = 3.84
+SIGNIFICANCE_LEVEL = 0.05
 MIN_SHARED_TERMS = settings.LEARNING_PATH_MIN_SHARED_TERMS
 
 
@@ -52,15 +52,13 @@ def name_vote(prerequisite, dependent):
 
 
 def log_likelihood(count_inside, total_inside, count_outside, total_outside):
-    """Dunning's G2 for "this term is characteristic of the inside text"."""
-    total = total_inside + total_outside
-    used = count_inside + count_outside
-    observed = (count_inside, total_inside - count_inside, count_outside, total_outside - count_outside)
-    expected = (
-        total_inside * used / total, total_inside * (total - used) / total,
-        total_outside * used / total, total_outside * (total - used) / total,
+    """(G2, p-value) of SciPy's G-test for "this term is characteristic of the inside text"."""
+    statistic, p_value, _dof, _expected = chi2_contingency(
+        [[count_inside, total_inside - count_inside], [count_outside, total_outside - count_outside]],
+        correction=False,
+        lambda_="log-likelihood",
     )
-    return 2 * sum(seen * math.log(seen / guess) for seen, guess in zip(observed, expected) if seen > 0)
+    return statistic, p_value
 
 
 def find_term_owners(texts):
@@ -71,17 +69,17 @@ def find_term_owners(texts):
     owners = {}
     for term in {term for counter in counts.values() for term in counter}:
         users = [concept_id for concept_id in counts if counts[concept_id][term]]
-        if len(users) < 2:
-            continue
         total_use = sum(counts[concept_id][term] for concept_id in users)
-        best_score, best_owner = SIGNIFICANT_G2, None
+        if len(users) < 2 or total_use == grand_total:
+            continue
+        best_score, best_owner = None, None
         for concept_id in users:
             inside = counts[concept_id][term]
             outside_size = grand_total - sizes[concept_id]
             if not outside_size or inside / sizes[concept_id] <= (total_use - inside) / outside_size:
                 continue
-            score = log_likelihood(inside, sizes[concept_id], total_use - inside, outside_size)
-            if score >= best_score:
+            score, p_value = log_likelihood(inside, sizes[concept_id], total_use - inside, outside_size)
+            if p_value < SIGNIFICANCE_LEVEL and (best_score is None or score >= best_score):
                 best_score, best_owner = score, concept_id
         if best_owner is not None:
             owners[term] = best_owner

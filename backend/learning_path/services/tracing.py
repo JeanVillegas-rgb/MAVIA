@@ -4,7 +4,7 @@ import logging
 
 from config.console import name
 
-from .clues import MIN_SHARED_TERMS, SIGNIFICANT_G2
+from .clues import MIN_SHARED_TERMS, SIGNIFICANCE_LEVEL
 from .concept_text import terms
 from .fusion import ACCEPTED, DISAGREE, NONE_SHARED, PENDING
 
@@ -63,7 +63,7 @@ def log_concepts(texts, owners):
     _say(
         "",
         "STEP 2 of 4: owned words. A word belongs to a concept when two or more concepts use it, but this one uses it",
-        f"  significantly more than the rest of the topic (Dunning's G2 >= {SIGNIFICANT_G2}). Owned words show which",
+        f"  significantly more than the rest of the topic (G-test, p < {SIGNIFICANCE_LEVEL}). Owned words show which",
         "  concept a passage is talking about, even when it never says the concept's name.",
     )
     for text in texts:
