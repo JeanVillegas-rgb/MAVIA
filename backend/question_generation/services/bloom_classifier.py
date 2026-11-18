@@ -1,0 +1,133 @@
+import logging
+import os
+import re
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+BLOOM_TO_THINKING_ORDER = {
+    "remember":    "LOT",
+    "understand":  "LOT",
+    "apply":       "LOT",
+    "analyze":     "HOT",
+    "evaluate":    "HOT",
+    "create":      None,
+}
+
+BLOOM_TO_CATEGORY = {
+    "remember":    "Facts and Information",
+    "understand":  "Meaning",
+    "apply":       "Skills",
+    "analyze":     "Skills",
+    "evaluate":    "Outcome",
+    "create":      "Outcome",
+}
+
+BT_LABELS = {
+    "bt1": "remember",
+    "bt2": "understand",
+    "bt3": "apply",
+    "bt4": "analyze",
+    "bt5": "evaluate",
+    "bt6": "create",
+}
+
+DEFAULT_MODEL_DIR = os.path.join(
+    Path(__file__).resolve().parent.parent,
+    "classifier", "trained_model"
+)
+MODEL_DIR = os.getenv("BLOOM_MODEL_DIR", DEFAULT_MODEL_DIR)
+
+
+class BloomClassifier:
+    """Labels a question's Bloom level: fine-tuned RoBERTa, SVM fallback."""
+
+    def __init__(self, backend: str = "auto"):
+        self.backend = None
+
+        if backend in ("auto", "roberta"):
+            try:
+                self._load_roberta()
+                self.backend = "roberta"
+            except Exception as e:
+                if backend == "roberta":
+                    raise
+                logger.warning("[Questions] RoBERTa classifier unavailable (%s); using the SVM classifier", e)
+
+        if self.backend is None:
+            self._load_svm()
+            self.backend = "svm"
+
+        logger.info(
+            "[Questions] LOTS/HOTS classifier loaded (%s); it stays loaded until the server restarts",
+            self.backend,
+        )
+
+    def _load_roberta(self):
+        import torch
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        from transformers.utils import logging as transformers_logging
+
+        transformers_logging.disable_progress_bar()
+
+        roberta_path = os.path.join(MODEL_DIR, "roberta_blooms_final")
+        self.tokenizer = AutoTokenizer.from_pretrained(roberta_path)
+        self.model = AutoModelForSequenceClassification.from_pretrained(roberta_path)
+        self.model.eval()
+        self.torch = torch
+
+    def _classify_roberta(self, question_text: str) -> str:
+        inputs = self.tokenizer(
+            question_text,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=128,
+        )
+        with self.torch.no_grad():
+            logits = self.model(**inputs).logits
+        pred_id = int(logits.argmax())
+        return self.model.config.id2label[pred_id]
+
+    def _load_svm(self):
+        import joblib
+        from nltk.stem import WordNetLemmatizer
+
+        svm_path = os.path.join(MODEL_DIR, "bloom_svm_pipeline.joblib")
+        self.svm_pipeline = joblib.load(svm_path)
+        self.lemmatizer = WordNetLemmatizer()
+
+    def _preprocess_for_svm(self, text: str) -> str:
+        """Must match the preprocessing used when the SVM was trained."""
+        from nltk.tokenize import word_tokenize
+        text = text.lower().strip()
+        text = re.sub(r"[^a-zA-Z0-9\s?]", "", text)
+        tokens = word_tokenize(text)
+        tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
+        return " ".join(tokens)
+
+    def _classify_svm(self, question_text: str) -> str:
+        cleaned = self._preprocess_for_svm(question_text)
+        return self.svm_pipeline.predict([cleaned])[0]
+
+    def _normalize_level(self, raw_level: str) -> str:
+        level = str(raw_level or "").strip().lower()
+        level = BT_LABELS.get(level, level)
+        if level not in BLOOM_TO_CATEGORY:
+            return "understand"
+        return level
+
+    def classify(self, question_text: str) -> dict:
+        """Bloom level, thinking order and category; thinking_order is None for "create"."""
+        if self.backend == "roberta":
+            bloom_level = self._classify_roberta(question_text)
+        else:
+            bloom_level = self._classify_svm(question_text)
+
+        bloom_level = self._normalize_level(bloom_level)
+
+        return {
+            "bloom_level": bloom_level,
+            "thinking_order": BLOOM_TO_THINKING_ORDER[bloom_level],
+            "category": BLOOM_TO_CATEGORY[bloom_level],
+        }

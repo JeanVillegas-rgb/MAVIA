@@ -1,0 +1,371 @@
+import hashlib
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+
+from django.db import transaction
+from django.utils import timezone
+
+from lessons.models import CourseGroup, CourseOutline, LearningMaterial, OutlineNode
+from lessons.services.lesson_pipeline import (
+    LessonPipelineError,
+    LessonPipelineUnavailableError,
+    generate_material_outputs,
+)
+from lessons.services.course_outline_parser import (
+    is_course_outline_pdf,
+    parse_outline_file,
+    save_outline_hierarchy,
+)
+from lessons.services.embedding_service import cache_subtopic_embeddings
+
+
+class PdfProcessingUseCaseError(Exception):
+    """A presentation-independent business error raised by a PDF use case."""
+
+
+class DuplicatePdfUploadError(PdfProcessingUseCaseError):
+    """The exact PDF bytes are already stored for the same course."""
+
+
+class PdfProcessingUnavailableError(PdfProcessingUseCaseError):
+    """A retryable dependency failure interrupted PDF processing."""
+
+    def __init__(self, reason: str, *, material_id: int | None = None):
+        self.reason = reason
+        self.material_id = material_id
+        super().__init__(
+            "The PDF was saved, but processing could not finish because an "
+            "external service was temporarily unavailable. Retry processing "
+            f"when the service is available. Reason: {reason}"
+        )
+
+
+class RejectedLearningMaterialError(PdfProcessingUseCaseError):
+    """A persisted lesson-material upload that failed document validation."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(
+            "This PDF was rejected because it could not be validated as lesson "
+            "material for this course. It was automatically deleted and was not "
+            f"stored. Reason: {reason}"
+        )
+
+
+def _discard_rejected_material(material: LearningMaterial) -> None:
+    """Remove both the rejected upload row and its persisted source file."""
+    if material.pdf_file:
+        material.pdf_file.delete(save=False)
+    material.delete()
+
+
+@contextmanager
+def _temporary_pdf_copy(uploaded_file):
+    original_position = uploaded_file.tell() if hasattr(uploaded_file, "tell") else None
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(0)
+            chunks = (
+                uploaded_file.chunks()
+                if hasattr(uploaded_file, "chunks")
+                else iter(lambda: uploaded_file.read(1024 * 1024), b"")
+            )
+            for chunk in chunks:
+                temporary_file.write(chunk)
+        yield temporary_path
+    finally:
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(original_position or 0)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _find_existing_outline(
+    course: CourseGroup,
+    fingerprint: str,
+) -> CourseOutline | None:
+    # An outline defines a course. Reusing the exact same outline to create a
+    # second course is still a duplicate, even though the course IDs differ.
+    existing = CourseOutline.objects.filter(file_sha256=fingerprint).first()
+    if existing:
+        return existing
+
+    # Files saved before outline fingerprints were introduced are checked once
+    # and backfilled lazily. This lets duplicate detection work immediately
+    # without requiring teachers to upload their existing outlines again.
+    for outline in CourseOutline.objects.filter(file_sha256="").exclude(outline_file=""):
+        try:
+            outline.outline_file.open("rb")
+            existing_fingerprint = _file_sha256(outline.outline_file)
+        except (OSError, ValueError):
+            continue
+        finally:
+            try:
+                outline.outline_file.close()
+            except Exception:
+                pass
+
+        fingerprint_owner = CourseOutline.objects.filter(
+            file_sha256=existing_fingerprint
+        ).first()
+        if fingerprint_owner is None:
+            outline.file_sha256 = existing_fingerprint
+            outline.save(update_fields=["file_sha256"])
+            fingerprint_owner = outline
+        if existing_fingerprint == fingerprint:
+            return fingerprint_owner
+    return None
+
+#course
+@transaction.atomic
+def upload_course_outline(
+    *,
+    course: CourseGroup,
+    outline_file,
+) -> tuple[CourseGroup, bool]:
+    """Store an outline source and merge its hierarchy into the course."""
+    fingerprint = _file_sha256(outline_file)
+    existing_outline = _find_existing_outline(course, fingerprint)
+    existing_material = _find_existing_material(course, outline_file, fingerprint)
+    if existing_outline is not None or existing_material is not None:
+        raise DuplicatePdfUploadError(
+            "This exact PDF has already been uploaded to this course."
+        )
+
+    try:
+        with _temporary_pdf_copy(outline_file) as temporary_path:
+            parsed_nodes = parse_outline_file(
+                str(temporary_path), Path(outline_file.name).suffix,
+            )
+    except Exception as exc:
+        raise PdfProcessingUseCaseError(str(exc)) from exc
+
+    outline = CourseOutline.objects.create(
+        course=course,
+        outline_file=outline_file,
+        file_sha256=fingerprint,
+    )
+    try:
+        save_outline_hierarchy(course, parsed_nodes, replace=False)
+        cache_subtopic_embeddings(course)
+        
+    except Exception as exc:
+        outline.outline_file.delete(save=False)
+        outline.delete()
+        raise PdfProcessingUseCaseError(str(exc)) from exc
+    return course, False
+
+
+def confirm_course_outline(*, course: CourseGroup) -> CourseGroup:
+    """Approve an extracted hierarchy after enforcing its business invariants."""
+    outlines = course.outlines.all()
+    if not outlines.exists():
+        raise PdfProcessingUseCaseError("Upload an outline before confirming the hierarchy.")
+
+    if not course.nodes.exists():
+        raise PdfProcessingUseCaseError("The outline has no extracted topics to confirm.")
+
+    outlines.filter(is_approved=False).update(is_approved=True, approved_at=timezone.now())
+    return course
+
+
+def upload_course_pdf(
+    *,
+    course: CourseGroup,
+    pdf_file,
+    title: str = "",
+) -> tuple[str, LearningMaterial | None, bool]:
+    """Classify one PDF and route it to the outline or lesson-material workflow."""
+    try:
+        with _temporary_pdf_copy(pdf_file) as temporary_path:
+            is_outline = is_course_outline_pdf(str(temporary_path))
+    except Exception as exc:
+        raise PdfProcessingUseCaseError(f"The uploaded PDF could not be read: {exc}") from exc
+
+    if is_outline:
+        _course, reused = upload_course_outline(course=course, outline_file=pdf_file)
+        return "outline", None, reused
+
+    try:
+        material, reused = upload_learning_material(
+            course=course,
+            pdf_file=pdf_file,
+            title=title,
+        )
+    except RejectedLearningMaterialError as exc:
+        raise PdfProcessingUseCaseError(
+            "This PDF was rejected because it is neither a valid course outline "
+            "nor valid lesson material for this course. It was automatically "
+            f"deleted and was not stored. Reason: {exc.reason}"
+        ) from exc
+    return "lesson_material", material, reused
+
+
+def course_outline_is_approved(course: CourseGroup) -> bool:
+    """Return true only when at least one outline exists and all are approved."""
+    outlines = course.outlines.all()
+    return outlines.exists() and not outlines.filter(is_approved=False).exists()
+
+
+def _top_level_module(node: OutlineNode) -> OutlineNode:
+    while node.parent_id is not None:
+        node = node.parent
+    return node
+
+
+def _file_sha256(file_obj) -> str:
+    digest = hashlib.sha256()
+    original_position = file_obj.tell() if hasattr(file_obj, "tell") else None
+    if hasattr(file_obj, "seek"):
+        file_obj.seek(0)
+    chunks = file_obj.chunks() if hasattr(file_obj, "chunks") else iter(lambda: file_obj.read(1024 * 1024), b"")
+    for chunk in chunks:
+        digest.update(chunk)
+    if hasattr(file_obj, "seek"):
+        file_obj.seek(original_position or 0)
+    return digest.hexdigest()
+
+
+def _find_existing_material(course: CourseGroup, pdf_file, fingerprint: str) -> LearningMaterial | None:
+    existing = course.materials.filter(file_sha256=fingerprint).first()
+    if existing:
+        return existing
+
+    # Populate fingerprints lazily for files uploaded before this field existed.
+    for material in course.materials.filter(file_sha256="").exclude(pdf_file=""):
+        try:
+            material.pdf_file.open("rb")
+            existing_fingerprint = _file_sha256(material.pdf_file)
+        except (OSError, ValueError):
+            continue
+        finally:
+            try:
+                material.pdf_file.close()
+            except Exception:
+                pass
+        fingerprint_owner = course.materials.filter(
+            file_sha256=existing_fingerprint
+        ).first()
+        if fingerprint_owner is None:
+            material.file_sha256 = existing_fingerprint
+            material.save(update_fields=["file_sha256"])
+        else:
+            material = fingerprint_owner
+        if existing_fingerprint == fingerprint:
+            return material
+    return None
+
+
+def _ensure_pdf_is_new(course: CourseGroup, pdf_file, fingerprint: str) -> None:
+    """Reject source bytes already stored as either outline or lesson material."""
+    existing_material = _find_existing_material(course, pdf_file, fingerprint)
+    existing_outline = _find_existing_outline(course, fingerprint)
+    if existing_material is not None or existing_outline is not None:
+        raise DuplicatePdfUploadError(
+            "This exact PDF has already been uploaded to this course."
+        )
+
+
+def _selected_outline_node(course: CourseGroup, node_id: int | None) -> OutlineNode | None:
+    if not node_id:
+        return None
+    try:
+        node = course.nodes.get(pk=node_id)
+    except OutlineNode.DoesNotExist as exc:
+        raise PdfProcessingUseCaseError(
+            "Selected outline node was not found for this course."
+        ) from exc
+    if node.children.exists():
+        raise PdfProcessingUseCaseError(
+            f'"{node.title}" is a module with topics under it. '
+            "Select one of its topics for this PDF."
+        )
+    return node
+
+
+def _selected_module_node(
+    course: CourseGroup,
+    module_id: int | None,
+    outline_node: OutlineNode | None,
+) -> OutlineNode | None:
+    if module_id:
+        try:
+            module = course.nodes.get(pk=module_id, parent__isnull=True)
+        except OutlineNode.DoesNotExist as exc:
+            raise PdfProcessingUseCaseError(
+                "Selected module was not found for this course."
+            ) from exc
+    elif outline_node is not None:
+        module = _top_level_module(outline_node)
+    elif not course_outline_is_approved(course):
+        raise PdfProcessingUseCaseError(
+            "Confirm the course outline first for automatic classification."
+        )
+    else:
+        module = None
+
+    if outline_node is not None and module is not None:
+        expected_module = _top_level_module(outline_node)
+        if expected_module.id != module.id:
+            raise PdfProcessingUseCaseError(
+                "Selected topic does not belong to the selected module."
+            )
+    return module
+
+
+def upload_learning_material(
+    *,
+    course: CourseGroup,
+    pdf_file,
+    title: str = "",
+    outline_node_id: int | None = None,
+    module_node_id: int | None = None,
+) -> tuple[LearningMaterial, bool]:
+    outline_node = _selected_outline_node(course, outline_node_id)
+    module_node = _selected_module_node(course, module_node_id, outline_node)
+
+    if outline_node is not None:
+        from lessons.services.source_review import source_review_is_finalized
+
+        if source_review_is_finalized(outline_node):
+            raise PdfProcessingUseCaseError(
+                "Lesson sources for this subtopic have been finalized. "
+                "Additional PDFs cannot be uploaded."
+            )
+
+    fingerprint = _file_sha256(pdf_file)
+    _ensure_pdf_is_new(course, pdf_file, fingerprint)
+
+    material = LearningMaterial.objects.create(
+        course=course,
+        outline_node=outline_node,
+        module_node=module_node,
+        title=title.strip() or Path(pdf_file.name).stem,
+        pdf_file=pdf_file,
+        file_sha256=fingerprint,
+    )
+    try:
+        generate_material_outputs(material, propagate_validation_error=True)
+    except LessonPipelineError as exc:
+        _discard_rejected_material(material)
+        raise RejectedLearningMaterialError(str(exc)) from exc
+    except LessonPipelineUnavailableError as exc:
+        raise PdfProcessingUnavailableError(
+            str(exc), material_id=material.id,
+        ) from exc
+    return material, False
+
+
+def regenerate_learning_material(*, material: LearningMaterial) -> LearningMaterial:
+    """Reset processing state and rebuild all derived PDF outputs."""
+    if not material.pdf_file:
+        raise PdfProcessingUseCaseError("This material has no PDF file to regenerate.")
+
+    material.status = LearningMaterial.Status.PROCESSING
+    material.error_message = ""
+    material.save(update_fields=["status", "error_message"])
+    return generate_material_outputs(material)

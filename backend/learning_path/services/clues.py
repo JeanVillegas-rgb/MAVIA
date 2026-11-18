@@ -1,0 +1,201 @@
+"""The clues: each looks at one pair and votes +1, -1 or 0."""
+
+import math
+from collections import Counter
+
+from django.conf import settings
+
+SIGNIFICANT_G2 = 3.84
+MIN_SHARED_TERMS = settings.LEARNING_PATH_MIN_SHARED_TERMS
+
+
+def _sign(difference):
+    return (difference > 0) - (difference < 0)
+
+
+def _usable_part_names(holder, target):
+    """The target's part names, only when the holder shares a file with it."""
+    if holder.materials & target.materials:
+        return target.part_names
+    return ()
+
+
+def name_use(holder, target):
+    """Share of the holder's sentences naming the target or one of its parts."""
+    names = [set(stems) for _, stems in _usable_part_names(holder, target)]
+    if target.name:
+        names.insert(0, set(target.name))
+    if not names or not holder.sentence_terms:
+        return 0.0
+    return sum(
+        1 for stems in holder.sentence_terms if any(needed <= set(stems) for needed in names)
+    ) / len(holder.sentence_terms)
+
+
+def named_parts(holder, target):
+    """Titles of the target's parts that the holder names."""
+    return [
+        title for title, stems in _usable_part_names(holder, target)
+        if any(set(stems) <= set(sentence) for sentence in holder.sentence_terms)
+    ]
+
+
+def name_vote(prerequisite, dependent):
+    if prerequisite.name and set(prerequisite.name) == set(dependent.name):
+        return 0, {"use": 0.0, "use_back": 0.0}
+    use, use_back = name_use(dependent, prerequisite), name_use(prerequisite, dependent)
+    record = {"use": round(use, 3), "use_back": round(use_back, 3)}
+    parts = named_parts(dependent, prerequisite)
+    if parts:
+        record["parts"] = parts
+    return _sign(use - use_back), record
+
+
+def log_likelihood(count_inside, total_inside, count_outside, total_outside):
+    """Dunning's G2 for "this term is characteristic of the inside text"."""
+    total = total_inside + total_outside
+    used = count_inside + count_outside
+    observed = (count_inside, total_inside - count_inside, count_outside, total_outside - count_outside)
+    expected = (
+        total_inside * used / total, total_inside * (total - used) / total,
+        total_outside * used / total, total_outside * (total - used) / total,
+    )
+    return 2 * sum(seen * math.log(seen / guess) for seen, guess in zip(observed, expected) if seen > 0)
+
+
+def find_term_owners(texts):
+    """{stem: concept id} for terms significantly over-represented in one concept."""
+    counts = {text.id: Counter(term for passage in text.passages for term in passage) for text in texts}
+    sizes = {concept_id: sum(counter.values()) for concept_id, counter in counts.items()}
+    grand_total = sum(sizes.values())
+    owners = {}
+    for term in {term for counter in counts.values() for term in counter}:
+        users = [concept_id for concept_id in counts if counts[concept_id][term]]
+        if len(users) < 2:
+            continue
+        total_use = sum(counts[concept_id][term] for concept_id in users)
+        best_score, best_owner = SIGNIFICANT_G2, None
+        for concept_id in users:
+            inside = counts[concept_id][term]
+            outside_size = grand_total - sizes[concept_id]
+            if not outside_size or inside / sizes[concept_id] <= (total_use - inside) / outside_size:
+                continue
+            score = log_likelihood(inside, sizes[concept_id], total_use - inside, outside_size)
+            if score >= best_score:
+                best_score, best_owner = score, concept_id
+        if best_owner is not None:
+            owners[term] = best_owner
+    return owners
+
+
+def term_use(holder, target, term_owners, min_terms=1):
+    """Share of the holder's passages using at least min_terms of the target's owned terms."""
+    passages = [passage for passage in holder.passages if passage]
+    if not passages:
+        return 0.0
+    return sum(
+        1 for passage in passages
+        if len({term for term in passage if term_owners.get(term) == target.id}) >= min_terms
+    ) / len(passages)
+
+
+def owned_words(holder, owner, term_owners):
+    return sorted({
+        holder.spelling.get(term, term)
+        for passage in holder.passages for term in passage
+        if term_owners.get(term) == owner.id
+    })
+
+
+def term_vote(prerequisite, dependent, term_owners, min_terms=1):
+    use = term_use(dependent, prerequisite, term_owners, min_terms)
+    use_back = term_use(prerequisite, dependent, term_owners, min_terms)
+    record = {"owned": owned_words(dependent, prerequisite, term_owners),
+              "use": round(use, 3), "use_back": round(use_back, 3)}
+    if min_terms > 1:
+        record.update(
+            owned_back=owned_words(prerequisite, dependent, term_owners),
+            single_word_use=round(term_use(dependent, prerequisite, term_owners), 3),
+            single_word_use_back=round(term_use(prerequisite, dependent, term_owners), 3),
+        )
+    return _sign(use - use_back), record
+
+
+def order_vote(prerequisite, dependent, positions):
+    """PDF order, only when two or more PDFs teach both and all agree."""
+    shared = [spots for spots in positions.values() if prerequisite.id in spots and dependent.id in spots]
+    first_count = sum(1 for spots in shared if spots[prerequisite.id] < spots[dependent.id])
+    record = {"pdfs": len(shared), "agree": max(first_count, len(shared) - first_count)}
+    if len(shared) < 2:
+        return 0, record
+    if first_count == len(shared):
+        return 1, record
+    if first_count == 0:
+        return -1, record
+    return 0, record
+
+
+def shared_pdf_order(first, second, positions):
+    """(direction, pdfs) from every PDF that teaches both concepts."""
+    shared = [spots for spots in positions.values() if first.id in spots and second.id in spots]
+    if not shared:
+        return None, 0
+    first_count = sum(1 for spots in shared if spots[first.id] < spots[second.id])
+    if first_count == len(shared):
+        return 1, len(shared)
+    if first_count == 0:
+        return -1, len(shared)
+    return 0, len(shared)
+
+
+def reference_uses(earlier, later, term_owners, min_terms=1):
+    """How much each concept refers to the other, by name and by owned terms."""
+    same_name = bool(earlier.name) and set(earlier.name) == set(later.name)
+    return {
+        "later_names_earlier": 0.0 if same_name else name_use(later, earlier),
+        "earlier_names_later": 0.0 if same_name else name_use(earlier, later),
+        "later_uses_earlier_terms": term_use(later, earlier, term_owners, min_terms),
+        "earlier_uses_later_terms": term_use(earlier, later, term_owners, min_terms),
+        "later_uses_earlier_word": term_use(later, earlier, term_owners),
+        "earlier_uses_later_word": term_use(earlier, later, term_owners),
+    }
+
+
+def heading_stems(text):
+    """The stems of every heading the concept's members sit under."""
+    return text.headings
+
+
+def _named_by(text, heading):
+    return bool(text.name) and set(text.name) <= heading
+
+
+def heading_vote(prerequisite, dependent):
+    """+1 when the dependent sits under a heading naming the prerequisite."""
+    under = any(_named_by(prerequisite, heading) for heading in heading_stems(dependent))
+    under_back = any(_named_by(dependent, heading) for heading in heading_stems(prerequisite))
+    return _sign(under - under_back), {"under": under, "under_back": under_back}
+
+
+def presented_in_parallel(first, second):
+    """Both sit under one heading that names neither."""
+    return any(
+        not _named_by(first, heading) and not _named_by(second, heading)
+        for heading in heading_stems(first) & heading_stems(second)
+    )
+
+
+def read_clues(prerequisite, dependent, term_owners, positions, min_terms=1):
+    """(votes, records): each clue's vote and the numbers behind it, each clue read once."""
+    name = name_vote(prerequisite, dependent)
+    shared_terms = term_vote(prerequisite, dependent, term_owners, min_terms)
+    heading = heading_vote(prerequisite, dependent)
+    order = order_vote(prerequisite, dependent, positions)
+    votes = {
+        "name": name[0],
+        "terms": shared_terms[0],
+        "heading": heading[0],
+        "order": order[0],
+    }
+    records = {"name": name[1], "terms": shared_terms[1], "heading": heading[1], "order": order[1]}
+    return votes, records

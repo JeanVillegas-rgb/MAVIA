@@ -1,0 +1,146 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+db.sqlite3
+# SQLite's WAL journal files (settings.py turns WAL on)
+*.sqlite3-wal
+*.sqlite3-shm
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+staticfiles/
+media/
+*.log
+
+# Node / web / mobile
+node_modules/
+dist/
+.vite/
+.expo/
+web-build/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Mobile signing material
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Personal AI-briefing notes (not shared with the team)
+AI_CONTEXT.md
+
+# Trained Bloom's classifier weights (~483 MB; regenerate from the training notebook)
+backend/question_generation/classifier/trained_model/
+
+# Local pre-change database snapshots
+backend/db.sqlite3.pre-*
+
+# Thesis manuscript drafts (kept out of the shared repo)
+MAVIA MANUSCRIPT.docx
+MAVIA CHAPTER 3.docx
+MAVIA MANUSCRIPT*
+THESIS INPUT MATERIALS
+*.docx
+
+# Editor and office lock files
+~$*
+
+# Scratch output, never part of the project
+tmp/
+
+# Scratch folder for building the defense deck; not part of the app.
+.deckbuild/
+
+# Defense slide decks and their traces
+docs/pipeline-run-through-2026-10-02/
+docs/pipeline-run-through-2026-10-05/
+docs/pipeline-run-through-2026-10-06/
+
+# Source lesson PDFs kept at the repo root for re-uploading
+/Science*.pdf
+
+# Local-only gold map, not part of the evaluation sets
+backend/learning_path/fixtures/gold_map_308.json
+
+# Course-level slide deck and its generator
+docs/course-level-deck/
+
+# Pipeline flowchart (slide asset) and its generator
+docs/pipeline-flowchart/
+
+# Code and computation walkthroughs (presentation material) and their generators
+*walkthrough*
+docs/question-generation-and-within-topic-learning-path-code-sources.json
+
+# "Within Topic Pipeline" document, its sources, renders and build scripts
+docs/MAVIA Within Topic Pipeline.docx
+docs/within-topic-pipeline-source.md
+docs/build_pipeline_docx.mjs
+docs/render_pipeline_*.ps1
+docs/pipeline-docx-qa/
+
+# Computation outputs behind the walkthroughs and documents
+docs/content-path-*.json
+docs/learning-path-calculations/
+
+# Database backups, kept locally only
+backend/db.sqlite3.*
+
+# Simulation run workbooks and their builder
+docs/simulation-*/
+
+brag-output
+docs/
+MAVIA-learning-path-slides.pptx
+THESIS*
+
+# Local database helper and thesis figure/evidence scripts, kept out of the shared repo
+backend/scripts/clear_generated_questions.py
+backend/scripts/owned_words_flowchart.py
+backend/scripts/passage_map.py
+backend/scripts/reference_examples.py
+backend/scripts/retrieval_figure.py
+backend/scripts/show_evidence.py
+
+# Local staging copies, presentation renders and personal working files
+/.deck_review/
+/.doc_build/
+/.ppt_build/
+/.ui_stage/
+/.worktrees/
+/jean_stage/
+/outputs/
+/*.pptx
+/topic-matching-diagram.png
+*.code-workspace
+
+# Local lesson/debug exports and one-off topic metadata backups
+/backend/classifier-run.txt
+/backend/lesson_extraction_debug.json
+/backend/topic-*-before-reopen-*.json
+/backend/lessons/image.png
+/backend/training_data/
+/backend/lessons/.labelstudio-data/
+/backend/lessons/.labelstudio-venv/
+
+# Keep the trained classifier, but not private source PDFs or annotations
+/backend/lessons/training/labeled_data/
+/backend/lessons/training/labeling_tasks/
+/backend/lessons/training/pdf_samples/
+/backend/lessons/training/splits/
+/backend/lessons/training/artifacts/training_results.json
+/backend/lessons/training/test_training.py

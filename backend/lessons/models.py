@@ -1,0 +1,386 @@
+import hashlib
+import uuid
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models.functions import Lower
+
+
+def grouping_fingerprint(title, content):
+    """What a learning object said when its grouping was last decided.
+
+    Whitespace is collapsed first, so re-flowing a paragraph is not an edit --
+    only a change in wording is. Kept here rather than in the semantic grouping
+    service so saving a model never has to import the language-model runtime.
+    """
+    text = " ".join(f"{title or ''}\n{content or ''}".split())
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class CourseGroup(models.Model):
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        related_name="courses_created",
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("title"),
+                "created_by",
+                name="unique_course_title_per_creator_ci",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        # Store one predictable spelling for whitespace so "Grade 9  Matter"
+        # cannot bypass the duplicate-name check.
+        self.title = " ".join((self.title or "").split())
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.title
+
+
+class CourseOutline(models.Model):
+    metadata_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    course = models.ForeignKey(
+        CourseGroup,
+        related_name="outlines",
+        on_delete=models.CASCADE,
+    )
+    outline_file = models.FileField(upload_to="outlines/")
+    file_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    is_approved = models.BooleanField(default=False)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["uploaded_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course", "file_sha256"],
+                condition=~models.Q(file_sha256=""),
+                name="unique_outline_file_per_course",
+            )
+        ]
+
+    def __str__(self):
+        return f"Outline for {self.course.title}"
+
+
+class OutlineNode(models.Model):
+    course = models.ForeignKey(
+        CourseGroup,
+        related_name="nodes",
+        on_delete=models.CASCADE,
+    )
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="children",
+        on_delete=models.CASCADE,
+    )
+    title = models.CharField(max_length=255)
+    related_info = models.JSONField(default=dict, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    depth = models.PositiveSmallIntegerField(default=0)
+    published = models.BooleanField(default=False)
+    published_at = models.DateTimeField(null=True, blank=True)
+    embedding = models.JSONField(default=list, blank=True)
+    embedding_model = models.CharField(max_length=255, blank=True)
+    embedding_text_hash = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        ordering = ["depth", "order", "id"]
+        unique_together = ("course", "parent", "order")
+
+    def __str__(self):
+        return self.title
+
+
+class LearningMaterial(models.Model):
+    metadata_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    class Status(models.TextChoices):
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    course = models.ForeignKey(
+        CourseGroup,
+        related_name="materials",
+        on_delete=models.CASCADE,
+    )
+    outline_node = models.ForeignKey(
+        OutlineNode,
+        null=True,
+        blank=True,
+        related_name="materials",
+        on_delete=models.CASCADE,
+    )
+    module_node = models.ForeignKey(
+        OutlineNode,
+        null=True,
+        blank=True,
+        related_name="module_materials",
+        on_delete=models.CASCADE,
+    )
+    title = models.CharField(max_length=255)
+    pdf_file = models.FileField(upload_to="learning_materials/")
+    file_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    extracted_text = models.TextField(blank=True)
+    extracted_blocks = models.JSONField(default=list, blank=True)
+    page_count = models.PositiveIntegerField(default=0)
+    draft_learning_objects = models.JSONField(default=list, blank=True)
+    object_embeddings = models.JSONField(default=dict, blank=True)
+    generated_json = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PROCESSING,
+    )
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course", "file_sha256"],
+                condition=~models.Q(file_sha256=""),
+                name="unique_material_file_per_course",
+            )
+        ]
+
+    def __str__(self):
+        return self.title
+
+    def clean(self):
+        errors = {}
+        if self.module_node_id:
+            if self.module_node.course_id != self.course_id:
+                errors["module_node"] = "Module node must belong to the same course as the material."
+            if self.module_node.parent_id is not None:
+                errors["module_node"] = "Module node must be a top-level outline node."
+        if errors:
+            raise ValidationError(errors)
+
+
+class LearningObjectGroup(models.Model):
+    """A neutral set of interchangeable learning objects for one topic.
+
+    The group deliberately carries no difficulty or remediation label. Those
+    decisions belong to the learning-path component that consumes the group.
+    """
+
+    outline_node = models.ForeignKey(
+        OutlineNode,
+        related_name="learning_object_groups",
+        on_delete=models.CASCADE,
+    )
+    label = models.CharField(max_length=255, blank=True)
+    version_selection = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.label or f"Learning object group {self.pk}"
+
+
+class LearningObject(models.Model):
+    metadata_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    class Kind(models.TextChoices):
+        TEXT = "text", "Text"
+        IMAGE = "image", "Image"
+
+    material = models.ForeignKey(
+        LearningMaterial,
+        related_name="learning_objects",
+        on_delete=models.CASCADE,
+    )
+    group = models.ForeignKey(
+        LearningObjectGroup,
+        null=True,
+        blank=True,
+        related_name="learning_objects",
+        on_delete=models.SET_NULL,
+    )
+    # Set when semantic grouping decided another object teaches this same
+    # concept. The row, its metadata_id and its question links are all kept:
+    # grouping is an automatic decision at an unvalidated threshold, so it has
+    # to stay reversible. Consumers skip represented objects when sequencing.
+    represented_by = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="represents",
+        on_delete=models.SET_NULL,
+    )
+    draft_id = models.CharField(max_length=64, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.TEXT)
+    section_title = models.CharField(max_length=255, blank=True)
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    image_url = models.CharField(max_length=500, blank=True)
+    image_prompt = models.TextField(blank=True)
+    source_page = models.PositiveIntegerField(null=True, blank=True)
+    source_block_id = models.PositiveIntegerField(null=True, blank=True)
+    source_excerpt = models.TextField(blank=True)
+    parts = models.JSONField(default=list, blank=True)
+    embedding = models.JSONField(default=list, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    # The fingerprint of this object's text when its group membership was last
+    # decided. Group membership is deliberately sticky -- a background refresh
+    # never takes a member away from its companions -- so without this an edit
+    # to a grouped object could never be noticed. A mismatch is what enables
+    # the teacher's "Review grouping changes" action.
+    grouping_content_hash = models.CharField(max_length=64, blank=True, default="")
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return self.title
+
+    @property
+    def current_grouping_fingerprint(self):
+        return grouping_fingerprint(self.title, self.content)
+
+    def mark_grouping_current(self):
+        """Record that grouping has now been decided against this exact text."""
+        self.grouping_content_hash = self.current_grouping_fingerprint
+
+    def save(self, *args, **kwargs):
+        # A new object is grouped against the text it arrives with. Callers that
+        # restore an earlier grouping set the earlier fingerprint explicitly, so
+        # a changed passage slipping back into its old group is still noticed.
+        if not self.grouping_content_hash:
+            self.mark_grouping_current()
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None and "grouping_content_hash" not in update_fields:
+                kwargs["update_fields"] = [*update_fields, "grouping_content_hash"]
+        super().save(*args, **kwargs)
+
+
+class LearningObjectMatchSuggestion(models.Model):
+    """An explainable cross-PDF candidate awaiting or recording teacher review."""
+
+    class Confidence(models.TextChoices):
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+        TEACHER_CONFIRMED = "teacher_confirmed", "Teacher confirmed"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        REJECTED = "rejected", "Rejected"
+
+    outline_node = models.ForeignKey(
+        OutlineNode,
+        related_name="learning_object_match_suggestions",
+        on_delete=models.CASCADE,
+    )
+    source_learning_object = models.ForeignKey(
+        LearningObject,
+        related_name="outgoing_match_suggestions",
+        on_delete=models.CASCADE,
+    )
+    candidate_learning_object = models.ForeignKey(
+        LearningObject,
+        related_name="incoming_match_suggestions",
+        on_delete=models.CASCADE,
+    )
+    similarity_score = models.FloatField(default=0.0)
+    confidence = models.CharField(max_length=30, choices=Confidence.choices)
+    evidence = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    # A heading-matched unit suggestion names more than one object per side.
+    # The FKs hold each side's kept row; these hold the other members.
+    source_extra_ids = models.JSONField(default=list, blank=True)
+    candidate_extra_ids = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-similarity_score", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_learning_object", "candidate_learning_object"],
+                name="unique_learning_object_match_suggestion",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(
+                    source_learning_object=models.F("candidate_learning_object")
+                ),
+                name="match_suggestion_objects_must_differ",
+            ),
+        ]
+
+    def clean(self):
+        errors = {}
+        source = self.source_learning_object
+        candidate = self.candidate_learning_object
+        if source.material_id == candidate.material_id:
+            errors["candidate_learning_object"] = "Suggested variations must come from different PDFs."
+        if source.material.outline_node_id != self.outline_node_id:
+            errors["source_learning_object"] = "Source object must belong to the suggestion topic."
+        if candidate.material.outline_node_id != self.outline_node_id:
+            errors["candidate_learning_object"] = "Candidate object must belong to the suggestion topic."
+        if source.kind != candidate.kind and not (self.source_extra_ids or self.candidate_extra_ids):
+            errors["candidate_learning_object"] = "Suggested objects must have the same content type."
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return (
+            f"{self.source_learning_object_id} ↔ "
+            f"{self.candidate_learning_object_id} ({self.status})"
+        )
+
+
+class ExtractedQuestion(models.Model):
+    """A question found printed in a lesson PDF, as extraction left it."""
+
+    class Type(models.TextChoices):
+        OPEN_ENDED = "open_ended", "Open ended"
+        TRUE_FALSE = "true_false", "True/False"
+        MULTIPLE_CHOICE = "multiple_choice", "Multiple choice"
+
+    material = models.ForeignKey(
+        LearningMaterial,
+        related_name="questions",
+        on_delete=models.CASCADE,
+    )
+    prompt = models.TextField()
+    question_type = models.CharField(
+        max_length=30,
+        choices=Type.choices,
+        default=Type.OPEN_ENDED,
+    )
+    choices = models.JSONField(default=list, blank=True)
+    correct_answer = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0)
+    source_page = models.PositiveIntegerField(null=True, blank=True)
+    source_block_id = models.PositiveIntegerField(null=True, blank=True)
+    source_excerpt = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return self.prompt[:80]

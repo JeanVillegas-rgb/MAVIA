@@ -1,0 +1,104 @@
+"""Whether a concept's question bank still matches the concept's text."""
+
+import hashlib
+
+from django.db.models import Case, IntegerField, Value, When
+
+from .pipeline import concept_source_text
+
+
+def text_fingerprint(text):
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _final_rows(owner):
+    return owner.generated_questions.filter(status="final")
+
+
+def bank_owner(group):
+    """The object the concept's bank is filed under, if it has a bank."""
+    from lessons.models import LearningObject
+
+    return (
+        LearningObject.objects.filter(group=group, generated_questions__status="final")
+        .order_by("material_id", "order", "id")
+        .first()
+    )
+
+
+def _all_confirmed(group):
+    return not group.learning_objects.exclude(
+        material__generated_json__learning_objects_confirmed=True,
+    ).exists()
+
+
+def bank_out_of_date(group):
+    """True when the concept's text no longer matches its bank; not judged while a PDF is a draft."""
+    owner = bank_owner(group)
+    if owner is None or not _all_confirmed(group):
+        return False
+    stored = set(_final_rows(owner).values_list("source_text_fingerprint", flat=True))
+    if "" in stored:
+        return False
+    return stored != {text_fingerprint(concept_source_text(owner))}
+
+
+def out_of_date_groups(outline_node):
+    groups = outline_node.learning_object_groups.filter(
+        learning_objects__generated_questions__status="final",
+    ).distinct()
+    return [group for group in groups if bank_out_of_date(group)]
+
+
+def keep_bank(group):
+    """The teacher's "Keep as is": mark the bank current for today's text."""
+    owner = bank_owner(group)
+    if owner is None:
+        return
+    _final_rows(owner).update(
+        source_text_fingerprint=text_fingerprint(concept_source_text(owner)),
+    )
+
+
+def refile_bank_before_delete(learning_object):
+    """Move the concept's bank off an object that is about to be deleted."""
+    from lessons.models import LearningObject
+
+    if learning_object.group_id is None or not learning_object.generated_questions.exists():
+        return None
+    target = (
+        LearningObject.objects.filter(group_id=learning_object.group_id)
+        .exclude(pk=learning_object.pk)
+        .annotate(other_pdf=Case(
+            When(material_id=learning_object.material_id, then=Value(0)),
+            default=Value(1), output_field=IntegerField(),
+        ))
+        .order_by("other_pdf", "order", "id")
+        .first()
+    )
+    if target is None:
+        return None
+    _move_bank(learning_object, target)
+    return target.group
+
+
+def _move_bank(source, target):
+    source.generated_questions.update(node=target)
+
+
+def settle_bank_owner(group):
+    """File the concept's bank under its current Standard lead."""
+    from course.version_assignment import group_original_id
+
+    if group is None:
+        return
+    owner = bank_owner(group) or (
+        group.learning_objects.filter(generated_questions__isnull=False).first()
+    )
+    if owner is None:
+        return
+    members = list(group.learning_objects.all())
+    lead_id = group_original_id(group, members)
+    lead = next((item for item in members if item.id == lead_id), None)
+    if lead is not None and lead.id != owner.id:
+        _move_bank(owner, lead)

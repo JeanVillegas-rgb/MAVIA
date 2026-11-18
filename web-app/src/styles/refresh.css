@@ -1,0 +1,780 @@
+/* ==========================================================================
+   MAVIA — refresh layer
+   Loaded after mavia.css and pipeline.css, so it wins on order rather than by
+   piling up selectors. pipeline.css is 7,100 lines that grew their own
+   design; rather than edit it in a hundred places, the corrections that
+   belong to the new look live here, each with the reason it exists.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Question bank BESIDE question tools.
+   Two attempts to place the panel's children by selector lost specificity
+   races to rules buried in pipeline.css, so the markup now has two wrapper
+   columns and this only has to lay out two boxes. Nothing left to lose to.
+   -------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------
+   Scrollbars.
+   Where one is genuinely needed it should read as part of the surface rather
+   than an operating-system part bolted onto it: no track, no arrows, a thin
+   capsule that only darkens under the pointer.
+   -------------------------------------------------------------------------- */
+.mv-root *,
+.connection-review-panel {
+  scrollbar-width: thin;
+  scrollbar-color: var(--mv-border-strong) transparent;
+}
+
+.mv-root *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.mv-root *::-webkit-scrollbar-track,
+.mv-root *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.mv-root *::-webkit-scrollbar-thumb {
+  background: var(--mv-border-strong);
+  border-radius: 999px;
+  /* A transparent border inset by background-clip makes the thumb a narrow
+     capsule with air around it, rather than a bar wedged against the text. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.mv-root *::-webkit-scrollbar-thumb:hover {
+  background: var(--mv-muted);
+  background-clip: content-box;
+}
+
+/* --------------------------------------------------------------------------
+   The workspace sidebar.
+   It was a pale panel against a pale page, which is the "outdated" look: two
+   near-white areas separated by a line. It is now the dark block of the
+   palette, which is also what makes it findable for a teacher who navigates
+   by region before they can read a label.
+   -------------------------------------------------------------------------- */
+/* `.card.lesson-pdf-sidebar`, not the class alone: it also carries `.card`,
+   which paints it white, and one class cannot outrank two. Earlier guesses at
+   this name (.workspace-sidebar, .pipeline-sidebar) matched nothing at all.
+
+   Every child is named below rather than left to inherit. A dark panel whose
+   contents were drawn for a white one is worse than leaving it white: pale
+   chips, bordered buttons and grey-on-grey captions all survive the
+   background change and look like leftovers. */
+/* The dark is the SHELL, not the sidebar.
+   The reference wraps the whole app in one dark rounded container and insets
+   a light panel inside it, so the dark reads as a frame the content sits in
+   rather than as a second card butted against it. Two separate cards with a
+   seam between them is what kept looking bolted together.
+   So: the shell is dark and rounded, the sidebar inside it is transparent and
+   simply sits on that dark, and <main> becomes the inset light panel. */
+/* The page itself does not scroll. Ever.
+   `min-height: 100vh` only sets a floor, so any inner region that outgrew it
+   pushed the whole document taller and left a band of empty ground under the
+   shell -- which is what kept coming back. A fixed `height` with `overflow:
+   hidden` removes the possibility instead of correcting it afterwards: the
+   shell is exactly the window, and whatever is too long scrolls inside its own
+   panel, where the header and sidebar stay put beside it. */
+.app-shell:has(.topic-workspace-shell) {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.topic-workspace-shell {
+  background: var(--mv-dark);
+  padding: 0.85rem;
+  gap: 0;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  /* With content-box the 100vh and the padding ADD, so the shell would always
+     be taller than the window by exactly its own padding. */
+  box-sizing: border-box;
+  align-items: stretch;
+}
+
+.card.lesson-pdf-sidebar {
+  background: transparent;
+  color: #e8edf4;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 1.25rem 1rem;
+  /* It no longer needs its own full-height box: the shell is the dark now. */
+  height: auto;
+  max-height: none;
+  position: sticky;
+  top: 0.85rem;
+}
+
+/* The light panel the dark wraps around.
+   It also drops the centred column it used to be. `.topic-detail-page` set
+   `width: min(1420px, calc(100% - 3rem))` and `margin: … auto`, which made
+   sense when it sat on the bare page and had to hold itself in. Inside the
+   panel that is doubled up: the panel already provides the frame and the
+   padding, so the old cap and gutter only ate width and left a band of empty
+   ground down both sides. */
+.topic-workspace-shell > .topic-detail-page {
+  background: var(--mv-page);
+  border-radius: var(--mv-radius-lg);
+  padding: clamp(1.1rem, 2vw, 1.75rem);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  /* The panel is the one thing that scrolls. It takes the height the shell
+     gives it and no more, so a long review list or question bank runs inside
+     it while the sidebar and the page header stay where they are. */
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The sidebar sticks within the shell rather than being a 100vh column of its
+   own, for the same reason. */
+.topic-workspace-shell > .card.lesson-pdf-sidebar {
+  height: auto;
+  min-height: 0;
+  max-height: calc(100vh - 1.7rem);
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.mv-side {
+  background: var(--mv-dark);
+  color: #e8edf4;
+  border: none;
+  border-radius: var(--mv-radius-lg);
+  box-shadow: none;
+  padding: 1.5rem 1.15rem;
+}
+
+/* --- brand row ---------------------------------------------------------- */
+.card.lesson-pdf-sidebar .lesson-sidebar-brand,
+.card.lesson-pdf-sidebar .lesson-sidebar-brand:hover {
+  background: transparent;
+  border: none;
+  text-decoration: none;
+}
+.card.lesson-pdf-sidebar .lesson-sidebar-brand-copy strong {
+  color: #ffffff;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.card.lesson-pdf-sidebar .lesson-sidebar-brand-copy small {
+  color: #7f8b9c;
+}
+
+/* The collapse control is a quiet glyph, not a white box on a dark field. */
+.card.lesson-pdf-sidebar .sidebar-collapse-toggle {
+  background: transparent;
+  border: 1px solid #2c333f;
+  color: #aab4c4;
+  border-radius: var(--mv-radius-sm);
+}
+.card.lesson-pdf-sidebar .sidebar-collapse-toggle:hover {
+  background: var(--mv-dark-soft);
+  color: #ffffff;
+  border-color: #39424f;
+}
+
+/* --- section labels ----------------------------------------------------- */
+.card.lesson-pdf-sidebar .lesson-pdf-nav-label {
+  color: #7f8b9c;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: transparent;
+  border: none;
+  padding: 1.25rem 0.35rem 0.5rem;
+}
+/* The count rides as a small filled pill rather than a bare number. */
+.card.lesson-pdf-sidebar .lesson-pdf-nav-label > span {
+  background: var(--mv-dark-soft);
+  color: #c4ccd8;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  letter-spacing: 0;
+}
+
+/* --- file rows ---------------------------------------------------------- */
+.card.lesson-pdf-sidebar .lesson-pdf-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Pills, as in the reference: on a dark column a rounded fill is what marks
+   the current item, so the shape has to be the shape of a fill. */
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: var(--mv-radius-pill);
+  padding: 0.7rem 0.9rem;
+  color: #dbe3ee;
+  text-align: left;
+  box-shadow: none;
+}
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item:hover {
+  background: var(--mv-dark-soft);
+}
+.card.lesson-pdf-sidebar .lesson-pdf-nav-copy strong {
+  color: #eef2f8;
+  font-weight: 600;
+}
+.card.lesson-pdf-sidebar .lesson-pdf-nav-copy small {
+  color: #7f8b9c;
+}
+
+/* The index chip: a filled square, legible on the dark ground. */
+.card.lesson-pdf-sidebar .lesson-pdf-short-label {
+  background: var(--mv-dark-soft);
+  color: #aab4c4;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+/* The selected file is the only saturated thing in the column, so it needs no
+   outline to be found. */
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item.is-active,
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item[aria-current="page"] {
+  background: var(--mv-brand-600);
+  border-color: transparent;
+}
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item.is-active .lesson-pdf-nav-copy strong,
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item[aria-current="page"] .lesson-pdf-nav-copy strong {
+  color: #ffffff;
+}
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item.is-active .lesson-pdf-nav-copy small,
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item[aria-current="page"] .lesson-pdf-nav-copy small {
+  color: rgba(255, 255, 255, 0.78);
+}
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item.is-active .lesson-pdf-short-label,
+.card.lesson-pdf-sidebar .lesson-pdf-nav-item[aria-current="page"] .lesson-pdf-short-label {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+/* --- anything else that arrived styled for a white panel ----------------- */
+.card.lesson-pdf-sidebar .card,
+.card.lesson-pdf-sidebar .lesson-item,
+.card.lesson-pdf-sidebar button:not(.btn-primary):not(.btn-danger):not(.lesson-pdf-nav-item):not(.sidebar-collapse-toggle) {
+  background: transparent;
+  border-color: transparent;
+  color: #dbe3ee;
+  box-shadow: none;
+}
+.card.lesson-pdf-sidebar p,
+.card.lesson-pdf-sidebar small {
+  color: #7f8b9c;
+}
+.card.lesson-pdf-sidebar a {
+  color: #9cc4fa;
+}
+
+/* The teacher shell's own sidebar (.mv-side, from mavia.css). The dead
+   .workspace-sidebar / .pipeline-sidebar selectors that used to be listed
+   here matched nothing in this app and only made it look as though the
+   sidebar had been styled. */
+.mv-side h1,
+.mv-side h2,
+.mv-side h3,
+.mv-side strong {
+  color: #ffffff;
+}
+
+.mv-side p,
+.mv-side small,
+.mv-side span {
+  color: #aab4c4;
+}
+
+/* Nav links only. The Add Course button is an <a> in this column too, but it
+   is a white pill rather than a link on the dark panel -- pale text on it is
+   white on white. It keeps the colour .mv-btn--light gives it. */
+.mv-side a:not(.mv-side__cta),
+.mv-side button {
+  color: #dbe3ee;
+  border-color: transparent;
+}
+
+.mv-side a:not(.mv-side__cta):hover {
+  background: var(--mv-dark-soft);
+  color: #ffffff;
+}
+
+/* The selected item is the one saturated thing in a dark column, so it needs
+   no border to be found. */
+.mv-side a[aria-current],
+.mv-side .is-active {
+  background: var(--mv-brand-600);
+  color: #ffffff;
+  border-radius: var(--mv-radius-pill);
+  border: none;
+}
+
+/* ===========================================================================
+   The window is the window, on every screen.
+
+   The band of empty ground under the content kept coming back because the fix
+   was always per-screen: one shell was pinned to the viewport, the next one
+   still used `min-height: 100vh`, which is only a floor. Anything that grew
+   past it pushed the whole document taller, and the overshoot showed as bare
+   canvas below the app -- white, because the root element's own background
+   (#ffffff, from base.css) paints the canvas and body's page-grey only paints
+   body's own box.
+
+   So the contract moves up to the document, once, for everything:
+
+     - html and body are exactly the window and never scroll.
+     - #root is the window, and is the only scroller a page-length screen has.
+       A long dashboard or landing page scrolls inside it exactly as it used to
+       scroll the document; nothing about those screens changes except which
+       box owns the scrollbar.
+     - html carries the page grey, so even if something did overshoot, what
+       shows is the app's own ground and not a white void.
+
+   Screens that must not scroll at all then simply take `height: 100%` -- they
+   are the window because #root is, with no viewport unit anywhere to drift
+   from it. */
+html {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mv-page);
+}
+
+body {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mv-page);
+}
+
+#root {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The workspace shells are the window itself: they fill #root exactly and
+   whatever is long scrolls inside their own panel. `100%` rather than `100vh`
+   so a shell can never be taller than the box it sits in. */
+.app-shell:has(.topic-workspace-shell) {
+  height: 100%;
+}
+
+.topic-workspace-shell {
+  height: 100%;
+}
+
+/* --- The two graph screens ------------------------------------------------
+   `.pg-canvas` was a fixed `70vh`, so the header above it plus the shell's own
+   4rem bottom padding always added up to more than one window: every visit to
+   a learning path began with a scrollbar and ended in empty ground. The canvas
+   now takes whatever height is left over instead of naming its own. */
+.app-shell:has(.learning-path-page) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem 0;
+}
+
+.app-shell > .learning-path-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Inside the learning-path page the canvas is nested a few levels down, so it
+   keeps a height of its own -- but a bounded one, sized to leave the header
+   and the notes above it visible without the panel scrolling on arrival. */
+.learning-path-page .pg-canvas {
+  height: min(62vh, 620px);
+  min-height: 360px;
+}
+
+/* One scrollbar treatment for the new scrollers, matching the panels that
+   already had it. */
+#root::-webkit-scrollbar,
+.app-shell > .learning-path-page::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+#root::-webkit-scrollbar-thumb,
+.app-shell > .learning-path-page::-webkit-scrollbar-thumb {
+  background: rgba(20, 24, 31, 0.18);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+#root::-webkit-scrollbar-track,
+.app-shell > .learning-path-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --- Review steps: tracker on top, Back/Next bottom-right ---------------- */
+
+/* A block, not a grid: a sticky grid item can only move inside its own grid
+   row, so the tracker would scroll away with the first step's content. */
+.review-steps-frame {
+  display: block;
+  min-width: 0;
+}
+
+.review-step-indicator.is-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-bottom: 1rem;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+/* Room under the last row so the pinned buttons never sit on top of it. */
+.topic-workspace-shell > .topic-detail-page {
+  padding-bottom: 7rem;
+}
+
+.review-step-dock {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  max-width: calc(100vw - 3rem);
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--mv-border);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+  font-family: var(--mv-font);
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.review-step-dock .publish-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.review-step-dock small,
+.review-step-dock-note {
+  max-width: 20rem;
+  color: var(--mv-muted);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .review-step-dock {
+    right: 1rem;
+    bottom: 1rem;
+    left: 1rem;
+    max-width: none;
+  }
+}
+
+.topic-detail-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* A tip for a control that cannot be used yet. It sits on a wrapper because a
+   disabled control does not reliably receive hover. */
+.has-tip {
+  position: relative;
+  display: inline-flex;
+}
+
+.has-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 70;
+  width: max-content;
+  max-width: 20rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1f2a37;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.has-tip:hover::after,
+.has-tip:focus-within::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Generate / Manual: one area, two views. */
+.question-mode-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--mv-border);
+}
+
+.question-mode-tabs > button {
+  margin-bottom: -1px;
+  padding: 0.6rem 1.1rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--mv-muted);
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.question-mode-tabs > button[aria-selected="true"] {
+  color: var(--mv-brand-600);
+  border-bottom-color: var(--mv-brand-600);
+}
+
+/* LOTS/HOTS counters on each concept in the Questions step. */
+.question-bank-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.question-bank-head h5 {
+  margin: 0;
+}
+
+.tier-counters {
+  display: grid;
+  justify-items: end;
+  gap: 0.35rem;
+}
+
+.tier-counter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--mv-muted);
+}
+
+.tier-counter-boxes {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.tier-box {
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 1.5px solid #c9d1e0;
+  border-radius: 3px;
+  background: #ffffff;
+}
+
+.tier-box.is-one { border-color: #c0392b; background: #e05545; }
+.tier-box.is-two { border-color: #b7791f; background: #f2c14e; }
+.tier-box.is-enough { border-color: #1f7a45; background: #34a565; }
+
+.tier-counter-extra {
+  min-width: 1rem;
+  color: var(--mv-ink, #1f2a37);
+  font-weight: 700;
+}
+
+/* A concept's Standard version, keeping authored titles and source list markers.
+   Shared by the learning path card, Content versions and the Questions step. */
+.bundle-parts {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.bundle-parts .bundle-part-title {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.bundle-parts p {
+  margin: 0.15rem 0 0;
+  line-height: 1.5;
+}
+
+/* Add questions, Needs review and Question bank follow the Generate tab:
+   the same board, white cards, numbered rows and pills. Only what that tab
+   has no part for is added here. */
+.question-origin-pill.is-pdf { background: #e7f4ff; color: #245d91; }
+.question-origin-pill.is-questionnaire { background: #ffe9e0; color: #a1441d; }
+
+.question-bank-item {
+  display: grid;
+  gap: 0.45rem;
+  padding-bottom: 0.6rem;
+}
+
+/* The fixing buttons in Needs review and the bank sit under every question,
+   so they are kept slim. */
+.question-concern-card .btn-small,
+.question-bank-item .btn-small {
+  padding: 0.32rem 0.85rem;
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.question-bank-actions .question-bank-delete {
+  margin-left: auto;
+}
+
+.question-bank-choose select {
+  min-width: 16rem;
+}
+
+.question-bank-kept {
+  color: var(--mv-muted);
+  font-size: 0.82rem;
+}
+
+.question-add-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.question-upload-button {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.question-upload-button.is-busy {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* A Needs review card: where the question came from, the question with its
+   level on the right, then what the teacher has to act on. */
+.question-concern-card {
+  gap: 0.6rem;
+}
+
+.question-review-from {
+  color: var(--mv-muted);
+  font-size: 0.8rem;
+}
+
+.question-review-from b {
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.question-review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.question-review-head {
+  align-items: center;
+}
+
+.question-review-text {
+  font-size: 1.02rem;
+  line-height: 1.45;
+}
+
+.question-review-head .generated-question-meta {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.question-review-concerns span {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.question-review-concerns ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 720px) {
+  .question-review-head {
+    flex-direction: column;
+  }
+}
+
+/* Uploaded questionnaires, under the upload card. */
+.questionnaire-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.questionnaire-file-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.questionnaire-file-list li > div {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.questionnaire-file-list strong {
+  overflow-wrap: anywhere;
+}
+
+.questionnaire-file-list small {
+  color: var(--mv-muted);
+}
+
+.questionnaire-file-list .btn-small {
+  padding: 0.32rem 0.85rem;
+  font-size: 0.84rem;
+  line-height: 1.25;
+}

@@ -1,0 +1,10 @@
+Welcome to MAVIA!
+
+Confirm this email address to activate your account:
+{{ verification_url }}
+
+This link expires in {{ expiry_hours }} hours. If you did not create a
+MAVIA account, you can ignore this email.
+
+--
+MAVIA — audio-first learning for blind and visually impaired students.

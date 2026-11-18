@@ -1,0 +1,148 @@
+"""What the clues read from a concept: sentences, terms and PDF positions."""
+
+import re
+from dataclasses import dataclass, field
+
+from django.conf import settings
+from nltk.stem import PorterStemmer
+
+MIN_SENTENCE_WORDS = settings.LEARNING_PATH_MIN_SENTENCE_WORDS
+MIN_TERM_LETTERS = settings.LEARNING_PATH_MIN_TERM_LETTERS
+MAX_NAME_TERMS = settings.LEARNING_PATH_MAX_NAME_TERMS
+
+STOP_WORDS = frozenset("""
+a about above after again against all also am an and any are as at be because been
+before being below between both but by can cannot could did do does doing down
+during each few for from further had has have having he her here hers herself him
+himself his how i if in into is it its itself just me more most my myself no nor not
+now of off on once only or other others our ours ourselves out over own same she
+should so some such than that the their theirs them themselves then there these they
+this those through to too under until up very was we were what when where which while
+who whom why will with would you your yours yourself yourselves
+""".split())
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|\n+")
+_WORD = re.compile(r"[a-z]+")
+_LEADING_NUMBER = re.compile(r"^\s*\d+(?:\.\d+)*\s*[.):-]*\s*")
+_stemmer = PorterStemmer()
+
+
+def split_sentences(text):
+    """Sentences of at least four words."""
+    return [
+        sentence.strip()
+        for sentence in _SENTENCE_BREAK.split(text or "")
+        if len(sentence.split()) >= MIN_SENTENCE_WORDS
+    ]
+
+
+def _kept_words(text):
+    return [
+        word for word in _WORD.findall((text or "").lower())
+        if word not in STOP_WORDS and len(word) >= MIN_TERM_LETTERS
+    ]
+
+
+def terms(text):
+    """Porter stems of the content words, repeats kept."""
+    return [_stemmer.stem(word) for word in _kept_words(text)]
+
+
+def strip_numbering(title):
+    """Drop a heading's list number: "7. Everyday Examples" -> "Everyday Examples"."""
+    return _LEADING_NUMBER.sub("", title or "").strip()
+
+
+def name_terms(title):
+    """The stems a concept can be named by, or () when its title is a sentence."""
+    stems = tuple(terms(strip_numbering(title or "")))
+    return stems if 0 < len(stems) <= MAX_NAME_TERMS else ()
+
+
+@dataclass
+class ConceptText:
+    concept: object
+    sentences: list
+    sentence_terms: list
+    passages: list
+    name: tuple
+    spelling: dict = field(default_factory=dict)
+    part_names: tuple = ()
+    materials: frozenset = frozenset()
+    headings: frozenset = frozenset()
+    sections: frozenset = frozenset()
+
+    @property
+    def id(self):
+        return self.concept.id
+
+
+def _members(concept):
+    return getattr(concept, "members", None) or (concept,)
+
+
+def part_names(concept, name):
+    """Titles of the concept's members it can also be named by."""
+    found, seen = [], {frozenset(name)}
+    for member in _members(concept):
+        title = getattr(member, "title", "") or ""
+        stems = name_terms(title)
+        if stems and frozenset(stems) not in seen:
+            seen.add(frozenset(stems))
+            found.append((strip_numbering(title), stems))
+    return tuple(found)
+
+
+def _member_headings(concept):
+    """Every heading the concept's members sit under."""
+    return [
+        getattr(member, "section_title", "") or ""
+        for member in getattr(concept, "members", None) or ()
+    ]
+
+
+def prepare(concepts):
+    """One ConceptText per concept."""
+    concepts = list(concepts)
+    texts = []
+    for concept in concepts:
+        sentences, passages, spelling = [], [], {}
+        for member in _members(concept):
+            content = getattr(member, "content", "") or ""
+            passages.append(terms(content))
+            for word in _kept_words(content):
+                spelling.setdefault(_stemmer.stem(word), word)
+            sentences.extend(split_sentences(content))
+        name = name_terms(concept.title)
+        headings = _member_headings(concept)
+        texts.append(ConceptText(
+            concept=concept,
+            sentences=sentences,
+            sentence_terms=[terms(sentence) for sentence in sentences],
+            passages=passages,
+            name=name,
+            spelling=spelling,
+            part_names=part_names(concept, name),
+            materials=frozenset(
+                member.material_id for member in _members(concept)
+                if getattr(member, "material_id", None) is not None
+            ),
+            headings=frozenset(frozenset(terms(heading)) for heading in headings) - {frozenset()},
+            sections=frozenset(heading.strip().casefold() for heading in headings if heading.strip()),
+        ))
+    return texts
+
+
+def material_positions(concepts):
+    """{material id: {concept id: position}}: each PDF's own order."""
+    first_seen = {}
+    for concept in concepts:
+        for member in getattr(concept, "members", None) or ():
+            spot = (member.order, getattr(member, "id", 0) or 0)
+            seen = first_seen.setdefault(member.material_id, {})
+            if concept.id not in seen or spot < seen[concept.id]:
+                seen[concept.id] = spot
+    return {
+        material_id: {concept_id: position for position, concept_id in enumerate(sorted(seen, key=seen.get))}
+        for material_id, seen in first_seen.items()
+    }

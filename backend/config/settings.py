@@ -1,0 +1,434 @@
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import dj_database_url
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-mavia-dev-key-change-in-production",
+)
+
+DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() in ("1", "true", "yes")
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if host.strip()
+]
+
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "rest_framework.authtoken",
+    "corsheaders",
+    "user",
+    "lessons",
+    "question_generation",
+    "course",
+    "mobile_course_package",
+    "adaptive",
+    "adaptive_config",
+    "learning_path",
+]
+
+AUTH_USER_MODEL = "user.User"
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+
+# Set DATABASE_URL to run on PostgreSQL, e.g.
+#   postgres://postgres:postgres@localhost:5432/mavia_db
+# Left unset, this falls back to the original SQLite file so a checkout without
+# a local PostgreSQL server still runs.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            # Reuse connections instead of reconnecting per request; course's
+            # variant generation opens one per worker thread.
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+            # course's variant generation fans Ollama calls across a thread pool
+            # (ADAPTIVE_VARIANT_CONCURRENCY) with writes still serialized to this
+            # thread; a longer SQLite lock timeout avoids spurious "database is
+            # locked" errors under that pattern.
+            #
+            # The timeout alone is not enough. Django's default DEFERRED
+            # transaction reads first and asks for the write lock only on its
+            # first write; when two connections do that at once SQLite fails one
+            # of them immediately, without waiting. Measured 2026-09-27: an upload
+            # failed with "database is locked" while a page load wrote version
+            # selections. IMMEDIATE takes the write lock at BEGIN, so a second
+            # writer queues for the timeout instead. WAL lets page loads read
+            # while an upload writes.
+            #
+            # These apply to the SQLite fallback only; PostgreSQL above needs
+            # none of them.
+            "OPTIONS": {
+                "timeout": 20,
+                "transaction_mode": "IMMEDIATE",
+                "init_command": "PRAGMA journal_mode=WAL;",
+            },
+        }
+    }
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+if len(sys.argv) > 1 and sys.argv[1] == "test":
+    # Tests upload files; they must never land in the real media folder.
+    MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="mavia-test-media-"))
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+]
+
+# CORS says which origins the *browser* may read a response from. This says
+# which origins Django will accept an unsafe request from, and the two are
+# separate checks -- passing CORS does not get you past CSRF.
+#
+# It matters here because DRF's SessionAuthentication enforces CSRF whenever a
+# session cookie identifies an active user (rest_framework/authentication.py:
+# "Unauthenticated, CSRF validation not required"). The web app is served from
+# :5173 and the API from :8000, so the Origin never matches the API's own host.
+# Nothing goes wrong until someone opens Django admin in the same browser --
+# that sets a session cookie, and from then on every write from the web app
+# fails with "CSRF Failed: Origin checking failed", *including registration*,
+# which is otherwise AllowAny. Seen 2026-09-22 straight after a
+# `createsuperuser` and an admin login; it looks like a broken sign-up form and
+# is not.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    # App-wide baseline: every endpoint requires a logged-in user unless it
+    # opts out (register/login/verify set AllowAny; adaptive-config and the
+    # lessons viewset narrow further to a role).
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    # MultiPart/Form parsers let the lessons app accept PDF uploads.
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+        "rest_framework.parsers.MultiPartParser",
+        "rest_framework.parsers.FormParser",
+    ],
+}
+
+# URL of the React app; used to build the link inside verification emails.
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Whether the teacher-facing student search/enrollment picker (adaptive app)
+# hides students who haven't verified their email yet. Off by default: a
+# school's mail server can be slow or land verification links in spam (seen
+# first-hand this session), and a teacher shouldn't lose the ability to
+# enroll a real student just because delivery is flaky. Set to true if you
+# want unverified accounts kept out of the roster entirely.
+EMAIL_VERIFICATION_REQUIRED = os.getenv("EMAIL_VERIFICATION_REQUIRED", "False").lower() in (
+    "1", "true", "yes",
+)
+
+# Email. Defaults to the console backend so verification links print to the
+# runserver terminal with no setup. Set EMAIL_HOST_USER + EMAIL_HOST_PASSWORD
+# in .env to switch to real SMTP (Gmail app password, etc.).
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
+if EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("1", "true", "yes")
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@mavia.local")
+
+# ---------------------------------------------------------------------------
+# Figure explanation for blind learners (lessons app).
+# When a teacher's PDF has figures, the pipeline can ask a local Ollama
+# vision model what each figure *teaches* (the concept, not the layout) and
+# fold that into the lesson narration. Entirely optional: if Ollama isn't
+# running the pipeline falls back to each figure's caption / visible text.
+#   IMAGE_DESCRIPTION_MODEL — any Ollama vision model (gemma3:4b, llava,
+#     moondream, qwen2-vl, llama3.2-vision …). Must be pulled: `ollama pull …`
+#   IMAGE_DESCRIPTION_ENABLED=False turns the feature off outright.
+# ---------------------------------------------------------------------------
+# Every LLM process runs on Groq. The Ollama paths are kept, dormant, for a
+# return to local inference: set LLM_PROVIDER=ollama to use them.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_ADDITIONAL_API_KEYS = tuple(
+    key.strip() for key in os.getenv("GROQ_ADDITIONAL_API_KEYS", "").split(",")
+    if key.strip()
+)
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-20b")
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+GROQ_MAX_RATE_LIMIT_WAIT = float(os.getenv("GROQ_MAX_RATE_LIMIT_WAIT", "120"))
+IMAGE_DESCRIPTION_ENABLED = os.getenv("IMAGE_DESCRIPTION_ENABLED", "True").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+IMAGE_DESCRIPTION_MODEL = (
+    GROQ_VISION_MODEL if LLM_PROVIDER == "groq"
+    else os.getenv("IMAGE_DESCRIPTION_MODEL", "gemma3:4b")
+)
+IMAGE_DESCRIPTION_TIMEOUT = int(os.getenv("IMAGE_DESCRIPTION_TIMEOUT", "300"))
+IMAGE_DESCRIPTION_REACHABILITY_TTL = int(
+    os.getenv("IMAGE_DESCRIPTION_REACHABILITY_TTL", "15")
+)
+IMAGE_DESCRIPTION_CACHE_ENABLED = os.getenv(
+    "IMAGE_DESCRIPTION_CACHE_ENABLED", "True"
+).lower() in ("1", "true", "yes")
+IMAGE_DESCRIPTION_CACHE_PATH = os.getenv(
+    "IMAGE_DESCRIPTION_CACHE_PATH",
+    str(BASE_DIR / "image_description_cache" / "descriptions.sqlite3"),
+)
+
+# ---------------------------------------------------------------------------
+# course / question_generation / learning_path (ported from Milestone1-Jean,
+# 2026-09-15). Same Ollama server as the image-description feature above;
+# OLLAMA_MODEL is the text model these use (separate from the vision model).
+# ---------------------------------------------------------------------------
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", OLLAMA_MODEL)
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "240"))
+OLLAMA_VISION_TIMEOUT = int(os.getenv("OLLAMA_VISION_TIMEOUT", str(OLLAMA_TIMEOUT)))
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
+
+# Questions generated per learning object, per thinking order. Lower these
+# while iterating: each thinking order is one LLM call, and the count drives
+# how much that call has to write.
+# Questions drafted per tier in one call. Above the minimum below, so a call
+# that loses a few (malformed, not supported by the concept's text, or
+# relabelled into the other tier) still usually reaches it.
+QUESTION_COUNT_LOT = int(os.getenv("QUESTION_COUNT_LOT", "5"))
+QUESTION_COUNT_HOT = int(os.getenv("QUESTION_COUNT_HOT", "5"))
+# What every concept needs before the teacher moves past the Questions step.
+# The page reads these from the API; nothing else holds a copy.
+QUESTION_MIN_LOT = int(os.getenv("QUESTION_MIN_LOT", "4"))
+QUESTION_MIN_HOT = int(os.getenv("QUESTION_MIN_HOT", "2"))
+# Rounds of write, check, classify and save per concept; a round after the
+# first runs only while the concept is still short of the minimum, and carries
+# the previous round's rejection reasons into the prompt.
+QUESTION_GENERATION_ROUNDS = int(os.getenv("QUESTION_GENERATION_ROUNDS", "3"))
+# How many of a round's rejected drafts, each with its reason, the next round's
+# prompt lists. A round drafts at most 10 per concept (5 per tier); 6 keeps the
+# prompt short while still covering most of them.
+QUESTION_CORRECTION_LIMIT = int(os.getenv("QUESTION_CORRECTION_LIMIT", "6"))
+# How each tier's drafts are split between multiple choice and true/false.
+QUESTION_FORMAT_WEIGHT_MCQ = int(os.getenv("QUESTION_FORMAT_WEIGHT_MCQ", "2"))
+QUESTION_FORMAT_WEIGHT_TF = int(os.getenv("QUESTION_FORMAT_WEIGHT_TF", "1"))
+# Sampling temperature and output budget of one question-writing call, and how
+# many tries that call gets: a try fails when the reply is not valid JSON or
+# holds no well-formed question.
+QUESTION_TEMPERATURE = float(os.getenv("QUESTION_TEMPERATURE", "0.7"))
+QUESTION_NUM_PREDICT = int(os.getenv("QUESTION_NUM_PREDICT", "3072"))
+QUESTION_MAX_UNUSABLE_REPLIES = int(os.getenv("QUESTION_MAX_UNUSABLE_REPLIES", "2"))
+
+# Learning path criteria (learning_path/CRITERIA.md). The name and owned-term
+# clues follow RefD (Liang et al., EMNLP 2015): A is a prerequisite of B when B
+# refers to A more than A refers to B. The four values below are defaults, not
+# values from a study: a sentence needs MIN_SENTENCE_WORDS words; a term needs
+# MIN_TERM_LETTERS letters (3 keeps names like "Gas"); a title of more than
+# MAX_NAME_TERMS stems is a sentence, not a name; a passage refers to another
+# concept when it uses MIN_SHARED_TERMS of its owned terms (1 would accept
+# links resting on one shared word without the teacher).
+LEARNING_PATH_MIN_SENTENCE_WORDS = int(os.getenv("LEARNING_PATH_MIN_SENTENCE_WORDS", "4"))
+LEARNING_PATH_MIN_TERM_LETTERS = int(os.getenv("LEARNING_PATH_MIN_TERM_LETTERS", "3"))
+LEARNING_PATH_MAX_NAME_TERMS = int(os.getenv("LEARNING_PATH_MAX_NAME_TERMS", "6"))
+LEARNING_PATH_MIN_SHARED_TERMS = int(os.getenv("LEARNING_PATH_MIN_SHARED_TERMS", "2"))
+# Questions each published step carries per thinking order.
+LEARNING_PATH_QUESTIONS_LOT = int(os.getenv("LEARNING_PATH_QUESTIONS_LOT", "2"))
+LEARNING_PATH_QUESTIONS_HOT = int(os.getenv("LEARNING_PATH_QUESTIONS_HOT", "1"))
+
+ADAPTIVE_VARIANT_GENERATION_ENABLED = os.getenv(
+    "ADAPTIVE_VARIANT_GENERATION_ENABLED", "True"
+).lower() in ("1", "true", "yes")
+ADAPTIVE_VARIANT_LLM_MODEL = (
+    os.getenv("GROQ_VARIANT_MODEL", GROQ_TEXT_MODEL) if LLM_PROVIDER == "groq"
+    else os.getenv("ADAPTIVE_VARIANT_LLM_MODEL", OLLAMA_MODEL)
+)
+ADAPTIVE_VARIANT_TIMEOUT = int(os.getenv("ADAPTIVE_VARIANT_TIMEOUT", str(OLLAMA_TIMEOUT)))
+# Decode budget for one simplified+elaborated pair. A learning object is
+# 15-60 words and the elaborated cap is 2x source words, so ~200 words of JSON
+# is the real ceiling; 1024 just meant every call ran the decoder long past the
+# grounding limit. Raise it only if long source objects start truncating.
+ADAPTIVE_VARIANT_NUM_PREDICT = int(os.getenv("ADAPTIVE_VARIANT_NUM_PREDICT", "512"))
+GROQ_VARIANT_MAX_TOKENS = int(os.getenv("GROQ_VARIANT_MAX_TOKENS", "1024"))
+# How many Ollama generation calls to keep in flight. The bottleneck in a
+# publish run is N sequential calls to a local model; Ollama serves concurrent
+# requests, so this is close to an N-times speed-up until it hits the server's
+# own OLLAMA_NUM_PARALLEL (set that to at least this value).
+ADAPTIVE_VARIANT_CONCURRENCY = int(os.getenv("ADAPTIVE_VARIANT_CONCURRENCY", "3"))
+
+CONTENT_VERSION_LLM_ENABLED = os.getenv(
+    "CONTENT_VERSION_LLM_ENABLED", "True"
+).lower() in ("1", "true", "yes")
+CONTENT_VERSION_LLM_MODEL = (
+    os.getenv("GROQ_CONTENT_VERSION_MODEL", GROQ_TEXT_MODEL) if LLM_PROVIDER == "groq"
+    else os.getenv("CONTENT_VERSION_LLM_MODEL", ADAPTIVE_VARIANT_LLM_MODEL)
+)
+CONTENT_VERSION_LLM_TIMEOUT = int(os.getenv("CONTENT_VERSION_LLM_TIMEOUT", str(OLLAMA_TIMEOUT)))
+CONTENT_VERSION_LLM_AUTO_THRESHOLD = float(
+    os.getenv("CONTENT_VERSION_LLM_AUTO_THRESHOLD", "0.80")
+)
+
+# Model for question generation (separate from the content generation model)
+QUESTION_LLM_MODEL = (
+    os.getenv("GROQ_QUESTION_MODEL", GROQ_TEXT_MODEL) if LLM_PROVIDER == "groq"
+    else os.getenv("QUESTION_LLM_MODEL", "llama3.2:3b")
+)
+QUESTION_LLM_KEEP_ALIVE = os.getenv("QUESTION_LLM_KEEP_ALIVE", "30m")
+
+# The answer check (question_generation/services/grounding.py): every draft's
+# answer is checked against the text of the concept it was written from before
+# it can become a final question.
+QUESTION_VALIDATION_ENABLED = os.getenv(
+    "QUESTION_VALIDATION_ENABLED", "True"
+).lower() in {"1", "true", "yes"}
+# The checking model: a different, larger model than the one that writes the
+# drafts (openai/gpt-oss-20b), so a draft is not checked by its own writer.
+QUESTION_JUDGE_MODEL = (
+    os.getenv("GROQ_JUDGE_MODEL", "openai/gpt-oss-120b") if LLM_PROVIDER == "groq"
+    else os.getenv("QUESTION_JUDGE_MODEL", QUESTION_LLM_MODEL)
+)
+QUESTION_JUDGE_TIMEOUT = int(
+    os.getenv("QUESTION_JUDGE_TIMEOUT", str(OLLAMA_TIMEOUT))
+)
+
+# Quiet the dev server's per-request access log; application diagnostics use
+# the standard Python logging system instead. INFO reports each step of every
+# pipeline; DEBUG adds the per-item detail (each drafted question, each
+# duplicate or surplus dropped) that would otherwise bury it.
+MAVIA_LOG_LEVEL = os.getenv("MAVIA_LOG_LEVEL", "INFO").upper()
+# The same switch for question generation and the learning path alone: DEBUG
+# prints their full trace (each prompt sent to the LLM, each drafted question,
+# every concept's owned words and every pair's clues) without the other apps' detail.
+MAVIA_TRACE_LEVEL = os.getenv("MAVIA_TRACE_LEVEL", MAVIA_LOG_LEVEL).upper()
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        # A time on every line, and WARNING/ERROR up front. The pipelines
+        # name their own stage in the message; see config/console.py.
+        "trace": {"()": "config.console.ConsoleFormatter"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "trace"},
+        "trace": {"class": "logging.StreamHandler", "formatter": "trace"},
+    },
+    "loggers": {
+        "django.server": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "lessons.views": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Progress reporting. These packages report each step through the
+        # logger rather than print(), so the terminal and the teacher's
+        # progress dialog are fed by the same call and cannot disagree.
+        # Configured explicitly because there is no root handler: without an
+        # entry here, INFO records propagate to a handler-less root and are
+        # dropped by Python's last-resort handler, which passes WARNING and
+        # above only.
+        "lessons": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        "question_generation": {"handlers": ["trace"], "level": MAVIA_TRACE_LEVEL, "propagate": False},
+        "learning_path": {"handlers": ["trace"], "level": MAVIA_TRACE_LEVEL, "propagate": False},
+        "course": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+        # the mobile engine's computations, one line each: BKT, baseline,
+        # starting mastery, the ladder's reason and the command it sends
+        "adaptive": {"handlers": ["trace"], "level": MAVIA_LOG_LEVEL, "propagate": False},
+    },
+}

@@ -1,0 +1,258 @@
+from django.db import models
+
+from lessons.models import LearningMaterial, LearningObject
+
+
+class QuestionFile(models.Model):
+    outline_node = models.ForeignKey(
+        "lessons.OutlineNode",
+        related_name="question_files",
+        on_delete=models.CASCADE,
+    )
+    file = models.FileField(upload_to="questionnaires/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class Question(models.Model):
+    """A question in the bank; only status="final" rows are served or shown."""
+    THINKING_ORDER_CHOICES = [
+        ("LOT", "Lower Order Thinking"),
+        ("HOT", "Higher Order Thinking"),
+    ]
+
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("review", "Review"),
+        ("final", "Final"),
+    ]
+
+    BLOOM_CHOICES = [
+        ("remember", "Remember"),
+        ("understand", "Understand"),
+        ("apply", "Apply"),
+        ("analyze", "Analyze"),
+        ("evaluate", "Evaluate"),
+        ("create", "Create"),
+    ]
+
+    FORMAT_CHOICES = [
+        ("MCQ", "Multiple Choice"),
+        ("TF", "True/False"),
+    ]
+
+    CATEGORY_CHOICES = [
+        ("Facts and Information", "Facts and Information"),
+        ("Meaning", "Meaning"),
+        ("Skills", "Skills"),
+        ("Outcome", "Outcome"),
+    ]
+
+    node = models.ForeignKey(
+        LearningObject,
+        related_name="generated_questions",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+
+    question_text = models.TextField()
+    question_format = models.CharField(
+        max_length=3,
+        choices=FORMAT_CHOICES,
+        blank=True,
+        default="",
+    )
+    choices = models.JSONField(null=True, blank=True)
+    correct_answer = models.CharField(max_length=255, blank=True, default="")
+    explanation = models.TextField(blank=True, default="")
+
+    bloom_level = models.CharField(
+        max_length=20, choices=BLOOM_CHOICES, blank=True, default="", db_index=True)
+    thinking_order = models.CharField(
+        max_length=3, choices=THINKING_ORDER_CHOICES, blank=True, default="", db_index=True)
+    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, blank=True, default="")
+
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default="draft", db_index=True)
+    source_text_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    content_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    outline_node = models.ForeignKey(
+        "lessons.OutlineNode",
+        related_name="question_bank_questions",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=[
+            ("generated", "Generated"),
+            ("manual", "Manual"),
+            ("questionnaire", "Questionnaire"),
+            ("lesson_pdf", "Lesson PDF"),
+        ],
+        default="generated",
+        db_index=True,
+    )
+    extracted_question = models.ForeignKey(
+        "lessons.ExtractedQuestion",
+        null=True,
+        blank=True,
+        related_name="question_bank_rows",
+        on_delete=models.CASCADE,
+    )
+    question_file = models.ForeignKey(
+        QuestionFile,
+        null=True,
+        blank=True,
+        related_name="questions",
+        on_delete=models.CASCADE,
+    )
+    paired_by = models.CharField(
+        max_length=10,
+        choices=[
+            ("", "Not paired"),
+            ("auto", "Automatically paired"),
+            ("teacher", "Teacher paired"),
+        ],
+        blank=True,
+        default="",
+    )
+    check_result = models.CharField(
+        max_length=20,
+        choices=[
+            ("", "Not checked"),
+            ("supported", "Supported"),
+            ("contradicted", "Contradicted"),
+            ("unsupported", "Unsupported"),
+            ("unverified", "Unverified"),
+            ("kept", "Kept by the teacher"),
+        ],
+        blank=True,
+        default="",
+    )
+    check_note = models.TextField(blank=True, default="")
+    teacher_edited = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["node", "thinking_order"]),
+            models.Index(fields=["node", "status"]),
+            models.Index(fields=["outline_node", "status"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(status="final") | (
+                    models.Q(node__isnull=False)
+                    & ~models.Q(paired_by="")
+                    & ~models.Q(question_format="")
+                    & ~models.Q(thinking_order="")
+                ),
+                name="final_question_is_complete",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        source="lesson_pdf",
+                        extracted_question__isnull=False,
+                        question_file__isnull=True,
+                    )
+                    | models.Q(
+                        source="questionnaire",
+                        question_file__isnull=False,
+                        extracted_question__isnull=True,
+                    )
+                    | models.Q(
+                        source__in=["generated", "manual"],
+                        extracted_question__isnull=True,
+                        question_file__isnull=True,
+                    )
+                ),
+                name="source_matches_origin",
+            ),
+            models.UniqueConstraint(
+                fields=["outline_node", "content_fingerprint"],
+                condition=~models.Q(status="draft") & ~models.Q(content_fingerprint=""),
+                name="one_question_text_per_topic",
+            ),
+        ]
+
+    def __str__(self):
+        return f"[{self.thinking_order or 'unclassified'}] {self.question_text[:50]}"
+
+
+GeneratedQuestion = Question
+
+
+class GenerationRun(models.Model):
+    """One run of a pipeline (questions, extraction, publish or versions) and its trace."""
+    STATUS_CHOICES = [
+        ("running", "Running"),
+        ("finished", "Finished"),
+        ("failed", "Failed"),
+    ]
+
+    material = models.ForeignKey(
+        LearningMaterial,
+        null=True,
+        blank=True,
+        related_name="question_generation_runs",
+        on_delete=models.CASCADE,
+    )
+    node = models.ForeignKey(
+        LearningObject,
+        null=True,
+        blank=True,
+        related_name="question_generation_runs",
+        on_delete=models.SET_NULL,
+    )
+    outline_node = models.ForeignKey(
+        "lessons.OutlineNode",
+        null=True,
+        blank=True,
+        related_name="publish_runs",
+        on_delete=models.CASCADE,
+    )
+    class Kind(models.TextChoices):
+        EXTRACTION = "extraction", "PDF extraction"
+        QUESTIONS = "questions", "Question generation"
+        PUBLISH = "publish", "Topic publish"
+        VERSIONS = "versions", "Content version classification"
+        QUESTIONNAIRE = "questionnaire", "Questionnaire upload"
+
+    kind = models.CharField(
+        max_length=20,
+        choices=Kind.choices,
+        default=Kind.QUESTIONS,
+        db_index=True,
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="running")
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        if self.outline_node_id:
+            return f"Publish {self.id} [{self.status}] {self.outline_node.title}"
+        scope = self.node.title if self.node else "all nodes"
+        title = self.material.title if self.material_id else "(no material)"
+        return f"Run {self.id} [{self.status}] {title} ({scope})"
+
+
+class GenerationEvent(models.Model):
+    """One trace event of a run."""
+    run = models.ForeignKey(GenerationRun, on_delete=models.CASCADE, related_name="events")
+    seq = models.PositiveIntegerField()
+    event_type = models.CharField(max_length=64)
+    message = models.TextField(blank=True, default="")
+    data = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["seq"]
+        indexes = [models.Index(fields=["run", "seq"])]
