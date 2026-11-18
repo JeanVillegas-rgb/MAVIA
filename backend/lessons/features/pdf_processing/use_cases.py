@@ -120,7 +120,7 @@ def _find_existing_outline(
             return fingerprint_owner
     return None
 
-
+#course
 @transaction.atomic
 def upload_course_outline(
     *,
@@ -152,6 +152,7 @@ def upload_course_outline(
     try:
         save_outline_hierarchy(course, parsed_nodes, replace=False)
         cache_subtopic_embeddings(course)
+        
     except Exception as exc:
         outline.outline_file.delete(save=False)
         outline.delete()
@@ -324,7 +325,6 @@ def upload_learning_material(
     outline_node_id: int | None = None,
     module_node_id: int | None = None,
 ) -> tuple[LearningMaterial, bool]:
-    """Create a lesson material, resolve its placement, and generate its outputs."""
     outline_node = _selected_outline_node(course, outline_node_id)
     module_node = _selected_module_node(course, module_node_id, outline_node)
 

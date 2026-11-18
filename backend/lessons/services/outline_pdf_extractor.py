@@ -1,5 +1,3 @@
-"""Jean's ordered PDF-block extractor for course outlines."""
-
 import fitz
 
 from .topic_hierarchy import identify_outline_item
@@ -23,6 +21,7 @@ def _rows_in_block(text):
             rows[-1] = f"{rows[-1]} {line}"
         else:
             rows.append(line)
+
     return rows
 
 
@@ -72,6 +71,7 @@ def extract_pdf_blocks(pdf_path):
     try:
         for page_index, page in enumerate(document):
             page_number = page_index + 1
+            raw_blocks = page.get_text("blocks", sort=True)
 
             page_rows = rows_from_page_blocks(
                 page_number,
@@ -81,6 +81,7 @@ def extract_pdf_blocks(pdf_path):
             for row in page_rows:
                 row["block_id"] = len(extracted_blocks)
                 extracted_blocks.append(row)
+    
     finally:
         document.close()
     return extracted_blocks

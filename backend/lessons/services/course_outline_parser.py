@@ -1,5 +1,5 @@
 """Adapt Jean's outline extractor/hierarchy to MAVIA's persistence tree."""
-
+from pprint import pprint
 from dataclasses import dataclass, field
 
 from lessons.models import CourseGroup, OutlineNode
@@ -16,7 +16,7 @@ class ParsedOutlineNode:
     children: list = field(default_factory=list)
     related_info: dict = field(default_factory=dict)
 
-
+#2
 def parse_outline_blocks(blocks):
     hierarchy = build_topic_hierarchy(blocks)
     roots = []
@@ -55,7 +55,6 @@ def parse_outline_file(file_path, extension=".pdf"):
 
 
 def is_course_outline_pdf(file_path):
-    """Use Jean's hierarchy parser as the outline/lesson routing decision."""
     try:
         roots = parse_outline_file(file_path, ".pdf")
     except (OSError, ValueError):
@@ -101,7 +100,7 @@ def save_outline_hierarchy(course, parsed_nodes, *, replace=False):
     return _persist_nodes(course, parsed_nodes)
 
 
-__all__ = [
+__all__ =[
     "identify_outline_item",
     "parse_outline_blocks",
     "parse_outline_file",

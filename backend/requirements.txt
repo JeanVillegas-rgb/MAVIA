@@ -13,6 +13,8 @@ dj-database-url>=2.2
 # describer, which calls a local Ollama vision model over HTTP (requests) and
 # degrades to captions when Ollama isn't running.
 PyMuPDF>=1.24
+# Docling is the lesson extractor; match the version verified locally.
+docling==2.144.0
 # Pinned, not >=: bloom_svm_pipeline.joblib is a pickle trained on
 # 1.6.1, and a pickle carries no code. Loading it on 1.9 raised
 # AttributeError: 'SVC' object has no attribute '_effective_probability',

@@ -16,7 +16,6 @@ import {
   finalizeTopicSources,
   fetchQuestionGenerationTrace,
   fetchTopicLearningPath,
-  generateAudioPlaylist,
   generateAllObjectVersions,
   fetchGenerationRunEvents,
   publishTopic,
@@ -42,7 +41,11 @@ import {
 // page cannot drift apart.
 import { MaterialPath } from "./LearningPathPage";
 import BundleParts from "../learning-path/BundleParts";
+import { objectHeadings } from "../learning-path/objectHeadings";
 import PublishedDialog from "../learning-path/PublishedDialog";
+import FormattedLearningObjectContent from "../components/FormattedLearningObjectContent";
+
+export { FormattedLearningObjectContent };
 
 function flattenNodes(nodes = []) {
   return nodes.flatMap((node) => [node, ...flattenNodes(node.children || [])]);
@@ -83,101 +86,41 @@ function categoryPillClass(category) {
   return slug ? `is-${slug}` : "";
 }
 
-function renderInlineFormatting(text) {
-  return String(text || "").split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => (
-    part.startsWith("**") && part.endsWith("**")
-      ? <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>
-      : <Fragment key={`${part}-${index}`}>{part}</Fragment>
-  ));
-}
-
-function restoreInlineListBreaks(content) {
-  const text = String(content || "");
-  const numbered = [...text.matchAll(/(?:^|\s)(?:([0-9]+)[.)]|\(([0-9]+)\))\s+/g)];
-  const numbers = numbered.map((match) => Number(match[1] || match[2]));
-  const sequentialNumbers = numbers.length >= 2
-    && numbers.slice(1).every((number, index) => number === numbers[index] + 1);
-  if (sequentialNumbers) {
-    return text.replace(/\s+(?=(?:[0-9]+[.)]|\([0-9]+\))\s+)/g, "\n");
-  }
-
-  const lettered = [...text.matchAll(/(?:^|\s)(?:([A-Za-z])[.)]|\(([A-Za-z])\))\s+/g)];
-  const letters = lettered.map((match) => (match[1] || match[2]).toLowerCase().charCodeAt(0));
-  const sequentialLetters = letters.length >= 2
-    && letters.slice(1).every((letter, index) => letter === letters[index] + 1);
-  return sequentialLetters
-    ? text.replace(/\s+(?=(?:[A-Za-z][.)]|\([A-Za-z]\))\s+)/g, "\n")
-    : text;
-}
-
-function FormattedLearningObjectContent({ content, className = "" }) {
-  const lines = restoreInlineListBreaks(content || "No narration content.")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const blocks = [];
-  let list = [];
-  let listType = "ul";
-  let orderedListStyle;
-  let implicitListMode = false;
-
-  function flushList() {
-    if (!list.length) return;
-    const ListTag = listType;
-    blocks.push(
-      <ListTag
-        className="formatted-content-list"
-        key={`list-${blocks.length}`}
-        {...(ListTag === "ol" && orderedListStyle ? { type: orderedListStyle } : {})}
-      >
-        {list.map((item, index) => <li key={`${item}-${index}`}>{renderInlineFormatting(item)}</li>)}
-      </ListTag>,
-    );
-    list = [];
-    orderedListStyle = undefined;
-  }
-
-  lines.forEach((line) => {
-    const bullet = line.match(/^(?:[-*\u2022\u2023\u25E6\u2043\u2219\u25AA\u25CF])\s+(.+)$/);
-    const numbered = line.match(/^(?:(\d+)[.)]|\((\d+)\))\s+(.+)$/);
-    const lettered = line.match(/^(?:([A-Za-z])[.)]|\(([A-Za-z])\))\s+(.+)$/);
-    const isHeading = line.endsWith(":") && line.length <= 90;
-    if (bullet || numbered || lettered) {
-      const nextType = numbered || lettered ? "ol" : "ul";
-      const nextStyle = lettered
-        ? (((lettered[1] || lettered[2]) === (lettered[1] || lettered[2]).toUpperCase()) ? "A" : "a")
-        : undefined;
-      if (list.length && (listType !== nextType || orderedListStyle !== nextStyle)) flushList();
-      listType = nextType;
-      orderedListStyle = nextStyle;
-      list.push(bullet?.[1] || numbered?.[3] || lettered?.[3]);
-      return;
-    }
-    if (isHeading) {
-      flushList();
-      blocks.push(
-        <p className="formatted-content-heading" key={`line-${blocks.length}`}>
-          <strong>{renderInlineFormatting(line)}</strong>
-        </p>,
-      );
-      implicitListMode = true;
-      return;
-    }
-    if (implicitListMode) {
-      listType = "ul";
-      list.push(line);
-      return;
-    }
-    flushList();
-    blocks.push(
-      <p key={`line-${blocks.length}`}>
-        {renderInlineFormatting(line)}
-      </p>,
-    );
-  });
-  flushList();
-
-  return <div className={`formatted-learning-object-content ${className}`.trim()}>{blocks}</div>;
+export function ConceptObjectPreview({ item, previousItem, conceptTitle, number }) {
+  const isImage = isImageLearningObject(item);
+  const isMissingImageDescription = isImage && (item.narration_pending ?? !item.content?.trim());
+  const headings = objectHeadings(item, previousItem, conceptTitle);
+  return (
+    <div className="connection-object-row">
+      <div className="connection-object-copy">
+        {headings.section && <h6>{headings.section}</h6>}
+        <div className="connection-object-title-row">
+          <span className="connection-object-order" aria-label={`Learning object ${number}`}>{number}</span>
+          {headings.title && <strong>{headings.title}</strong>}
+        </div>
+        {isImage && item.image_url && (
+          <figure className="learning-object-image-preview connection-object-image">
+            <img src={item.image_url} alt={item.title || "Image learning object"} />
+          </figure>
+        )}
+        {isImage && (
+          <div className={`image-description-notice ${isMissingImageDescription ? "is-missing" : ""}`}>
+            {isMissingImageDescription
+              ? <span className="warning-mark warning-mark-small" aria-hidden="true">!</span>
+              : <span className="image-kind-icon" aria-hidden="true" />}
+            <span>{isMissingImageDescription
+              ? "Narration pending: it will be written when you publish this topic."
+              : "Image narration included."}</span>
+          </div>
+        )}
+        <FormattedLearningObjectContent
+          content={item.content}
+          className={`learning-object-content-text connection-object-full-content ${isImage ? "image-description-text" : ""}`.trim()}
+        />
+        <small>{isImage ? "Image learning object" : "Text learning object"}</small>
+      </div>
+    </div>
+  );
 }
 
 // The five review steps in order. One tracker is drawn above every step and
@@ -532,6 +475,7 @@ function VersionSlotCard({
   text,
   // The objects a bundle version is taught as; shown one by one when more than one.
   parts = null,
+  conceptTitle = "",
   originLabel,
   readOnly,
   busy,
@@ -635,7 +579,7 @@ function VersionSlotCard({
         ) : (
           <>
             {(parts || []).length > 0
-              ? <BundleParts parts={parts} className="version-slot-text" showSingleTitle />
+              ? <BundleParts parts={parts} parentTitle={conceptTitle} className="version-slot-text" showSingleTitle />
               : <p className="version-slot-text">{text}</p>}
             {(!readOnly || onDelete) && (
               <div className="version-slot-actions">
@@ -912,6 +856,7 @@ function VersionReviewPanel({
               heading={versions?.original_selected ? "Standard" : "Standard candidate"}
               text={standardEntry?.text || representative?.content}
               parts={standardEntry?.objects}
+              conceptTitle={chunk.display_title || chunk.label || representative?.title}
               originLabel={versions?.original_selected
                 ? `Primary PDF: ${originalMaterial?.filename || originalMaterial?.title || "this PDF"}`
                 : "Choose a replacement Standard PDF before continuing"}
@@ -935,6 +880,7 @@ function VersionReviewPanel({
                   entry={entry}
                   text={entry?.text}
                   parts={entry?.objects}
+                  conceptTitle={chunk.display_title || chunk.label || representative?.title}
                   originLabel={versionOriginLabel(entry, materialTitleFor(entry))}
                   busy={busyKeys.includes(busyAction)}
                   // A version a PDF supplies has no stored row to edit or keep:
@@ -1298,7 +1244,7 @@ function QuestionGenerationTool({
                       <div><strong>{item.conceptLabel}</strong></div>
                     </div>
                     {(item.standardParts || []).length > 1
-                      ? <BundleParts parts={item.standardParts} className="question-learning-object-preview" />
+                      ? <BundleParts parts={item.standardParts} parentTitle={item.conceptLabel} className="question-learning-object-preview" />
                       : <FormattedLearningObjectContent content={item.content} className="question-learning-object-preview" />}
                     <small>Standard source: {material?.filename || material?.title || `PDF ${item.material}`}</small>
                   </div>
@@ -1581,7 +1527,7 @@ function QuestionBankPanel({
     return (
       <div className="question-learning-object-copy">
         {parts.length > 1
-          ? <BundleParts parts={parts} className="question-learning-object-preview" />
+          ? <BundleParts parts={parts} parentTitle={group.display_title || group.label || representative?.title} className="question-learning-object-preview" />
           : <FormattedLearningObjectContent content={group.versions?.slots?.standard?.text || representative?.content || ""} className="question-learning-object-preview" />}
         {material && <small>Standard source: {material.filename || material.title}</small>}
       </div>
@@ -2236,20 +2182,29 @@ function PublishPanel({ groups, materialById, busyAction, onReviewStepChange }) 
                           )}
                         </header>
                         <ol className="publish-version-objects">
-                          {objects.map((object) => (
-                            <li key={`${key}-${object.id}`}>
-                              <div className="publish-item-heading">
-                                <strong>{object.title}</strong>
-                                {object.kind === "image" && (
-                                  <span className="publish-object-kind">figure</span>
+                          {objects.map((object, objectIndex) => {
+                            const headings = objectHeadings(
+                              object, objects[objectIndex - 1],
+                              group.display_title || group.label || group.learning_objects[0]?.title,
+                            );
+                            return (
+                              <li key={`${key}-${object.id}`}>
+                                {headings.section && <h6>{headings.section}</h6>}
+                                {(headings.title || object.kind === "image") && (
+                                  <div className="publish-item-heading">
+                                    {headings.title && <strong>{headings.title}</strong>}
+                                    {object.kind === "image" && (
+                                      <span className="publish-object-kind">figure</span>
+                                    )}
+                                  </div>
                                 )}
-                              </div>
-                              <FormattedLearningObjectContent
-                                content={object.text || ""}
-                                className="learning-object-content-text"
-                              />
-                            </li>
-                          ))}
+                                <FormattedLearningObjectContent
+                                  content={object.text || ""}
+                                  className="learning-object-content-text"
+                                />
+                              </li>
+                            );
+                          })}
                         </ol>
                       </section>
                     );
@@ -3044,51 +2999,15 @@ function LearningObjectConnections({
                               </small>
                             </header>
                             <div className="connection-object-list">
-                              {bundle.learning_objects.map((item, itemIndex) => {
-                                const isImage = isImageLearningObject(item);
-                                const isMissingImageDescription = isImage && (item.narration_pending ?? !item.content?.trim());
-                                return (
-                                  <div className="connection-object-row" key={item.id}>
-                                    <div className="connection-object-copy">
-                                      <div className="connection-object-title-row">
-                                        <span className="connection-object-order">
-                                          {groupNumber}.{bundleIndex + 1}.{itemIndex + 1}
-                                        </span>
-                                        <strong>{item.title}</strong>
-                                      </div>
-                                      {isImage && item.image_url && (
-                                        <figure className="learning-object-image-preview connection-object-image">
-                                          <img src={item.image_url} alt={item.title || "Image learning object"} />
-                                        </figure>
-                                      )}
-                                      {isImage && (
-                                        <div className={`image-description-notice ${isMissingImageDescription ? "is-missing" : ""}`}>
-                                          {isMissingImageDescription ? (
-                                            <span className="warning-mark warning-mark-small" aria-hidden="true">!</span>
-                                          ) : (
-                                            <span className="image-kind-icon" aria-hidden="true" />
-                                          )}
-                                          <span>
-                                            {isMissingImageDescription
-                                              ? "Narration pending: it will be written when you publish this topic."
-                                              : "Image narration included."}
-                                          </span>
-                                        </div>
-                                      )}
-                                      <FormattedLearningObjectContent
-                                        content={item.content}
-                                        className={`learning-object-content-text connection-object-full-content ${
-                                          isImage ? "image-description-text" : ""
-                                        }`.trim()}
-                                      />
-                                      <small>
-                                        {item.kind === "image" ? "Image learning object" : "Text learning object"}
-                                        {item.section_title ? ` · Section: ${item.section_title}` : ""}
-                                      </small>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                              {bundle.learning_objects.map((item, itemIndex) => (
+                                <ConceptObjectPreview
+                                  key={item.id}
+                                  item={item}
+                                  previousItem={bundle.learning_objects[itemIndex - 1]}
+                                  conceptTitle={group.display_title || group.label || group.learning_objects[0]?.title}
+                                  number={`${groupNumber}.${bundleIndex + 1}.${itemIndex + 1}`}
+                                />
+                              ))}
                             </div>
                           </section>
                         );
@@ -3584,13 +3503,11 @@ function LearningObjectForm({ initialValue = null, submitLabel, busy, onCancel, 
   );
 }
 
-function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onError, onMessage, onReviewConnections }) {
+export function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onError, onMessage, onReviewConnections }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [selectedId, setSelectedId] = useState(material.learning_objects[0]?.id || null);
   const [busyAction, setBusyAction] = useState("");
-  const [activeTab, setActiveTab] = useState("content");
-  const [showAudioWarning, setShowAudioWarning] = useState(false);
   const [showDeleteMaterialConfirm, setShowDeleteMaterialConfirm] = useState(false);
   const [learningObjectToDelete, setLearningObjectToDelete] = useState(null);
 
@@ -3599,14 +3516,11 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
   const printedReviewed = (material.questions || []).filter((question) => question.teacher_reviewed).length;
   const isAssessmentDocument = isQuestionMaterial(material);
   const learningObjectsConfirmed = Boolean(generatedJson.learning_objects_confirmed);
-  const lessonPlaylist = generatedJson.lesson_playlist || [];
-  const lessonAudioGenerated = Boolean(generatedJson.lesson_audio_generated);
-  const audioCount = lessonPlaylist.filter((item) => item.audio_url).length;
   // Confirmation locks the extracted list. Downstream grouping, versions,
   // questions and audio all depend on these rows, so the material must not
   // silently return to an editable draft after approval.
-  const canEditLearningObjects = !learningObjectsConfirmed;
-  const selectedObject = material.learning_objects.find((item) => item.id === selectedId);
+  const canEditLearningObjects =
+    !learningObjectsConfirmed && !sourceFinalized;  const selectedObject = material.learning_objects.find((item) => item.id === selectedId);
   const imagesMissingDescription = material.learning_objects.filter(
     (item) => isImageLearningObject(item) && !item.content?.trim(),
   );
@@ -3723,41 +3637,6 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
     }
   }
 
-  async function generateAudio() {
-    setShowAudioWarning(false);
-    setBusyAction("audio-lessons");
-    onError("");
-    onMessage("");
-    try {
-      const response = await generateAudioPlaylist(courseId, material.id, "lessons");
-      onCourseChange(response.course);
-      onMessage(`${response.generated_count} lesson audio track${response.generated_count === 1 ? "" : "s"} generated.`);
-      setActiveTab("audio");
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  function requestAudioGeneration() {
-    if (imagesMissingDescription.length) {
-      setShowAudioWarning(true);
-      return;
-    }
-    generateAudio();
-  }
-
-  function editMissingImageDescription() {
-    if (learningObjectsConfirmed) return;
-    const imageObject = imagesMissingDescription[0];
-    if (!imageObject) return;
-    setShowAudioWarning(false);
-    setActiveTab("content");
-    setSelectedId(imageObject.id);
-    setEditingId(imageObject.id);
-  }
-
   if (isAssessmentDocument) {
     return (
       <article className="material-card question-document-card">
@@ -3833,24 +3712,6 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
         </button>
       </div>}
 
-      <div className="material-workspace-tabs">
-        <button
-          type="button"
-          className={activeTab === "content" ? "is-active" : ""}
-          onClick={() => setActiveTab("content")}
-        >
-          Content <span>{material.learning_objects.length}</span>
-        </button>
-        <button
-          type="button"
-          className={activeTab === "audio" ? "is-active" : ""}
-          onClick={() => setActiveTab("audio")}
-        >
-          Audio <span>{audioCount}</span>
-        </button>
-      </div>
-
-      {activeTab === "content" && (
         <section className="generated-result-panel">
           <div className="generated-section-header">
             <div>
@@ -3861,7 +3722,7 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
               <span className={`status-pill ${learningObjectsConfirmed ? "status-completed" : "status-processing"}`}>
                 {learningObjectsConfirmed ? "Confirmed" : "Needs review"}
               </span>
-              {!learningObjectsConfirmed && (
+              {canEditLearningObjects && (
                 <button
                   className="btn btn-secondary btn-small"
                   type="button"
@@ -4036,91 +3897,6 @@ function MaterialCard({ material, courseId, sourceFinalized, onCourseChange, onE
             </>
           )}
         </section>
-      )}
-
-      {activeTab === "audio" && (
-        <section className="generated-result-panel">
-          <div className="generated-section-header">
-            <div>
-              <h5>Lesson Playlist</h5>
-              <p className="muted-text">Audio is generated from confirmed learning objects only.</p>
-            </div>
-            <div className="generated-item-actions">
-              <button
-                className="btn btn-primary btn-small"
-                type="button"
-                disabled={!material.learning_objects.length || Boolean(busyAction)}
-                onClick={requestAudioGeneration}
-              >
-                {busyAction === "audio-lessons"
-                  ? "Generating lessons..."
-                  : lessonAudioGenerated
-                    ? "Regenerate lesson audio"
-                    : "Generate lesson audio"}
-              </button>
-            </div>
-          </div>
-
-          {!lessonPlaylist.length ? (
-            <p className="muted-text">No playlist items are ready yet.</p>
-          ) : (
-            <div className="audio-playlist-groups">
-              <div className="audio-playlist-group">
-                <div className="audio-playlist-group-header">
-                  <strong>Lesson narration</strong>
-                  <span>{lessonPlaylist.filter((item) => item.audio_url).length} ready</span>
-                </div>
-                <div className="generated-list">
-                  {lessonPlaylist.map((item, index) => (
-                    <div className="generated-item playlist-item" key={`${item.narration_item_order || "lesson"}-${index}`}>
-                      <span>{index + 1}</span>
-                      <div>
-                        <strong>{item.title || `Lesson audio ${index + 1}`}</strong>
-                        <small>{(item.type || "lesson").replace(/_/g, " ")}</small>
-                      </div>
-                      {item.audio_url ? (
-                        <audio controls src={item.audio_url}>
-                          <track kind="captions" />
-                        </audio>
-                      ) : (
-                        <small className="muted-text">No audio yet</small>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {showAudioWarning && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-card audio-warning-modal" role="dialog" aria-modal="true" aria-labelledby={`audio-warning-${material.id}`}>
-            <div className="modal-warning-heading">
-              <span className="warning-mark" aria-hidden="true">!</span>
-              <h3 id={`audio-warning-${material.id}`}>Image description missing</h3>
-            </div>
-            <p>
-              {imagesMissingDescription.length === 1
-                ? `"${imagesMissingDescription[0].title}" has no teacher-provided image description.`
-                : `${imagesMissingDescription.length} image learning objects have no teacher-provided descriptions.`}
-            </p>
-            <p>You can add the description now or continue and generate audio only for items that have narration text.</p>
-            <div className="modal-actions">
-              <button type="button" className="btn btn-secondary" onClick={() => setShowAudioWarning(false)}>
-                Cancel
-              </button>
-              <button type="button" className="btn btn-secondary" onClick={editMissingImageDescription}>
-                Add description
-              </button>
-              <button type="button" className="btn btn-primary" onClick={generateAudio}>
-                Continue without it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showDeleteMaterialConfirm && (
         <div

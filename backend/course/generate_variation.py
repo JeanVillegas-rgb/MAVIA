@@ -261,7 +261,10 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
     bundles = version_bundles(group)
     standard = bundles.get("STANDARD") or []
     assignment = assign_group_versions(group)
+    print(f"\n=== GENERATION | Group {group.id}: {group.label} ===")
+    print(f"INPUT: Standard bundle has {len(standard)} object(s)")
     if assignment.get("standard_replacement_needed"):
+        print("OUTPUT: stopped; replacement Standard PDF required")
         return _generation_result(errors=[{
             "learning_object_id": None,
             "detail": "Choose a replacement Standard PDF before generating versions.",
@@ -281,11 +284,15 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
     requested = [
         slot for slot in _requested_slots(target_slots) if slot not in supplied
     ]
+    print(f"PROCESS: PDF-supplied adaptive slots = {sorted(supplied) or 'none'}")
+    print(f"PROCESS: slots still eligible for generation = {requested or 'none'}")
     if not requested:
+        print("OUTPUT: nothing generated; PDF sources already supply requested slots")
         return _generation_result(skipped=sorted(supplied))
 
     representative = standard[0] if standard else None
     if representative is None or not settings.ADAPTIVE_VARIANT_GENERATION_ENABLED:
+        print("OUTPUT: nothing generated; no Standard text or generation disabled")
         return _generation_result()
     rows = list(LessonVariant.objects.filter(
         learning_object__in=standard,
@@ -298,6 +305,7 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
              and row.source_fingerprint != _fingerprint(representative)]
     if stale:
         if not replace_stale:
+            print("OUTPUT: stopped; older generated text needs review")
             return _generation_result(errors=[{
                 "learning_object_id": representative.id,
                 "slots": sorted({row.variant for row in stale}),
@@ -310,18 +318,27 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
     missing = [slot for slot in requested if slot not in existing]
     partial = [slot for slot in missing if any(row.variant == slot for row in rows)]
     if partial:
+        print(f"OUTPUT: stopped; incomplete older version(s): {partial}")
         return _generation_result(errors=[{
             "learning_object_id": representative.id,
             "slots": partial,
             "detail": "An older incomplete version exists. Review or remove its rows before generating this bundle.",
         }])
     if not missing:
+        print("OUTPUT: nothing generated; requested slots already have complete text")
         return _generation_result(skipped=sorted(existing | supplied))
 
     baseline_text = bundle_text(standard)
     fingerprint = _fingerprint(representative)
+    print(f"PROCESS: missing slots = {missing}; Standard text = {len(baseline_text)} characters")
+    baseline_preview = " ".join(baseline_text.split())
+    print(
+        "  Standard excerpt: " + baseline_preview[:160]
+        + ("..." if len(baseline_preview) > 160 else "")
+    )
     generated, errors = [], []
     for slot in missing:
+        print(f"PROCESS: ask LLM to write {slot} wording from Standard")
         try:
             result = generate_level(
                 concept_label=group.label or representative.title,
@@ -329,11 +346,17 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
                 target_level=slot.casefold(),
             )
         except VariationWriterError as exc:
+            print(f"OUTPUT: {slot} failed; {exc}")
             errors.append({
                 "learning_object_id": representative.id,
                 "detail": str(exc),
             })
             continue
+        preview = result["content"][:160]
+        if len(result["content"]) > 160:
+            preview += "..."
+        print(f"  LLM OUTPUT | {slot}: {preview}")
+        print(f"  Reason: {result['reason']}")
         LessonVariant.objects.update_or_create(
             learning_object=representative,
             variant=slot,
@@ -348,6 +371,8 @@ def fill_missing_bundle_slots(group, target_slots=None, *, replace_stale=False):
             },
         )
         generated.append(slot)
+        print(f"OUTPUT: saved generated {slot} version")
+    print(f"GENERATION OUTPUT: generated={generated}; errors={len(errors)}")
     return _generation_result(
         generated=generated,
         skipped=sorted(existing | supplied),

@@ -1,5 +1,4 @@
-"""Jean's average-learning-object SBERT topic matcher."""
-
+from pprint import pprint
 from lessons.models import OutlineNode
 
 from .embedding_service import SBERT_MODEL, embed_learning_objects
@@ -18,6 +17,7 @@ def score_learning_objects(material):
         if not obj.embedding:
             continue
         scores = []
+
         for subtopic in subtopics:
             if len(obj.embedding) != len(subtopic.embedding):
                 continue
@@ -26,12 +26,14 @@ def score_learning_objects(material):
                 "subtopic_title": subtopic.title,
                 "score": sum(a * b for a, b in zip(obj.embedding, subtopic.embedding)),
             })
+
         scores.sort(key=lambda item: item["score"], reverse=True)
         results.append({
             "draft_id": obj.draft_id,
             "object_title": obj.title,
             "subtopic_scores": scores,
         })
+
     return results
 
 
@@ -39,6 +41,7 @@ def _suggest_from_results(object_results):
     totals = {}
     for result in object_results:
         for match in result["subtopic_scores"]:
+
             item = totals.setdefault(match["subtopic_id"], {
                 "subtopic_id": match["subtopic_id"],
                 "subtopic_title": match["subtopic_title"],
@@ -58,6 +61,8 @@ def _suggest_from_results(object_results):
         key=lambda item: item["average_score"],
         reverse=True,
     )
+
+
     return {
         "suggested_subtopic": ranked[0],
         "ranked_subtopics": ranked,
@@ -70,7 +75,6 @@ def suggest_main_subtopic(material):
 
 
 def suggest_main_topic(material, *, runtime_instance=None):
-    """MAVIA-compatible name for Jean's stored-embedding matcher."""
     result = suggest_main_subtopic(material)
     if result is None:
         return None
