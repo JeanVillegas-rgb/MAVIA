@@ -44,17 +44,28 @@ THINKING_LEVELS = {
     "apply": "Apply: use a rule or procedure the content states in a given situation (carry out, use).",
     "analyze": (
         "Analyze: break what the content describes into its parts and work out how the parts "
-        "relate to one another or to the whole (differentiate, organize, find the cause)."
+        "relate to one another or to the whole. Ask by differentiating (which stated fact explains "
+        "why something happens), organizing (how parts the content names work together toward a "
+        "result) or attributing (what purpose a part serves in the whole)."
     ),
     "evaluate": (
-        "Evaluate: judge, against a standard the content states, which option fits or which "
-        "claim is correct (check, critique)."
+        "Evaluate: judge against facts the content states. Ask by checking (a learner makes a "
+        "claim; which stated fact shows whether it is right) or critiquing (which option the "
+        "content describes fits a given situation best, because of a property it states)."
     ),
 }
 
 TIER_LEVELS = {
     "LOT": ("remember", "understand", "apply"),
     "HOT": ("analyze", "evaluate"),
+}
+
+TIER_NOTES = {
+    "LOT": "",
+    "HOT": (
+        "Every fact a question needs must be stated in the content; the step that connects "
+        "those facts is the learner's to make, so the answer is not written word for word in the content.\n"
+    ),
 }
 
 ITEM_RULES = (
@@ -66,7 +77,7 @@ ITEM_RULES = (
 PROMPT_TEMPLATE = (
     "You are a quiz maker. Given the content below, write {count} questions.\n"
     + _GROUNDING_RULE +
-    "Write each question at one of these thinking levels, spread across them:\n{levels}\n\n"
+    "Write each question at one of these thinking levels, spread across them:\n{levels}\n{tier_note}\n"
     "Item-writing rules:\n{item_rules}\n\n"
     "{format_request}\n\n"
     "Content:\n{content}\n\n"
@@ -234,6 +245,7 @@ def _build_prompt(content, thinking_order, format_split, correction=""):
         count=sum(format_split.values()),
         content=content,
         levels="\n".join(f"- {THINKING_LEVELS[level]}" for level in TIER_LEVELS[thinking_order]),
+        tier_note=TIER_NOTES[thinking_order],
         item_rules=ITEM_RULES,
         format_request=_format_request(format_split),
         format_instructions="\n".join(FORMAT_INSTRUCTIONS[fmt] for fmt in formats),
