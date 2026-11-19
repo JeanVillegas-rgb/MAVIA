@@ -354,7 +354,7 @@ export default function CourseReviewPage() {
                             <div
                               className="mv-pill mv-pill--pending"
                               style={{ marginTop: 4, display: "inline-block" }}
-                              title="Missed a question at every reading, on the detour, and again on the way back"
+                              title="Missed a question at every explanation, then missed the detour's review question"
                             >
                               Needs your help: {row.needs_help.map((item) => item.concept).join(", ")}
                             </div>

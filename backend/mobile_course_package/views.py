@@ -10,7 +10,8 @@ from user.permissions import IsStudent
 
 from .models import TopicPackageProgress
 from .serializers import SubmitAnswerSerializer, TopicPackageProgressSerializer
-from .services import continue_after_listening, course_outline, get_package, next_question_on_open, submit_answer
+from .services import course_outline, get_package
+from .traversal import continue_after_listening, next_question_on_open, submit_answer
 
 
 def is_enrolled(student, course_id):

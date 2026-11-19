@@ -90,6 +90,7 @@ class Decision(models.Model):
     on_detour = models.BooleanField(default=False) #answered while reviewing a prerequisite
     step_already_regressed = models.BooleanField(default=False) #this step already used its one detour
     action_probability = models.FloatField(default=1.0) #how likely the policy was to pick this action -- the rules always do: 1.0
+    action_candidates = models.JSONField(default=list) #every action the policy could have taken here, with its chance -- shows the panel what else could have happened
 
     #what it decided
     action = models.CharField(max_length=24, choices=Action.choices)

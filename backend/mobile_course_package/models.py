@@ -31,6 +31,7 @@ class TopicPackageProgress(models.Model):
     current_step_position = models.PositiveIntegerField(default = 1) #index of the current step in the step list (topic_package.steps)
     current_variant = models.CharField(max_length =10, choices=VARIANTS, default = "standard") 
     return_to_position = models.PositiveIntegerField(null=True, blank=True) #if the student is sent back to a prerequisite concept, this is where they will return to after completing it
+    return_to_variant = models.CharField(max_length=10, choices=VARIANTS, null=True, blank=True)  
     regressed_positions = models.JSONField(default=list, blank=True) #list of positions the student has been sent back to (prerequisites) so we can track how many times they have been sent back and to which concepts
     completed = models.BooleanField(default=False)
     # The question the last command asked for (None: listen, then continue). Reopening
