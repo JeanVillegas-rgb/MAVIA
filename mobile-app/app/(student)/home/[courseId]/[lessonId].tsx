@@ -46,11 +46,14 @@ function fmt(millis: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-const VARIANT_INFO: Record<Variant, { icon: keyof typeof Ionicons.glyphMap; label: string } | null> = {
+const VARIANT_INFO: Record<Variant, { icon: keyof typeof Ionicons.glyphMap; label: string; spoken: string } | null> = {
   standard: null,
-  simplified: { icon: "reader-outline", label: "Simplified explanation" },
-  elaborated: { icon: "sparkles-outline", label: "Extra detail" },
+  simplified: { icon: "reader-outline", label: "Simpler version", spoken: "Simpler explanation" },
+  elaborated: { icon: "sparkles-outline", label: "More detail", spoken: "Explanation with extra detail" },
 };
+
+// The size of the artwork tile: the one large shape on the screen.
+const ART = 264;
 
 // A quiet, wide colored strip — used both for the "reviewing a prerequisite"
 // notice and the variant badge. Always paired with an accessible label so a
@@ -58,25 +61,45 @@ const VARIANT_INFO: Record<Variant, { icon: keyof typeof Ionicons.glyphMap; labe
 function Notice({
   icon,
   tone,
+  spoken,
   children,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   tone: "review" | "variant";
+  /** the full sentence a screen reader says; the pill itself shows only a few words */
+  spoken?: string;
   children: string;
 }) {
   const palette = tone === "review" ? styles.noticeReview : styles.noticeVariant;
   return (
-    <View style={[styles.notice, palette]} accessible accessibilityRole="text" accessibilityLabel={children}>
+    <View style={[styles.notice, palette]} accessible accessibilityRole="text" accessibilityLabel={spoken ?? children}>
       <Ionicons name={icon} size={16} color={tone === "review" ? colors.brand600 : colors.brand700} />
       <Text style={[styles.noticeText, tone === "variant" && { color: colors.brand700 }]}>{children}</Text>
     </View>
   );
 }
 
+// Spoken only (the screen shows just the question number).
 const THINKING_LABEL: Record<string, string> = {
   LOT: "Quick check",
   HOT: "Think it through",
 };
+
+// Where the student is in the topic, as dots instead of a line of text:
+// done steps a lighter blue, the current one a wider pill. Hidden from screen
+// readers -- the concept title already says "Concept 3 of 12".
+function StepDots({ count, current }: { count: number; current: number }) {
+  return (
+    <View style={styles.dots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {Array.from({ length: count }, (_, i) => (
+        <View
+          key={i}
+          style={[styles.dot, i + 1 < current && styles.dotDone, i + 1 === current && styles.dotCurrent]}
+        />
+      ))}
+    </View>
+  );
+}
 
 // What the repeat key asks, and how long it waits for an answer.
 const REPEAT_PROMPT =
@@ -119,6 +142,24 @@ export default function LessonPlayerScreen() {
   const step = currentStep(state);
   const tracks = tracksFor(state);
   const questions = questionsFor(state);
+
+  // Questions are numbered in the order this student is asked them on each
+  // concept (#1, #2, ...), not by their place in the concept's pool -- the
+  // engine skips ones already answered right and pulls reserves after a missed
+  // True/False, so the pool position (#3, #4) would jump around. A question
+  // asked again after a re-teach keeps its number. Kept per concept, so a
+  // detour and the return don't renumber anything.
+  const askedOrder = useRef(new Map<number, number[]>());
+  const shownQuestionId = questions[questionIndex]?.id;
+  let questionNumber = questionIndex + 1;
+  if (phase === "questions" && shownQuestionId != null) {
+    const asked = askedOrder.current.get(state.position) ?? [];
+    if (!asked.includes(shownQuestionId)) {
+      asked.push(shownQuestionId);
+      askedOrder.current.set(state.position, asked);
+    }
+    questionNumber = asked.indexOf(shownQuestionId) + 1;
+  }
   const track = tracks[trackIndex];
   // A question to ask after this listening (false for a listen-only step, and
   // after a missed True/False with nothing fair left to ask).
@@ -506,97 +547,100 @@ export default function LessonPlayerScreen() {
   }
 
   const thinking = step?.questions[questionIndex]?.thinking_order;
+  const stepNumber = state.steps.findIndex((s) => s.position === state.position) + 1;
+  const stepCount = state.steps.length;
 
-  // The audio player. `waiting` greys it out for the question segment: the
-  // concept stays on screen, but nothing plays until the answer is in.
-  // It stays on screen for a step with no audio, too, and while the app asks
-  // the server to move past a listen-only step; controls with nothing to act
-  // on are disabled rather than hidden.
+  // The concept screen: a big title, the dots, one large tile, and only the
+  // controls that do something right now.
+  // Listening: the tile is the artwork, with the scrubber and play controls under it.
+  // Question segment (`waiting`): the tile shows the question number and the
+  // controls go away -- nothing plays until the answer is in. The whole card is
+  // the tap pad then, so the face lets touches through to it.
   function renderPlayer(waiting: boolean) {
     const live = phase === "audio" && !waiting;
+    const spokenTitle = waiting
+      ? `${stepLabel(state)}. Question ${questionNumber}.${thinking && THINKING_LABEL[thinking] ? ` ${THINKING_LABEL[thinking]}.` : ""}`
+      : `${stepLabel(state)}. Listening${tracks.length > 1 ? `, part ${trackIndex + 1} of ${tracks.length}` : ""}.`;
     return (
-      <View style={waiting && styles.waiting} pointerEvents={waiting ? "none" : "auto"}>
-        <View style={[styles.segment, waiting ? styles.segmentQuestion : styles.segmentListen]}>
-          <Ionicons
-            name={waiting ? "help-circle-outline" : "headset-outline"}
-            size={14}
-            color={waiting ? colors.brand700 : colors.brand600}
-          />
-          <Text style={styles.segmentText}>
-            {waiting ? `Question time${thinking ? ` · ${THINKING_LABEL[thinking] ?? "Question"}` : ""}` : "Listening"}
-          </Text>
-        </View>
-
-        <Text style={styles.trackTitle} numberOfLines={2} accessibilityRole="header">
-          {waiting ? stepLabel(state) : track?.title ?? stepLabel(state)}
+      <View pointerEvents={waiting ? "none" : "auto"}>
+        <Text style={styles.title} accessibilityRole="header" accessibilityLabel={spokenTitle}>
+          Concept {stepNumber}
         </Text>
+        <StepDots count={stepCount} current={stepNumber} />
 
         <View style={styles.artWrap}>
-          <GradientTile size={248} radius={124} icon={waiting ? "help" : "headset"} />
-        </View>
-        {!waiting && tracks.length > 1 && (
-          <Text style={styles.trackMeta}>
-            Part {trackIndex + 1} of {tracks.length}
-          </Text>
-        )}
-
-        {!waiting && player.error && <Text style={styles.warn}>{player.error}</Text>}
-
-        <View
-          style={styles.progressTrack}
-          accessible={!waiting}
-          accessibilityRole="progressbar"
-          accessibilityValue={{ min: 0, max: 100, now: Math.round((waiting ? 1 : progress) * 100) }}
-        >
-          <View style={[styles.progressFill, { width: `${(waiting ? 1 : progress) * 100}%` }]} />
-        </View>
-        <View style={styles.times}>
-          <Text style={styles.timeText}>{fmt(player.positionMillis)}</Text>
-          <Text style={styles.timeText}>{fmt(player.durationMillis)}</Text>
+          {waiting ? (
+            <View style={[styles.art, styles.artQuestion]} importantForAccessibility="no-hide-descendants">
+              <Text style={styles.artNumber}>#{questionNumber}</Text>
+            </View>
+          ) : (
+            <GradientTile size={ART} radius={36} icon="headset" style={styles.artShadow} />
+          )}
         </View>
 
-        <View style={styles.transport}>
-          <IconButton
-            icon="play-skip-back"
-            accessibilityLabel="Previous part"
-            size={44}
-            disabled={!live || trackIndex === 0}
-            onPress={() => setTrackIndex((i: number) => Math.max(0, i - 1))}
-          />
-          <IconButton
-            icon="play-back"
-            accessibilityLabel="Rewind 15 seconds"
-            size={40}
-            disabled={!live || !player.isLoaded}
-            onPress={() => player.seek(player.positionMillis - 15000)}
-          />
-          <IconButton
-            icon={player.isPlaying ? "pause" : "play"}
-            accessibilityLabel={player.isPlaying ? "Pause" : "Play"}
-            variant="filled"
-            size={68}
-            disabled={!live || !track?.audio_ready || !player.isLoaded}
-            onPress={() => (player.isPlaying ? player.pause() : player.play())}
-          />
-          <IconButton
-            icon="play-forward"
-            accessibilityLabel="Forward 15 seconds"
-            size={40}
-            disabled={!live || !player.isLoaded}
-            onPress={() => player.seek(player.positionMillis + 15000)}
-          />
-          <IconButton
-            icon="play-skip-forward"
-            accessibilityLabel="Next part"
-            size={44}
-            disabled={!live || trackIndex + 1 >= tracks.length}
-            onPress={() => setTrackIndex((i: number) => Math.min(tracks.length - 1, i + 1))}
-          />
-        </View>
+        {!waiting && (
+          <>
+            {player.error && <Text style={styles.warn}>{player.error}</Text>}
 
-        {/* No skip button: the concept is always heard before its questions. */}
-        {!waiting && phase === "continue" && (
-          <ActivityIndicator color={colors.brand600} style={{ marginTop: spacing.lg }} />
+            <View
+              style={styles.progressTrack}
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}
+            >
+              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+            </View>
+            <View style={styles.times}>
+              <Text style={styles.timeText}>{fmt(player.positionMillis)}</Text>
+              <Text style={styles.timeText}>-{fmt(Math.max(0, player.durationMillis - player.positionMillis))}</Text>
+            </View>
+
+            <View style={styles.transport}>
+              {tracks.length > 1 && (
+                <IconButton
+                  icon="play-skip-back"
+                  accessibilityLabel="Previous part"
+                  size={44}
+                  disabled={!live || trackIndex === 0}
+                  onPress={() => setTrackIndex((i: number) => Math.max(0, i - 1))}
+                />
+              )}
+              <IconButton
+                icon="play-back"
+                accessibilityLabel="Rewind 15 seconds"
+                size={48}
+                disabled={!live || !player.isLoaded}
+                onPress={() => player.seek(player.positionMillis - 15000)}
+              />
+              <IconButton
+                icon={player.isPlaying ? "pause" : "play"}
+                accessibilityLabel={player.isPlaying ? "Pause" : "Play"}
+                variant="filled"
+                size={76}
+                disabled={!live || !track?.audio_ready || !player.isLoaded}
+                onPress={() => (player.isPlaying ? player.pause() : player.play())}
+              />
+              <IconButton
+                icon="play-forward"
+                accessibilityLabel="Forward 15 seconds"
+                size={48}
+                disabled={!live || !player.isLoaded}
+                onPress={() => player.seek(player.positionMillis + 15000)}
+              />
+              {tracks.length > 1 && (
+                <IconButton
+                  icon="play-skip-forward"
+                  accessibilityLabel="Next part"
+                  size={44}
+                  disabled={!live || trackIndex + 1 >= tracks.length}
+                  onPress={() => setTrackIndex((i: number) => Math.min(tracks.length - 1, i + 1))}
+                />
+              )}
+            </View>
+
+            {/* No skip button: the concept is always heard before its questions. */}
+            {phase === "continue" && <ActivityIndicator color={colors.brand600} style={{ marginTop: spacing.lg }} />}
+          </>
         )}
       </View>
     );
@@ -614,17 +658,21 @@ export default function LessonPlayerScreen() {
 
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         {phase !== "done" && returnTo !== null && (
-          <Notice icon="return-up-back-outline" tone="review">
-            Quick review before you continue — you'll pick back up where you left off.
+          <Notice
+            icon="return-up-back-outline"
+            tone="review"
+            spoken="Quick review before you continue. You'll pick back up where you left off."
+          >
+            Quick review
           </Notice>
         )}
         {menuOpen && (
-          <Notice icon="repeat-outline" tone="review">
-            Repeat what? A — the topic · B — the question
+          <Notice icon="repeat-outline" tone="review" spoken="Repeat what? Press A for the topic, or B for the question.">
+            Repeat: A topic · B question
           </Notice>
         )}
-        {phase !== "done" && VARIANT_INFO[variant] && (
-          <Notice icon={VARIANT_INFO[variant]!.icon} tone="variant">
+        {phase !== "done" && returnTo === null && VARIANT_INFO[variant] && (
+          <Notice icon={VARIANT_INFO[variant]!.icon} tone="variant" spoken={VARIANT_INFO[variant]!.spoken}>
             {VARIANT_INFO[variant]!.label}
           </Notice>
         )}
@@ -638,8 +686,7 @@ export default function LessonPlayerScreen() {
           <QuestionCard
             key={cardKey(state)}
             question={questions[questionIndex]}
-            index={questionIndex}
-            total={questions.length}
+            number={questionNumber}
             onSubmit={onSubmitAnswer}
             onNext={nextQuestion}
             repeatSignal={questionRepeat}
@@ -676,14 +723,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     gap: spacing.sm,
   },
+  // Like an iOS navigation bar title: ordinary case, one weight above body.
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    textTransform: "uppercase",
-    color: colors.faint,
+    fontSize: 17,
+    fontWeight: "600",
+    color: colors.ink,
   },
   body: { flexGrow: 1, paddingBottom: spacing.xl, gap: spacing.xs },
   notice: {
@@ -698,57 +744,64 @@ const styles = StyleSheet.create({
   },
   noticeReview: { backgroundColor: colors.brand100 },
   noticeVariant: { backgroundColor: colors.brand50 },
-  noticeText: { fontSize: 14, fontWeight: "700", color: colors.brand600 },
-  // Greyed out while the question segment waits for an answer.
-  waiting: { opacity: 0.38 },
-  // Which segment of the concept this is: listening, or question time.
-  segment: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "center",
-    gap: 6,
-    marginTop: spacing.lg,
-    paddingVertical: 5,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.pill,
-  },
-  segmentListen: { backgroundColor: colors.brand50 },
-  segmentQuestion: { backgroundColor: colors.brand100 },
-  segmentText: {
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    color: colors.brand700,
-  },
-  artWrap: { alignItems: "center", marginTop: spacing.xl },
-  trackTitle: {
+  noticeText: { fontSize: 15, fontWeight: "600", color: colors.brand600 },
+  // A large title, like the top of an iOS screen.
+  title: {
     marginTop: spacing.xl,
-    fontSize: 27,
-    lineHeight: 33,
-    fontWeight: "800",
-    letterSpacing: -0.5,
+    fontSize: 34,
+    lineHeight: 41,
+    fontWeight: "700",
+    letterSpacing: -0.4,
     color: colors.ink,
     textAlign: "center",
   },
-  trackMeta: { marginTop: 4, fontSize: 12, color: colors.faint, textAlign: "center" },
-  warn: { marginTop: spacing.sm, fontSize: 12, color: colors.warning, textAlign: "center" },
+  dots: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.brand200 },
+  dotDone: { backgroundColor: colors.brand400 },
+  dotCurrent: { width: 18, backgroundColor: colors.brand600 },
+  artWrap: { alignItems: "center", marginTop: spacing.xl },
+  // Soft and wide, like album art lifted off the page.
+  artShadow: {
+    shadowColor: colors.brand900,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 10,
+  },
+  art: { width: ART, height: ART, borderRadius: 36, alignItems: "center", justifyContent: "center" },
+  artQuestion: {
+    backgroundColor: colors.brand600,
+    shadowColor: colors.brand900,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 10,
+  },
+  artNumber: { fontSize: 96, fontWeight: "700", letterSpacing: -2, color: colors.white },
+  warn: { marginTop: spacing.md, fontSize: 15, color: colors.warning, textAlign: "center" },
   progressTrack: {
     marginTop: spacing.xl,
-    height: 4,
+    height: 6,
     borderRadius: radii.pill,
     backgroundColor: colors.brand100,
     overflow: "hidden",
   },
-  progressFill: { height: "100%", backgroundColor: colors.brand600 },
-  times: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
-  timeText: { fontSize: 13, color: colors.faint, fontVariant: ["tabular-nums"] },
+  progressFill: { height: "100%", borderRadius: radii.pill, backgroundColor: colors.brand600 },
+  times: { flexDirection: "row", justifyContent: "space-between", marginTop: spacing.sm },
+  timeText: { fontSize: 13, fontWeight: "500", color: colors.faint, fontVariant: ["tabular-nums"] },
   transport: {
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.lg,
+    gap: spacing.xl,
   },
   doneCard: { alignItems: "center", gap: spacing.md, marginTop: spacing.xl },
   doneTitle: { fontSize: 20, fontWeight: "800", color: colors.ink },

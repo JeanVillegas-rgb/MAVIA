@@ -47,8 +47,8 @@ function optionsFor(question: Question): Option[] {
 
 type Props = {
   question: Question;
-  index: number;
-  total: number;
+  /** the question's number in the order this concept's questions were asked (#1, #2, ...) */
+  number: number;
   onSubmit: (answer: string) => Promise<SubmitResult>;
   onNext: () => void;
   // Bumped by the screen when the learner asks to hear it again (the
@@ -69,7 +69,7 @@ type Props = {
   inputPaused?: boolean;
 };
 
-export default function QuestionCard({ question, index, total, onSubmit, onNext, repeatSignal = 0, pauseSignal = 0, face, inputPaused = false }: Props) {
+export default function QuestionCard({ question, number, onSubmit, onNext, repeatSignal = 0, pauseSignal = 0, face, inputPaused = false }: Props) {
   const options = useMemo(() => optionsFor(question), [question]);
   const [selected, setSelected] = useState<string | null>(null);
   const [result, setResult] = useState<SubmitResult | null>(null);
@@ -371,11 +371,17 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
   // The face replaces the question on screen. Under a screen reader, where a
   // tap only moves focus, compact letter buttons stay as a touch way to answer
   // (each announced with its option); everyone else taps the face itself.
+  // The face shows only the question number; where the student is in the
+  // question is said to screen readers, not printed.
   const faceContent = face ? (
     <>
       {face}
-      <Text style={[styles.counter, styles.faceCounter]}>
-        Question {index + 1} of {total} · {questionReading ? "listen to the question" : "waiting for your answer"}
+      <Text
+        style={styles.screenReaderOnly}
+        accessibilityLiveRegion="polite"
+        accessibilityLabel={`Question ${number}. ${questionReading ? "Listen to the question." : "Waiting for your answer."}`}
+      >
+        {" "}
       </Text>
       {!tapMode && !openEnded && (
         <View style={styles.letterRow}>
@@ -388,7 +394,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
               accessibilityLabel={`${option.key.toUpperCase()}. ${option.label}`}
               style={[styles.letterButton, option.key === selected && styles.optionSelected]}
             >
-              <Text style={styles.optionKeyText}>{option.key.toUpperCase()}</Text>
+              <Text style={styles.letterText}>{option.key.toUpperCase()}</Text>
             </Pressable>
           ))}
         </View>
@@ -400,7 +406,7 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
   const content = faceContent ?? (
     <>
       <Text style={styles.counter}>
-        Question {index + 1} of {total}
+        Question {number}
       </Text>
       <Text style={styles.prompt} accessibilityRole="header">
         {question.prompt}
@@ -475,19 +481,21 @@ export default function QuestionCard({ question, index, total, onSubmit, onNext,
 
 const styles = StyleSheet.create({
   tapPad: { flexGrow: 1 },
-  faceCard: { gap: spacing.md, alignItems: "stretch" },
-  faceCounter: { textAlign: "center" },
-  letterRow: { flexDirection: "row", justifyContent: "center", gap: spacing.md },
+  faceCard: { gap: spacing.lg, alignItems: "stretch" },
+  // Present for screen readers, invisible and out of the layout.
+  screenReaderOnly: { position: "absolute", width: 1, height: 1, opacity: 0 },
+  letterRow: { flexDirection: "row", justifyContent: "center", gap: spacing.md, marginTop: spacing.lg },
   letterButton: {
-    width: 48,
-    height: 48,
+    width: 60,
+    height: 60,
     borderRadius: radii.pill,
-    borderWidth: 2,
+    borderWidth: 3,
     borderColor: "transparent",
     backgroundColor: colors.brand600,
     alignItems: "center",
     justifyContent: "center",
   },
+  letterText: { fontSize: 22, fontWeight: "700", color: colors.white },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radii.md,
