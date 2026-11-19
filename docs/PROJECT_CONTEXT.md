@@ -438,7 +438,7 @@ because its required `Comparing → Changing` is itself carried by `explain`,
 - **A published step is titled after its bundle's lead**, not the concept: the
   step for "Comparing the Three States" is titled "Shape". The review screens
   no longer have this problem; only the published payload does.
-- `question_generation/services/pipeline.py`'s `_is_concept_source` silently
+- `question_generation/services/concept_source.py`'s `is_concept_source` silently
   drops an explicitly requested non-lead node id (unreachable from the only
   production caller; logs when it happens).
 - No frontend test runner, so the review screens' rendering has no automated

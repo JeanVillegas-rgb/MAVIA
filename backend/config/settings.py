@@ -382,6 +382,17 @@ QUESTION_JUDGE_MODEL = (
 QUESTION_JUDGE_TIMEOUT = int(
     os.getenv("QUESTION_JUDGE_TIMEOUT", str(OLLAMA_TIMEOUT))
 )
+# Sampling temperature and output budget of one checking call. The reply is a
+# three-field verdict, so 512 tokens is ample; 0.0 keeps the verdict repeatable.
+QUESTION_JUDGE_TEMPERATURE = float(os.getenv("QUESTION_JUDGE_TEMPERATURE", "0.0"))
+QUESTION_JUDGE_MAX_TOKENS = int(os.getenv("QUESTION_JUDGE_MAX_TOKENS", "512"))
+
+# The trained Bloom classifier (RoBERTa, with the SVM as fallback) that labels
+# every question's Bloom level and LOTS/HOTS tier.
+BLOOM_MODEL_DIR = os.getenv(
+    "BLOOM_MODEL_DIR",
+    str(BASE_DIR / "question_generation" / "classifier" / "trained_model"),
+)
 
 # Quiet the dev server's per-request access log; application diagnostics use
 # the standard Python logging system instead. INFO reports each step of every

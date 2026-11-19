@@ -1,5 +1,4 @@
 import logging
-import sys
 import textwrap
 from collections import Counter
 
@@ -8,66 +7,18 @@ from django.db import transaction
 from django.db.models import Q
 
 from config.console import name
-from .bloom_classifier import BloomClassifier
-from .question_generator import generate_questions, warm_question_model
+from question_generation.models import GeneratedQuestion
+
+from .bank_status import text_fingerprint
+from .bloom_classifier import classifier_loaded, get_classifier
+from .concept_source import concept_name, concept_source_text, is_concept_source
+from .grounding import correction_note, enabled, verify
+from .llm import warm_question_model
+from .question_bank import tier_counts, topic_questions
+from .question_counts import QUESTION_DISTRIBUTION, UNASSESSABLE_BLOOM_LEVELS, question_minimum
+from .question_generator import generate_questions
 
 logger = logging.getLogger(__name__)
-
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):
-        pass
-
-
-def thinking_order_counts():
-    """Target questions per thinking order, read from settings at call time."""
-    return {"LOT": settings.QUESTION_COUNT_LOT, "HOT": settings.QUESTION_COUNT_HOT}
-
-
-def question_minimum():
-    """LOT and HOT counts every concept needs before the Questions step is done."""
-    return {"LOT": settings.QUESTION_MIN_LOT, "HOT": settings.QUESTION_MIN_HOT}
-
-
-def _split(count, weights):
-    """Divide count across formats by weight; the remainder goes to the first format."""
-    total = sum(weights.values())
-    split = {fmt: count * weight // total for fmt, weight in weights.items()}
-    first = next(iter(weights))
-    split[first] += count - sum(split.values())
-    return {fmt: n for fmt, n in split.items() if n}
-
-
-_COUNTS = thinking_order_counts()
-_FORMAT_WEIGHTS = {"MCQ": settings.QUESTION_FORMAT_WEIGHT_MCQ, "TF": settings.QUESTION_FORMAT_WEIGHT_TF}
-QUESTION_DISTRIBUTION = {
-    "LOT": {
-        "count": _COUNTS["LOT"],
-        "format_split": _split(_COUNTS["LOT"], _FORMAT_WEIGHTS),
-    },
-    "HOT": {
-        "count": _COUNTS["HOT"],
-        "format_split": _split(_COUNTS["HOT"], _FORMAT_WEIGHTS),
-    },
-}
-
-UNASSESSABLE_BLOOM_LEVELS = {"create"}
-
-_classifier_cache = None
-
-
-def _get_classifier():
-    global _classifier_cache
-    if _classifier_cache is None:
-        _classifier_cache = BloomClassifier()
-    return _classifier_cache
-
-
-def concept_name(node):
-    """The concept's name, for trace lines."""
-    group = getattr(node, "group", None)
-    return (group.label if group is not None and group.label else node.title) or "Untitled concept"
 
 
 def _emit(on_event, event_type, message, **data):
@@ -78,8 +29,6 @@ def _emit(on_event, event_type, message, **data):
 
 def _print_node_summary(node, kept, rejected):
     """One summary line per concept, judged against the minimum."""
-    from .question_bank import tier_counts
-
     added = Counter(q.thinking_order for q in kept)
     breakdown = ", ".join(f"{added.get(order, 0)} {order}" for order in QUESTION_DISTRIBUTION)
     have = tier_counts(node)
@@ -109,67 +58,6 @@ def _print_material_summary(material, node_count, all_questions, stats):
     )
 
 
-def _object_text(item):
-    """An object's text, with a definition the extractor split from its term joined back to the term."""
-    content = (item.content or "").strip()
-    title = (item.title or "").strip()
-    if title and content[:1].islower():
-        return f"{title} {content}"
-    return content
-
-
-def concept_source_text(node):
-    """Every telling of the concept, Standard first: the text its questions are written from."""
-    from course.version_assignment import bundle_roles, standard_material_id
-    from lessons.services.concept_bundles import bundles_for_group, material_order
-
-    if node.group_id is None:
-        return _object_text(node)
-
-    group = node.group
-    bundles = {
-        material_id: kept
-        for material_id, objects in bundles_for_group(group).items()
-        if (kept := [item for item in objects if (item.content or "").strip()])
-    }
-    standard_id = standard_material_id(group)
-    if not any(item.id == node.id for item in bundles.get(standard_id) or []):
-        return _object_text(node)
-
-    roles = bundle_roles(group)
-    rank = {
-        material_id: index
-        for index, material_id in enumerate(material_order(group.outline_node))
-    }
-    others = sorted(
-        (material_id for material_id in bundles if material_id != standard_id),
-        key=lambda material_id: (rank.get(material_id, len(rank)), material_id),
-    )
-
-    objects = []
-    for material_id in [standard_id, *others]:
-        if material_id != standard_id and material_id not in roles:
-            continue
-        objects.extend(bundles.get(material_id) or [])
-    return "\n".join(text for item in objects if (text := _object_text(item))) or _object_text(node)
-
-
-def _is_concept_source(node):
-    """Whether node is the one object of its concept that generates questions."""
-    if node.group_id is None:
-        return True
-    from course.version_assignment import version_bundles
-    from lessons.services.concept_bundles import bundle_lead
-
-    standard = version_bundles(node.group).get("STANDARD") or []
-    if not standard:
-        return True
-    if not any(item.id == node.id for item in standard):
-        return False
-    lead = bundle_lead(standard)
-    return lead is not None and lead.id == node.id
-
-
 def _draft_questions_for_node(
     node,
     classifier,
@@ -178,8 +66,6 @@ def _draft_questions_for_node(
     orders=None,
 ):
     """Run the LLM calls for one concept and save the replies as drafts."""
-    from question_generation.models import GeneratedQuestion
-
     resumed = list(
         GeneratedQuestion.objects.filter(node=node, status="draft").order_by("id")
     )
@@ -319,9 +205,6 @@ def _log_check(result):
 
 def _validate_drafts_for_node(node, on_event=None, stats=None):
     """Check every draft against the concept's own text and delete failures; returns (kept, failures)."""
-    from question_generation.models import GeneratedQuestion
-    from .grounding import verify
-
     drafts = list(
         GeneratedQuestion.objects.filter(node=node, status="draft").order_by("id")
     )
@@ -370,8 +253,6 @@ def _validate_drafts_for_node(node, on_event=None, stats=None):
 
 def finalize_node_questions(node, classifier, on_event=None, stats=None, append=False, caps=None):
     """Deduplicate, classify, drop "create", trim to quota, then make the drafts final."""
-    from question_generation.models import GeneratedQuestion
-
     if caps is None:
         caps = {order: config["count"] for order, config in QUESTION_DISTRIBUTION.items()}
 
@@ -385,7 +266,6 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
     seen = set()
     duplicates = excluded_create = trimmed = 0
     from lessons.services.question_workflow import question_fingerprint
-    from .question_bank import topic_questions
 
     taken = topic_questions(node.material.outline_node)
     if not append:
@@ -464,7 +344,6 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         )
         if reject_ids:
             GeneratedQuestion.objects.filter(id__in=reject_ids).delete()
-        from .bank_status import text_fingerprint
         source_stamp = text_fingerprint(concept_source_text(node))
         for question in keep:
             question.source_text_fingerprint = source_stamp
@@ -504,9 +383,6 @@ def generate_questions_for_node(
     correction="",
 ):
     """One round for one concept: draft, check, classify and save; returns (kept, the correction for a next round, how many kept could not be checked)."""
-    from question_generation.models import GeneratedQuestion
-    from .grounding import correction_note, enabled
-
     orders = caps = None
     if append:
         orders, caps = top_up_plan(node)
@@ -562,8 +438,6 @@ def is_short(node):
 
 def top_up_plan(node):
     """(orders, caps): the thinking orders a concept lacks and how many more fit."""
-    from .question_bank import tier_counts
-
     have = tier_counts(node)
     minimum = question_minimum()
     orders = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
@@ -582,7 +456,7 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
         .filter(id__in=node_ids)
         .order_by("order")
     )
-    nodes = [node for node in candidates if _is_concept_source(node)]
+    nodes = [node for node in candidates if is_concept_source(node)]
     if len(nodes) != len(candidates):
         logger.info(
             "[Questions] skipping %s learning object(s) taught through another object's "
@@ -605,36 +479,8 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
     )
 
     all_questions = []
-    stats = {
-        "total_drafted": 0,
-        "excluded_create": 0,
-        "duplicates": 0,
-        "trimmed": 0,
-        "ungrounded": 0,
-        "unverified": 0,
-    }
-    classifier = None
-    if nodes:
-        if on_event:
-            _emit(
-                on_event,
-                "model_warming",
-                "Question model is ready" if settings.LLM_PROVIDER == "groq"
-                else "Loading question model into Ollama",
-            )
-
-            def record_warm_metrics(metrics):
-                _emit(
-                    on_event,
-                    "model_warmed",
-                    "Question model is ready",
-                    **metrics,
-                )
-
-            warm_question_model(on_metrics=record_warm_metrics)
-        if _classifier_cache is None:
-            _emit(on_event, "classifier_loading", "Loading Bloom's classifier model")
-        classifier = _get_classifier()
+    stats = _empty_stats()
+    classifier = _prepare_generation(on_event) if nodes else None
 
     total_nodes = len(nodes)
     for position, node in enumerate(nodes, start=1):
@@ -700,15 +546,18 @@ def _prepare_generation(on_event):
         warm_question_model(
             on_metrics=lambda metrics: _emit(on_event, "model_warmed", "Question model is ready", **metrics),
         )
-    if _classifier_cache is None:
+    if not classifier_loaded():
         _emit(on_event, "classifier_loading", "Loading Bloom's classifier model")
-    return _get_classifier()
+    return get_classifier()
+
+
+def _empty_stats():
+    return {"total_drafted": 0, "excluded_create": 0, "duplicates": 0, "trimmed": 0,
+            "ungrounded": 0, "unverified": 0}
 
 
 def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None):
     """Top up every concept of a topic to its minimum, in rounds."""
-    from .question_bank import tier_counts
-
     rounds = rounds or settings.QUESTION_GENERATION_ROUNDS
     minimum = question_minimum()
     goal = " + ".join(f"{minimum[order]} {order}" for order in QUESTION_DISTRIBUTION)
@@ -723,8 +572,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
         f"{len(targets)} of {len(nodes)} concepts need questions",
         concept_count=len(nodes), short_count=len(targets), minimum=minimum,
     )
-    stats = {"total_drafted": 0, "excluded_create": 0, "duplicates": 0, "trimmed": 0,
-             "ungrounded": 0, "unverified": 0}
+    stats = _empty_stats()
     added, failed, corrections, unchecked_nodes = 0, {}, {}, set()
     if targets:
         classifier = _prepare_generation(on_event)
@@ -792,7 +640,6 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
         f"; still short: {', '.join(still_short)}" if still_short else "",
         f"; failed: {len(failed)}" if failed else "",
     )
-    from question_generation.models import GeneratedQuestion
     unchecked_total = GeneratedQuestion.objects.filter(
         node__in=nodes, status="review", check_result="unverified",
     ).count()

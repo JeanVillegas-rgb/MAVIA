@@ -1,7 +1,10 @@
+"""Labels a question's Bloom level, LOTS/HOTS tier and category with the trained classifier."""
+
 import logging
 import os
 import re
-from pathlib import Path
+
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +35,21 @@ BT_LABELS = {
     "bt6": "create",
 }
 
-DEFAULT_MODEL_DIR = os.path.join(
-    Path(__file__).resolve().parent.parent,
-    "classifier", "trained_model"
-)
-MODEL_DIR = os.getenv("BLOOM_MODEL_DIR", DEFAULT_MODEL_DIR)
+MODEL_DIR = settings.BLOOM_MODEL_DIR
+
+_classifier_cache = None
+
+
+def get_classifier():
+    """The one classifier for the server's lifetime, loaded on first use."""
+    global _classifier_cache
+    if _classifier_cache is None:
+        _classifier_cache = BloomClassifier()
+    return _classifier_cache
+
+
+def classifier_loaded():
+    return _classifier_cache is not None
 
 
 class BloomClassifier:

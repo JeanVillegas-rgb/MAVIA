@@ -4,7 +4,7 @@ import hashlib
 
 from django.db.models import Case, IntegerField, Value, When
 
-from .pipeline import concept_source_text
+from .concept_source import concept_source_text
 
 
 def text_fingerprint(text):

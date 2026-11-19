@@ -11,7 +11,14 @@ front, since those are the lines a reader is scanning for.
 """
 
 import logging
+import sys
 from time import perf_counter
+
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 
 class ConsoleFormatter(logging.Formatter):

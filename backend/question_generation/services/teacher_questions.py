@@ -6,9 +6,10 @@ from lessons.models import ExtractedQuestion, LearningObjectGroup
 from lessons.services.question_workflow import question_fingerprint, validation_issues
 from question_generation.models import Question
 
-from .grounding import build_index, verify
-from .pairing import KEY_CONFLICT, PAIRED, UNVERIFIED, pair_question
-from .pipeline import _get_classifier, _is_concept_source, concept_name, concept_source_text
+from .bloom_classifier import get_classifier
+from .concept_source import concept_name, concept_source_text, is_concept_source
+from .grounding import verify
+from .pairing import KEY_CONFLICT, PAIRED, UNVERIFIED, build_index, pair_question
 from .question_bank import (
     CONFIRMED_OBJECTS,
     can_keep,
@@ -73,7 +74,7 @@ def _form_values(data, question=None):
 
 def _label(question):
     """Give the question its Bloom level, LOTS/HOTS and category."""
-    labels = _get_classifier().classify(question.question_text)
+    labels = get_classifier().classify(question.question_text)
     question.bloom_level = labels["bloom_level"]
     question.thinking_order = labels["thinking_order"] or ""
     question.category = labels["category"]
@@ -107,7 +108,7 @@ def _place(object_id, paired_by, concept="", check_result="", check_note=""):
 def _teacher_place(question, target, members, check=True):
     """The concept the teacher ruled on, with the answer read against that concept's text."""
     lead = next(
-        (item for item in members if (item.content or "").strip() and _is_concept_source(item)),
+        (item for item in members if (item.content or "").strip() and is_concept_source(item)),
         members[0],
     )
     concept = concept_name(lead)

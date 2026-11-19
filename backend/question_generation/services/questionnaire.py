@@ -9,7 +9,7 @@ from lessons.services.lesson_pdf_extractor import extract_lesson_pdf_blocks
 from lessons.services.question_workflow import detected_question_payloads, question_fingerprint
 from question_generation.models import Question, QuestionFile
 
-from .grounding import build_index
+from .pairing import build_index
 from .question_bank import bank_values, duplicate_in_topic, settle, structure_issues
 from .teacher_questions import QuestionError, _apply, _found_place, _label
 

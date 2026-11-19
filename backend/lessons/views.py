@@ -93,7 +93,7 @@ from question_generation.services.bank_status import (
     refile_bank_before_delete,
     settle_bank_owner,
 )
-from question_generation.services.pipeline import question_minimum
+from question_generation.services.question_counts import question_minimum
 from question_generation.services.question_bank import TIERS, topic_rows
 from .services.question_workflow import question_snapshots
 from .services.source_review import finalize_source_review, source_review_is_finalized

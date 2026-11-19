@@ -1,134 +1,15 @@
-"""The LLM checker for questions, and the topic's concepts as searchable passages."""
+"""The LLM checker: whether a concept's text supports a question's answer."""
 
 import json
 import logging
-import re
 
-import requests
 from django.conf import settings
-from config.groq_client import generate as groq_generate
+
+from . import llm
 
 logger = logging.getLogger(__name__)
 
 PREVIEW_CHARS = 200
-
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-
-
-def _passages(engine, text):
-    """The text as one passage, or cut at sentence ends when the encoder cannot read it whole."""
-    text = " ".join((text or "").split())
-    if not text:
-        return []
-    if engine.supports(text):
-        return [text]
-    passages, current = [], ""
-    for sentence in _SENTENCE_END.split(text):
-        joined = f"{current} {sentence}".strip()
-        if engine.supports(joined):
-            current = joined
-            continue
-        if current:
-            passages.append(current)
-        current = _fit(engine, sentence)
-    if current:
-        passages.append(current)
-    return passages
-
-
-def _fit(engine, text):
-    """Trim text until the encoder accepts it, or "" if it never does."""
-    words = (text or "").split()
-    while words:
-        candidate = " ".join(words)
-        if engine.supports(candidate):
-            return candidate
-        words = words[:int(len(words) * 0.9)] if len(words) > 10 else words[:-1]
-    return ""
-
-
-class TopicIndex:
-    """One topic's concepts as passages with their embeddings; built once per run."""
-
-    def __init__(self, chunks, vectors=None, owners=None, reason=""):
-        self.chunks = chunks
-        self.vectors = vectors
-        self.owners = owners or []
-        self.reason = reason
-
-    @property
-    def searchable(self):
-        return bool(self.vectors) and bool(self.chunks)
-
-    def rank(self, query):
-        """Every concept by cosine to the query, highest first; empty when unsearchable."""
-        if not self.searchable:
-            return []
-        from lessons.services.embedding_service import sentence_embedding_runtime
-
-        engine = sentence_embedding_runtime()
-        fitted = _fit(engine, query)
-        if not fitted:
-            return []
-        vector = engine.embeddings([fitted])[0]
-        best = {}
-        for candidate, owner in zip(self.vectors, self.owners):
-            score = sum(a * b for a, b in zip(vector, candidate))
-            if owner not in best or score > best[owner]:
-                best[owner] = score
-        scored = [(score, self.chunks[owner]) for owner, score in best.items()]
-        scored.sort(key=lambda row: -row[0])
-        return scored
-
-
-def build_index(outline_node):
-    """Index every concept of one topic's completed PDFs by the text its questions are written from. Never raises."""
-    from lessons.models import LearningMaterial, LearningObject
-    from .pipeline import _is_concept_source, concept_name, concept_source_text
-
-    objects = LearningObject.objects.filter(
-        material__outline_node=outline_node,
-        material__status=LearningMaterial.Status.COMPLETED,
-    ).exclude(content="").select_related("material", "group").order_by(
-        "material__created_at", "material_id", "order", "id",
-    )
-
-    chunks = [
-        {
-            "concept": concept_name(item),
-            "object_id": item.id,
-            "material_id": item.material_id,
-            "material_title": item.material.title,
-            "text": text,
-        }
-        for item in objects
-        if _is_concept_source(item) and (text := concept_source_text(item).strip())
-    ]
-    if not chunks:
-        return TopicIndex([], reason="no concept text to index")
-
-    try:
-        from lessons.services.embedding_service import sentence_embedding_runtime
-
-        engine = sentence_embedding_runtime()
-    except Exception as exc:
-        logger.warning("Grounding index has no sentence encoder: %s", exc)
-        return TopicIndex(chunks, reason=f"sentence encoder unavailable: {exc}")
-
-    pieces = [
-        (owner, passage)
-        for owner, chunk in enumerate(chunks) for passage in _passages(engine, chunk["text"])
-    ]
-    if not pieces:
-        return TopicIndex(chunks, reason="no passage fit the encoder window")
-
-    try:
-        vectors = engine.embeddings([passage for _, passage in pieces])
-    except Exception as exc:
-        logger.warning("Grounding index could not embed passages: %s", exc)
-        return TopicIndex(chunks, reason=f"embedding failed: {exc}")
-
-    return TopicIndex(chunks, vectors=vectors, owners=[owner for owner, _ in pieces])
 
 
 def asserted_answer(question):
@@ -191,41 +72,17 @@ JUDGE_SCHEMA = {
 }
 
 
-def _judge_model():
-    return getattr(settings, "QUESTION_JUDGE_MODEL", settings.QUESTION_LLM_MODEL)
-
-
 def _judge_call(prompt):
-    """One checker call, at temperature 0."""
-    if settings.LLM_PROVIDER == "groq":
-        raw, _metrics = groq_generate(
-            prompt,
-            model=_judge_model(),
-            schema=JUDGE_SCHEMA,
-            temperature=0.0,
-            max_tokens=512,
-            timeout=getattr(settings, "QUESTION_JUDGE_TIMEOUT", settings.OLLAMA_TIMEOUT),
-        )
-        return json.loads(raw)
-    response = requests.post(
-        f"{settings.OLLAMA_BASE_URL}/api/generate",
-        json={
-            "model": _judge_model(),
-            "prompt": prompt,
-            "stream": False,
-            "format": JUDGE_SCHEMA,
-            "keep_alive": getattr(
-                settings, "QUESTION_LLM_KEEP_ALIVE", settings.OLLAMA_KEEP_ALIVE
-            ),
-            "options": {"temperature": 0.0, "num_predict": 512},
-        },
-        timeout=getattr(settings, "QUESTION_JUDGE_TIMEOUT", settings.OLLAMA_TIMEOUT),
+    """One checker call."""
+    raw, _metrics = llm.generate(
+        prompt,
+        model=settings.QUESTION_JUDGE_MODEL,
+        schema=JUDGE_SCHEMA,
+        temperature=settings.QUESTION_JUDGE_TEMPERATURE,
+        max_tokens=settings.QUESTION_JUDGE_MAX_TOKENS,
+        timeout=settings.QUESTION_JUDGE_TIMEOUT,
     )
-    response.raise_for_status()
-    body = response.json()
-    if body.get("error"):
-        raise RuntimeError(str(body["error"]))
-    return json.loads(body.get("response") or "{}")
+    return json.loads(raw)
 
 
 def judge(question, passages):
@@ -249,7 +106,7 @@ def judge(question, passages):
 
 
 def enabled():
-    return bool(getattr(settings, "QUESTION_VALIDATION_ENABLED", True))
+    return settings.QUESTION_VALIDATION_ENABLED
 
 
 def verify(question, source):

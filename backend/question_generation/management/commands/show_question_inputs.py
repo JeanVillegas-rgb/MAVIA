@@ -5,10 +5,9 @@ import textwrap
 from django.core.management.base import BaseCommand, CommandError
 
 from lessons.models import LearningObjectGroup, OutlineNode
+from question_generation.services.concept_source import concept_name, concept_source_text
 from question_generation.services.question_bank import tier_counts
-from question_generation.services.pipeline import (
-    QUESTION_DISTRIBUTION, concept_name, concept_source_text, question_minimum,
-)
+from question_generation.services.question_counts import QUESTION_DISTRIBUTION, question_minimum
 from question_generation.services.question_generator import _build_prompt
 from question_generation.views import _standard_question_source
 

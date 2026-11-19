@@ -10,6 +10,8 @@ from lessons.models import ExtractedQuestion, LearningObject
 from lessons.services.question_workflow import question_fingerprint, validation_issues
 from question_generation.models import Question
 
+from .concept_source import concept_name
+
 logger = logging.getLogger(__name__)
 
 TIERS = ("LOT", "HOT")
@@ -72,8 +74,6 @@ def issues(question):
     if missing:
         return missing
     if question.check_result in FAILED_CHECKS and question.node_id:
-        from .pipeline import concept_name
-
         return [f'"{concept_name(question.node)}" does not support this answer: {question.check_note}']
     if question.check_result == "unsupported":
         return [NO_CONCEPT]
@@ -181,8 +181,6 @@ def source_file(question):
 
 def concerns(question):
     """Everything that keeps a question from learners, each as one thing the teacher can act on."""
-    from .pipeline import concept_name
-
     found = []
     values = screen_values(question)
     kind = values["question_type"]
