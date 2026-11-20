@@ -1,7 +1,5 @@
 """What a teacher does to a question on the Questions screen: add, edit, pair to a concept, delete."""
 
-import logging
-
 from lessons.models import ExtractedQuestion, LearningObjectGroup
 from lessons.services.question_workflow import question_fingerprint, validation_issues
 from question_generation.models import Question
@@ -21,8 +19,6 @@ from .question_bank import (
     structure_issues,
     topic_questions,
 )
-
-logger = logging.getLogger(__name__)
 
 SUPPORTED_TYPES = (ExtractedQuestion.Type.TRUE_FALSE, ExtractedQuestion.Type.MULTIPLE_CHOICE)
 
@@ -304,8 +300,5 @@ def label_printed(node):
         else:
             _apply(question, _found_place(question, index))
     if pending:
-        logger.info(
-            "[Questions] topic %s  labelled %s printed question(s) and looked for each one's concept",
-            node.id, len(pending),
-        )
+        print(f"[Questions] topic {node.id}  labelled {len(pending)} printed question(s) and looked for each one's concept")
     return len(pending)

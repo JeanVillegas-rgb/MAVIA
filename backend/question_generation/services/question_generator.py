@@ -323,7 +323,7 @@ def _parse_llm_response(response_text):
         recovered = _extract_question_objects(match.group())
         if not recovered:
             raise
-        logger.debug("[Questions] recovered %s question(s) from a malformed model reply", len(recovered))
+        print(f"[Questions] recovered {len(recovered)} question(s) from a malformed model reply")
         return recovered
 
     if "questions" in parsed:
@@ -372,10 +372,8 @@ def generate_questions(
 ):
     """One LLM call for one thinking order; returns validated question dicts."""
     prompt = _build_prompt(content, thinking_order, format_split, correction)
-    logger.debug(
-        "[Questions] PROMPT SENT TO THE LLM (%s, %s):\n%s",
-        thinking_order, " + ".join(f"{n} {fmt}" for fmt, n in format_split.items()), prompt,
-    )
+    split = " + ".join(f"{n} {fmt}" for fmt, n in format_split.items())
+    print(f"[Questions] PROMPT SENT TO THE LLM ({thinking_order}, {split}):\n{prompt}")
 
     for attempt in range(MAX_UNUSABLE_REPLIES):
         try:

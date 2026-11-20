@@ -406,9 +406,8 @@ BLOCK_CLASSIFIER_REVIEW_MARGIN = (
 )
 
 MAVIA_LOG_LEVEL = os.getenv("MAVIA_LOG_LEVEL", "INFO").upper()
-# The same switch for question generation and the learning path alone: DEBUG
-# prints their full trace (each prompt sent to the LLM, each drafted question,
-# every concept's owned words and every pair's clues) without the other apps' detail.
+# Question generation and the learning path print their trace with print(),
+# so this level only filters their warnings and errors.
 MAVIA_TRACE_LEVEL = os.getenv("MAVIA_TRACE_LEVEL", MAVIA_LOG_LEVEL).upper()
 
 LOGGING = {
@@ -434,9 +433,8 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
-        # Progress reporting. These packages report each step through the
-        # logger rather than print(), so the terminal and the teacher's
-        # progress dialog are fed by the same call and cannot disagree.
+        # question_generation and learning_path print their steps and use
+        # the logger only for warnings and errors.
         # Configured explicitly because there is no root handler: without an
         # entry here, INFO records propagate to a handler-less root and are
         # dropped by Python's last-resort handler, which passes WARNING and

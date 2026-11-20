@@ -24,26 +24,14 @@ def run_tracer(run, *, label=None):
             message=message,
             data=data or None,
         )
-        logger.log(
-            _level(event_type, data),
-            "[%s] run %s  %s%s",
-            prefix,
-            run.id,
-            message or event_type,
-            _progress_suffix(data),
-        )
+        line = f"[{prefix}] run {run.id}  {message or event_type}{_progress_suffix(data)}"
+        if event_type == "error" or event_type.endswith("_failed"):
+            logger.warning("%s", line)
+        else:
+            print(line)
         return seq["n"]
 
     return record
-
-
-def _level(event_type, data):
-    """Problems as warnings; the start of each item only at DEBUG."""
-    if event_type == "error" or event_type.endswith("_failed"):
-        return logging.WARNING
-    if event_type.endswith("_started") and data.get("index") is not None:
-        return logging.DEBUG
-    return logging.INFO
 
 
 def _progress_suffix(data):

@@ -1,14 +1,10 @@
 """What the learning path prints at each handoff, so a run can be followed in the terminal."""
 
-import logging
-
 from config.console import name
 
 from .clues import MIN_SHARED_TERMS, SIGNIFICANCE_LEVEL
 from .concept_text import terms
 from .fusion import ACCEPTED, DISAGREE, NONE_SHARED, PENDING
-
-logger = logging.getLogger(__name__)
 
 HELD_BACK = {
     "reverse_name": "the earlier one names the later one more than the reverse",
@@ -26,7 +22,7 @@ DIRECTION_FROM = {
 
 def _say(*lines):
     for line in lines:
-        logger.debug("[Learning path] %s", line)
+        print(f"[Learning path] {line}")
 
 
 def _own_headings(text):
@@ -38,8 +34,6 @@ def _own_headings(text):
 
 def log_concepts(texts, owners):
     """Steps 1 and 2: the topic's concepts, then the words each one owns."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
     _say(
         "",
         "THE LEARNING PATH decides which concepts must be learned before which, then puts them in that order.",
@@ -153,8 +147,6 @@ def _verdict_lines(earlier, later, facts, decision):
 
 def log_pair(earlier, later, facts, decision):
     """One pair: each clue on its own line, in the order they are read, then the verdict and why."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
     first, second = name(earlier.concept.title), name(later.concept.title)
     placed = "the document order" if facts.pdf_order in (NONE_SHARED, DISAGREE) else "the PDFs"
     lines = ["", f"  {first} and {second}   ({first} comes first in {placed})"]
@@ -183,10 +175,26 @@ def log_pair(earlier, later, facts, decision):
     )
 
 
-def log_order(ordered, depth, links=()):
-    """Step 4: Kahn's order, with what each concept needs first and its level."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
+def _round_lines(number, ready, unlocked, waiting, titles, position):
+    """One round of Kahn's sort: what was ready, what was taken, what it freed."""
+    taken, others = ready[0], ready[1:]
+    lines = [f"  round {number}: take {name(titles[taken], 40)}"]
+    if others:
+        lines[0] += f"   (also ready: {', '.join(name(titles[other], 34) for other in others)})"
+    after = []
+    if unlocked:
+        after.append("unlocks " + ", ".join(name(titles[following], 34) for following in sorted(unlocked, key=position.get)))
+    after += [
+        f"{name(titles[following], 34)} still needs {left} more"
+        for following, left in sorted(waiting, key=lambda item: position[item[0]])
+    ]
+    if after:
+        lines.append("           " + "; ".join(after))
+    return lines
+
+
+def log_order(ordered, depth, links=(), rounds=()):
+    """Step 4: Kahn's sort round by round, then the order with what each concept needs first and its level."""
     titles = {concept.id: concept.title for concept in ordered}
     needs = {}
     for before, after in links:
@@ -194,10 +202,13 @@ def log_order(ordered, depth, links=()):
     position = {concept.id: index for index, concept in enumerate(ordered)}
     _say(
         "",
-        f"STEP 4 of 4: the order, from the {len(links)} links that shape it (accepted, or approved by a teacher;",
-        "  links waiting for the teacher are not used). A concept is placed once everything it needs is placed;",
+        f"STEP 4 of 4: the order, from the {len(links)} links that shape it (accepted, or approved by a teacher)",
         "  when several are ready, the one the PDFs teach first goes first. Level = how many prerequisites deep it is.",
     )
+    for number, (ready, unlocked, waiting) in enumerate(rounds, start=1):
+        _say(*_round_lines(number, ready, unlocked, waiting, titles, position))
+    if rounds:
+        _say("", "  the order:")
     for index, concept in enumerate(ordered, start=1):
         first = sorted(needs.get(concept.id, []), key=position.get)
         _say(

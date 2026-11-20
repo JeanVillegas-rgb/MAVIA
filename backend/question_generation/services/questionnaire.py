@@ -1,7 +1,5 @@
 """A teacher's questionnaire PDF: read with the lesson pipeline's question reader, then labelled, paired and checked into the bank."""
 
-import logging
-
 from django.db import transaction
 
 from lessons.services.block_classifier import classify_blocks
@@ -12,8 +10,6 @@ from question_generation.models import Question, QuestionFile
 from .pairing import build_index
 from .question_bank import bank_values, duplicate_in_topic, settle, structure_issues
 from .teacher_questions import QuestionError, _apply, _found_place, _label
-
-logger = logging.getLogger(__name__)
 
 NOT_A_PDF = "Upload the questionnaire as a PDF file."
 NO_TEXT = "No text could be read from this PDF. Scanned questionnaires are not supported; upload a PDF with selectable text."
@@ -87,10 +83,9 @@ def read_questionnaire(question_file, on_event=None):
 
     if not counts["added"]:
         _discard(question_file)
-    logger.info(
-        "[Questions] topic %s  questionnaire %s: %s found, %s added (%s paired, %s held), %s already in the topic",
-        node.id, name, counts["found"], counts["added"], counts["paired"], counts["held"],
-        counts["already_in_topic"],
+    print(
+        f"[Questions] topic {node.id}  questionnaire {name}: {counts['found']} found, {counts['added']} added "
+        f"({counts['paired']} paired, {counts['held']} held), {counts['already_in_topic']} already in the topic"
     )
     return counts
 

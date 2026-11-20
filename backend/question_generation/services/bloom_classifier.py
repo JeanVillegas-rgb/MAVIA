@@ -71,10 +71,7 @@ class BloomClassifier:
             self._load_svm()
             self.backend = "svm"
 
-        logger.info(
-            "[Questions] LOTS/HOTS classifier loaded (%s); it stays loaded until the server restarts",
-            self.backend,
-        )
+        print(f"[Questions] LOTS/HOTS classifier loaded ({self.backend}); it stays loaded until the server restarts")
 
     def _load_roberta(self):
         import torch

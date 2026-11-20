@@ -37,24 +37,22 @@ def _print_node_summary(node, kept, rejected):
         f"{order} {have[order]} of {minimum[order]}"
         for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]
     ]
-    logger.info(
-        "[Questions] %s  added %s (%s), discarded %s -- now %s, %s  (object %s)",
-        name(concept_name(node)), len(kept), breakdown, len(rejected),
-        " / ".join(f"{have[order]} {order}" for order in QUESTION_DISTRIBUTION),
-        f"still short: {', '.join(short)}" if short else "meets the minimum",
-        node.id,
+    now = " / ".join(f"{have[order]} {order}" for order in QUESTION_DISTRIBUTION)
+    status = f"still short: {', '.join(short)}" if short else "meets the minimum"
+    print(
+        f"[Questions] {name(concept_name(node))}  added {len(kept)} ({breakdown}), "
+        f"discarded {len(rejected)} -- now {now}, {status}  (object {node.id})"
     )
 
 
 def _print_material_summary(material, node_count, all_questions, stats):
     counts = Counter(q.thinking_order for q in all_questions)
     distribution = ", ".join(f"{counts.get(order, 0)} {order}" for order in QUESTION_DISTRIBUTION)
-    logger.info(
-        "[Questions] PDF %s  done: %s questions for %s concepts (%s) from %s drafts; "
-        "dropped %s not grounded in the lesson, %s duplicates, %s wrong level, %s extra",
-        material.id, len(all_questions), node_count, distribution,
-        stats["total_drafted"], stats["ungrounded"], stats["duplicates"],
-        stats["excluded_create"], stats["trimmed"],
+    print(
+        f"[Questions] PDF {material.id}  done: {len(all_questions)} questions for {node_count} concepts "
+        f"({distribution}) from {stats['total_drafted']} drafts; "
+        f"dropped {stats['ungrounded']} not grounded in the lesson, {stats['duplicates']} duplicates, "
+        f"{stats['excluded_create']} wrong level, {stats['trimmed']} extra"
     )
 
 
@@ -123,7 +121,7 @@ def _draft_questions_for_node(
             )
             continue
         summary = " + ".join(f"{n} {fmt}" for fmt, n in padded.items())
-        logger.debug("[Questions] %s  drafting %s %s question(s)", name(concept_name(node)), summary, thinking_order)
+        print(f"[Questions] {name(concept_name(node))}  drafting {summary} {thinking_order} question(s)")
         def record_metrics(metrics, order=thinking_order):
             _emit(
                 on_event,
@@ -146,7 +144,7 @@ def _draft_questions_for_node(
             )
 
         def record_rate_limit_wait(seconds, retry, order=thinking_order):
-            logger.info("[Questions] %s  rate limit reached; waiting %.0fs before retrying", name(concept_name(node)), seconds)
+            print(f"[Questions] {name(concept_name(node))}  rate limit reached; waiting {seconds:.0f}s before retrying")
             _emit(
                 on_event,
                 "groq_rate_limit_wait",
@@ -184,7 +182,7 @@ def _draft_questions_for_node(
         GeneratedQuestion.objects.bulk_create(batch)
         drafted += len(batch)
         for q in batch:
-            logger.debug('  Q: "%s" [%s, drafted]', q.question_text, q.question_format)
+            print(f'  Q: "{q.question_text}" [{q.question_format}, drafted]')
         _emit(
             on_event, "questions_drafted",
             f"Saved {len(batch)} {thinking_order} draft(s)",
@@ -198,9 +196,9 @@ def _draft_questions_for_node(
 def _log_check(result):
     """Log the checker's verdict under the draft's line."""
     if result["reason"]:
-        logger.debug("      verdict: %s -- %s", result["verdict"], result["reason"])
+        print(f"      verdict: {result['verdict']} -- {result['reason']}")
     else:
-        logger.debug("      verdict: %s", result["verdict"])
+        print(f"      verdict: {result['verdict']}")
 
 
 def _validate_drafts_for_node(node, on_event=None, stats=None):
@@ -212,7 +210,7 @@ def _validate_drafts_for_node(node, on_event=None, stats=None):
         return 0, []
 
     source = {"concept": concept_name(node), "text": concept_source_text(node)}
-    logger.debug('  checked against "%s": "%s..."', source["concept"], source["text"][:200])
+    print(f'  checked against "{source["concept"]}": "{source["text"][:200]}..."')
     failures, reject_ids, unverified = [], [], 0
     for draft in drafts:
         result = verify(draft, source)
@@ -221,12 +219,12 @@ def _validate_drafts_for_node(node, on_event=None, stats=None):
         if result["passed"]:
             draft.check_result = result["verdict"]
             draft.save(update_fields=["check_result"])
-            logger.debug('  ✓ grounded — "%s"', draft.question_text)
+            print(f'  ✓ grounded — "{draft.question_text}"')
             _log_check(result)
             continue
         failures.append((draft.question_text, result["reason"]))
         reject_ids.append(draft.id)
-        logger.debug('  ⊘ ungrounded (%s) — "%s"', result["stage"], draft.question_text)
+        print(f'  ⊘ ungrounded ({result["stage"]}) — "{draft.question_text}"')
         _log_check(result)
         _emit(
             on_event, "question_ungrounded", draft.question_text,
@@ -278,7 +276,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         if key in seen:
             duplicates += 1
             reject_ids.append(draft.id)
-            logger.debug('  ⊘ duplicate — "%s"', draft.question_text)
+            print(f'  ⊘ duplicate — "{draft.question_text}"')
             _emit(
                 on_event, "question_dropped", draft.question_text,
                 reason="duplicate of an earlier question", node_id=node.id,
@@ -293,7 +291,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         if bloom_level in UNASSESSABLE_BLOOM_LEVELS or thinking_order is None:
             excluded_create += 1
             reject_ids.append(draft.id)
-            logger.debug('  ⊘ excluded (%s) — "%s"', bloom_level, draft.question_text)
+            print(f'  ⊘ excluded ({bloom_level}) — "{draft.question_text}"')
             _emit(
                 on_event, "question_dropped", draft.question_text,
                 reason=f"{bloom_level}-level question cannot be assessed by MCQ/TF",
@@ -304,7 +302,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         if counts[thinking_order] >= caps.get(thinking_order, 0):
             trimmed += 1
             reject_ids.append(draft.id)
-            logger.debug('  ⊘ surplus %s — "%s"', thinking_order, draft.question_text)
+            print(f'  ⊘ surplus {thinking_order} — "{draft.question_text}"')
             continue
 
         draft.bloom_level = bloom_level
@@ -313,9 +311,7 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
         draft.status = "review" if draft.check_result == "unverified" else "final"
         counts[thinking_order] += 1
         keep.append(draft)
-        logger.debug(
-            '  ✓ %s (%s) — "%s"', thinking_order, bloom_level, draft.question_text
-        )
+        print(f'  ✓ {thinking_order} ({bloom_level}) — "{draft.question_text}"')
 
     for thinking_order, cap in ({} if append else caps).items():
         short = cap - counts.get(thinking_order, 0)
@@ -362,8 +358,8 @@ def finalize_node_questions(node, classifier, on_event=None, stats=None, append=
             )
 
     if replaced:
-        logger.debug("replaced %s existing rows for node %s", replaced, node.id)
-    logger.debug("saved %s questions for node %s", len(keep), node.id)
+        print(f"replaced {replaced} existing rows for node {node.id}")
+    print(f"saved {len(keep)} questions for node {node.id}")
 
     if stats is not None:
         stats["excluded_create"] = stats.get("excluded_create", 0) + excluded_create
@@ -387,10 +383,7 @@ def generate_questions_for_node(
     if append:
         orders, caps = top_up_plan(node)
         if not orders:
-            logger.info(
-                "[Questions] %s  already meets the minimum; nothing to add  (object %s)",
-                name(concept_name(node)), node.id,
-            )
+            print(f"[Questions] {name(concept_name(node))}  already meets the minimum; nothing to add  (object {node.id})")
             _emit(
                 on_event, "node_already_met",
                 f"{concept_name(node)} already meets the minimum",
@@ -400,9 +393,9 @@ def generate_questions_for_node(
 
     GeneratedQuestion.objects.filter(node=node, status="draft").delete()
 
-    logger.info(
-        "[Questions] CONCEPT: %s  (object %s)\n    REFERENCE CONTENT FOR THE QUESTIONS:\n%s",
-        name(concept_name(node)), node.id, textwrap.indent(concept_source_text(node), "      "),
+    print(
+        f"[Questions] CONCEPT: {name(concept_name(node))}  (object {node.id})\n"
+        f"    REFERENCE CONTENT FOR THE QUESTIONS:\n{textwrap.indent(concept_source_text(node), '      ')}"
     )
     drafted = _draft_questions_for_node(
         node, classifier, on_event=on_event, correction=correction, orders=orders,
@@ -458,19 +451,12 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
     )
     nodes = [node for node in candidates if is_concept_source(node)]
     if len(nodes) != len(candidates):
-        logger.info(
-            "[Questions] skipping %s learning object(s) taught through another object's "
-            "concept bundle; their questions belong to that bundle's lead: %s",
-            len(candidates) - len(nodes),
-            ", ".join(
-                f'"{node.title}" (#{node.id})'
-                for node in candidates if node not in nodes
-            ),
+        skipped = ", ".join(f'"{node.title}" (#{node.id})' for node in candidates if node not in nodes)
+        print(
+            f"[Questions] skipping {len(candidates) - len(nodes)} learning object(s) taught through another "
+            f"object's concept bundle; their questions belong to that bundle's lead: {skipped}"
         )
-    logger.info(
-        "[Questions] PDF %s  started: %s concept(s) to write questions for",
-        material.id, len(nodes),
-    )
+    print(f"[Questions] PDF {material.id}  started: {len(nodes)} concept(s) to write questions for")
     _emit(
         on_event, "material_started",
         f"Generating questions for {len(nodes)} content nodes",
@@ -484,7 +470,7 @@ def generate_questions_for_material(material, node_ids, on_event=None, *, append
 
     total_nodes = len(nodes)
     for position, node in enumerate(nodes, start=1):
-        logger.info("[Questions] (%s/%s) %s  writing questions", position, total_nodes, name(concept_name(node)))
+        print(f"[Questions] ({position}/{total_nodes}) {name(concept_name(node))}  writing questions")
         _emit(
             on_event, "node_started", f"Generating questions for: {concept_name(node)}",
             node_id=node.id, title=concept_name(node),
@@ -563,10 +549,7 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
     goal = " + ".join(f"{minimum[order]} {order}" for order in QUESTION_DISTRIBUTION)
 
     targets = [node for node in nodes if is_short(node)]
-    logger.info(
-        "[Questions] topic %s  started: %s of %s concepts short of %s",
-        outline_node.id, len(targets), len(nodes), goal,
-    )
+    print(f"[Questions] topic {outline_node.id}  started: {len(targets)} of {len(nodes)} concepts short of {goal}")
     _emit(
         on_event, "topic_started",
         f"{len(targets)} of {len(nodes)} concepts need questions",
@@ -579,11 +562,8 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
     for round_number in range(1, rounds + 1):
         if not targets:
             break
-        logger.info(
-            "[Questions] ROUND %s of %s: %s concept(s) short of %s: %s",
-            round_number, rounds, len(targets), goal,
-            ", ".join(name(concept_name(node)) for node in targets),
-        )
+        short_names = ", ".join(name(concept_name(node)) for node in targets)
+        print(f"[Questions] ROUND {round_number} of {rounds}: {len(targets)} concept(s) short of {goal}: {short_names}")
         _emit(
             on_event, "round_started",
             f"Round {round_number} of {rounds}: {len(targets)} concept(s) still short",
@@ -592,11 +572,10 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
         for position, node in enumerate(targets, start=1):
             have = tier_counts(node)
             wanted = [order for order in QUESTION_DISTRIBUTION if have[order] < minimum[order]]
-            logger.info(
-                "[Questions] round %s/%s (%s/%s) %s  writing %s questions (has %s)",
-                round_number, rounds, position, len(targets), name(concept_name(node)),
-                " and ".join(wanted),
-                " / ".join(f"{have[order]} {order}" for order in QUESTION_DISTRIBUTION),
+            has = " / ".join(f"{have[order]} {order}" for order in QUESTION_DISTRIBUTION)
+            print(
+                f"[Questions] round {round_number}/{rounds} ({position}/{len(targets)}) {name(concept_name(node))}  "
+                f"writing {' and '.join(wanted)} questions (has {has})"
             )
             _emit(
                 on_event, "node_started", f"Generating questions for: {concept_name(node)}",
@@ -632,13 +611,12 @@ def generate_questions_for_topic(outline_node, nodes, on_event=None, rounds=None
         ]
 
     still_short = [concept_name(node) for node in nodes if node.id not in failed and is_short(node)]
-    logger.info(
-        "[Questions] topic %s  done: %s questions added from %s drafts; dropped %s not grounded "
-        "in the lesson, %s duplicates, %s wrong level, %s extra%s%s",
-        outline_node.id, added, stats["total_drafted"], stats["ungrounded"],
-        stats["duplicates"], stats["excluded_create"], stats["trimmed"],
-        f"; still short: {', '.join(still_short)}" if still_short else "",
-        f"; failed: {len(failed)}" if failed else "",
+    print(
+        f"[Questions] topic {outline_node.id}  done: {added} questions added from {stats['total_drafted']} drafts; "
+        f"dropped {stats['ungrounded']} not grounded in the lesson, {stats['duplicates']} duplicates, "
+        f"{stats['excluded_create']} wrong level, {stats['trimmed']} extra"
+        + (f"; still short: {', '.join(still_short)}" if still_short else "")
+        + (f"; failed: {len(failed)}" if failed else "")
     )
     unchecked_total = GeneratedQuestion.objects.filter(
         node__in=nodes, status="review", check_result="unverified",

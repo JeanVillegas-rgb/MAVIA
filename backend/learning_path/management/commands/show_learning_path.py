@@ -1,6 +1,5 @@
 """Print a topic's learning path: show_learning_path [topic] [--preview] [--links] [--trace]."""
 
-import logging
 from collections import Counter
 
 from django.core.management.base import BaseCommand, CommandError
@@ -36,7 +35,6 @@ class Command(BaseCommand):
             raise CommandError(f"Topic {topic_id} does not exist.")
 
         if trace:
-            logging.getLogger("learning_path").setLevel(logging.DEBUG)
             concepts = concepts_for_topic(node)
             decisions = criteria.decide_pairs(concepts)
             held = hold_loop_links(decisions)
